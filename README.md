@@ -1,5 +1,10 @@
 # ms365-cli
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue.svg)](https://www.typescriptlang.org/)
+[![Microsoft Graph](https://img.shields.io/badge/Microsoft%20Graph-v1.0%20%7C%20beta-0078D4.svg)](https://learn.microsoft.com/en-us/graph/overview)
+
 A standalone command-line interface for Microsoft 365, powered by the Microsoft Graph API.
 
 Manage your email, calendar, files, tasks, contacts, Teams, SharePoint, Planner, OneNote, and more — all from the terminal.
