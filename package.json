@@ -1,0 +1,40 @@
+{
+  "name": "ms365-cli",
+  "version": "0.1.0",
+  "description": "A standalone CLI for Microsoft 365 via Microsoft Graph API",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "ms365": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "microsoft",
+    "365",
+    "cli",
+    "graph-api"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@azure/msal-node": "^2.1.0",
+    "commander": "^11.1.0",
+    "dotenv": "^17.3.1",
+    "keytar": "^7.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.15",
+    "tsup": "^8.5.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
