@@ -1,11 +1,11 @@
 # todo — derived view of commit history on `build/ms365-cli-hardening`
 
 ## Tier 0 — core (main)
-- [ ] CORE-2 typecheck gate
-- [ ] CORE-1 exit path + e2e harness (critical path)
-- [ ] CORE-3 + CORE-6 preAction hook / program.opts()
-- [ ] CORE-7 dotenv quiet
-- [ ] CORE-5 confirm → CancelledError (core part)
+- [x] CORE-2 typecheck gate (cc6c29b)
+- [x] CORE-1 exit path + e2e harness (critical path) (119c0ac)
+- [x] CORE-3 + CORE-6 preAction hook / program.opts() (7ab70e4; + positional options, spec [REVISED])
+- [x] CORE-7 dotenv quiet (7ab70e4)
+- [x] CORE-5 confirm → CancelledError (core part) (af26654)
 
 ## Tier 1 — parallel
 - [ ] AUTH: AUTH-1/2/3, msal bump (Q8), keytar removal, GRAPH-7 auth side, AUTH-4, auth status exit (CORE-5), setup re-prompt (MISC-1)

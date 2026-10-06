@@ -31,10 +31,10 @@ export function handleErrors<A extends any[]>(fn: (...args: A) => Promise<void>)
 }
 
 function drain(stream: NodeJS.WriteStream): Promise<void> {
-  return new Promise((resolve) => {
-    if (stream.destroyed || !stream.writable) return resolve();
-    stream.write('', () => resolve());
-  });
+  if (stream.destroyed || !stream.writable) return Promise.resolve();
+  const { promise, resolve } = Promise.withResolvers<void>();
+  stream.write('', () => resolve());
+  return promise;
 }
 
 /**

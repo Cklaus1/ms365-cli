@@ -12,7 +12,7 @@ export default async function setup(): Promise<void> {
     config: false,
     entry: ['src/index.ts'],
     format: ['esm'],
-    target: 'es2020',
+    target: 'node24',
     outDir: E2E_OUT_DIR,
     clean: true,
     silent: true,

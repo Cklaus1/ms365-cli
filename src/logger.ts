@@ -90,7 +90,9 @@ class Logger {
     const stream = this.stream;
     this.stream = null;
     if (!stream) return Promise.resolve();
-    return new Promise((resolve) => stream.end(resolve));
+    const { promise, resolve } = Promise.withResolvers<void>();
+    stream.end(resolve);
+    return promise;
   }
 }
 
