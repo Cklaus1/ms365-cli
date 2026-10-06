@@ -340,3 +340,87 @@ describe('CORE-4 streamPages JSON brackets', () => {
     expect(chunks.join('')).toBe('[]\n');
   });
 });
+
+describe('FMT-1 yaml scalars and keys', () => {
+  const yaml = (v: unknown) => formatOutput(v, 'yaml');
+
+  it.each([
+    ['[EXTERNAL] Hi', '"[EXTERNAL] Hi"'],
+    ['- dash', '"- dash"'],
+    ['~', '"~"'],
+    ['%done', '"%done"'],
+    ['@mention', '"@mention"'],
+    ['*star', '"*star"'],
+    ['&anchor', '"&anchor"'],
+    ['!tag', '"!tag"'],
+    ['|pipe', '"|pipe"'],
+    ['>fold', '">fold"'],
+    ["'single", '"\'single"'],
+    ['`tick', '"`tick"'],
+    ['{brace', '"{brace"'],
+    [',comma', '",comma"'],
+    ['?q', '"?q"'],
+    ['True', '"True"'],
+    ['NULL', '"NULL"'],
+    ['Yes', '"Yes"'],
+    [' lead', '" lead"'],
+    ['trail ', '"trail "'],
+    ['a\r\nb\tc', '"a\\r\\nb\\tc"'],
+    ['back\\slash "q"', '"back\\\\slash \\"q\\""'],
+    ['plain words', 'plain words'],
+    ['Lunch?', 'Lunch?'],
+  ])('value %j renders as %s', (input, expected) => {
+    expect(yaml({ v: input })).toBe(`v: ${expected}\n`);
+    expect(yaml([input])).toBe(`- ${expected}\n`);
+  });
+
+  it('quotes keys the same way (driveItem fixture)', () => {
+    const item = {
+      '@microsoft.graph.downloadUrl': 'https://x.example/d?a=1',
+      name: '- notes.md',
+      file: { mimeType: 'text/markdown' },
+    };
+    expect(yaml(item)).toBe([
+      '"@microsoft.graph.downloadUrl": "https://x.example/d?a=1"',
+      'name: "- notes.md"',
+      'file:',
+      '  mimeType: text/markdown',
+      '',
+    ].join('\n'));
+    expect(yaml({ value: [item] })).toBe([
+      'value:',
+      '  - "@microsoft.graph.downloadUrl": "https://x.example/d?a=1"',
+      '    name: "- notes.md"',
+      '    file: {"mimeType":"text/markdown"}',
+      '',
+    ].join('\n'));
+  });
+
+  it('a multi-line value stays on one line', () => {
+    const out = yaml({ body: 'line1\nline2\r\n', count: 1 });
+    expect(out.split('\n')).toEqual(['body: "line1\\nline2\\r\\n"', 'count: 1', '']);
+  });
+});
+
+describe('FMT-1 table and csv', () => {
+  it('table rows do not break on CR/LF or tabs in values', () => {
+    const out = formatOutput({ value: [{ id: '1', subject: 'a\r\nb\tc' }, { id: '2', subject: 'x' }] }, 'table');
+    const lines = out.split('\n');
+    expect(lines).toHaveLength(4);
+    expect(lines[2]).toMatch(/^1\s+a b c\s*$/);
+  });
+
+  it('csv keeps numeric literals unmangled', () => {
+    const out = formatOutput({ value: [{ n: -5, s: '+3.5e2' }] }, 'csv');
+    expect(out).toBe('n,s\n-5,+3.5e2');
+  });
+
+  it('csv still guards formulas', () => {
+    const out = formatOutput({ value: [{ f: '=1+2', g: '-cmd', h: '@SUM(A1)' }] }, 'csv');
+    expect(out).toBe('f,g,h\n"\t=1+2","\t-cmd","\t@SUM(A1)"');
+  });
+
+  it('csv quotes a bare CR', () => {
+    expect(formatOutput({ value: [{ s: 'a\rb' }] }, 'csv')).toBe('s\n"a\rb"');
+  });
+});
