@@ -52,6 +52,21 @@ describe('AUTH-1/2 file token cache (built binary, headless env)', () => {
     expect(fs.readdirSync(configDir(home)).sort()).toEqual(['selected-account.json', 'token-cache.json']);
   });
 
+  it('auth login never writes device-code.txt, not even transiently', async () => {
+    const home = tempDir('ms365-home-');
+    fs.mkdirSync(configDir(home), { recursive: true, mode: 0o700 });
+    const touched: string[] = [];
+    const watcher = fs.watch(configDir(home), (_event, name) => { if (name) touched.push(name); });
+    const r = await runCli(['auth', 'login'], {
+      home,
+      routes: aadRoutes({ clientId: DEFAULT_CLIENT_ID, accessToken: 'at-1', refreshToken: 'rt-1' }),
+    }).finally(() => watcher.close());
+    expect(r.code).toBe(0);
+    expect(r.stderr).toContain(DEVICE_CODE_MESSAGE);
+    expect(touched).toContain('token-cache.json');
+    expect(touched).not.toContain('device-code.txt');
+  });
+
   it('uses the built-in client ID by default and MS365_CLI_CLIENT_ID when set', async () => {
     const routes = aadRoutes({ clientId: DEFAULT_CLIENT_ID, accessToken: 'at-1', refreshToken: 'rt-1' });
     const byDefault = await runCli(['auth', 'login'], { routes });

@@ -305,7 +305,7 @@ export class AuthManager {
     return accounts[0];
   }
 
-  /** Device-code login. The cache plugin persists the tokens; the device code file is removed afterwards. */
+  /** Device-code login; the message goes to stderr only. A device-code.txt left by older versions is removed. */
   async login(): Promise<void> {
     const codeFile = path.join(configDir(), DEVICE_CODE_FILE);
     this.network.failure = null;
@@ -315,14 +315,6 @@ export class AuthManager {
         scopes: this.scopes,
         deviceCodeCallback: (resp) => {
           process.stderr.write('\n' + resp.message + '\n\n');
-          // Also written to a file so the code is visible when stderr is captured (e.g. by an agent harness).
-          try {
-            fs.mkdirSync(path.dirname(codeFile), { recursive: true, mode: 0o700 });
-            fs.rmSync(codeFile, { force: true });
-            fs.writeFileSync(codeFile, resp.message + '\n', { mode: 0o600 });
-          } catch {
-            // stderr already shows the code
-          }
         },
       });
     } catch (err) {
