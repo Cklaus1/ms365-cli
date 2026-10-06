@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { aadRoutes } from '../auth-fake-aad.js';
 import { runCli, tempDir, type FakeRoute } from './run-cli.js';
-import { APP_CAP, call, capsHeader, DEFAULT_CLIENT_ID, loginHome, maxAlive, startServer } from './serve-harness.js';
+import { APP_CAP, call, capsHeader, DEFAULT_CLIENT_ID, loginHome, maxAlive, rawCall, startServer } from './serve-harness.js';
 
 const mode = (p: string) => fs.statSync(p).mode & 0o777;
 const MESSAGES: FakeRoute = { match: '/me/messages', method: 'GET', body: { value: [{ id: 'm1', subject: 'Hello' }] } };
@@ -52,6 +52,15 @@ describe('REMOTE-1a ms365 serve: transport', () => {
     expect(server.stderr()).toContain('Every local process can connect');
     expect((await call(server, { method: 'GET', path: '/v1/health' })).body).toMatchObject({ ok: true });
     await server.stop();
+  });
+
+  it('answers an unparseable request target with an error status and keeps serving', async () => {
+    const server = await startServer();
+    // llhttp accepts `//[`, but the WHATWG URL parser rejects it (unclosed IPv6 host).
+    expect(await rawCall(server, 'GET //[ HTTP/1.1\r\nHost: x')).toBe(404);
+    expect((await call(server, { method: 'GET', path: '/v1/health' })).status).toBe(200);
+    expect(server.proc.exitCode).toBeNull();
+    expect(await server.stop()).toEqual({ code: 0, signal: null });
   });
 
   it('waits for running requests before exiting on SIGTERM', async () => {

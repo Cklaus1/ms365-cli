@@ -173,7 +173,8 @@ class RemoteServer {
   async handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const started = performance.now();
     const requestId = `req_${randomBytes(8).toString('hex')}`;
-    const url = new URL(req.url ?? '/', 'http://localhost');
+    // `URL.parse` instead of `new URL`: llhttp accepts targets the WHATWG parser rejects (e.g. `//[`); they get a 404.
+    const pathname = URL.parse(req.url ?? '/', 'http://localhost')?.pathname ?? '';
     const forwarded = req.headers['x-forwarded-for'];
     const entry: AuditEntry = {
       ts: new Date().toISOString(),
@@ -181,14 +182,14 @@ class RemoteServer {
       agent: null,
       src: (Array.isArray(forwarded) ? forwarded.join(', ') : forwarded) ?? null,
       method: req.method ?? '',
-      path: url.pathname,
+      path: pathname,
       command: null,
       args: [],
       status: 500,
       duration_ms: 0,
     };
     try {
-      const body = await this.route(req, url.pathname, entry);
+      const body = await this.route(req, pathname, entry);
       entry.status = 200;
       json(res, 200, { ok: true, request_id: requestId, ...body });
     } catch (err) {
@@ -352,10 +353,17 @@ export async function serve(options: ServeOptions): Promise<void> {
   const inflight = new Set<Promise<void>>();
   let stopping = false;
   const server = http.createServer((req, res) => {
-    const handled = app.handle(req, res).finally(() => {
-      inflight.delete(handled);
-      if (stopping) server.closeIdleConnections();
-    });
+    const handled = app.handle(req, res)
+      .catch((err: unknown) => {
+        // handle() answers every error itself; this only guards against a bug there taking the server down.
+        console.error(`Warning: request failed: ${err instanceof Error ? err.message : String(err)}`);
+        if (!res.headersSent) json(res, 500, { ok: false, error: { code: 'command_failed', message: 'Internal server error' } });
+        else res.destroy();
+      })
+      .finally(() => {
+        inflight.delete(handled);
+        if (stopping) server.closeIdleConnections();
+      });
     inflight.add(handled);
   });
 

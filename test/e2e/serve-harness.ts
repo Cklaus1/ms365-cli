@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
+import net from 'node:net';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { expect } from 'vitest';
@@ -195,6 +196,22 @@ export function call(server: Server, opts: CallOptions = {}): Promise<CallResult
   });
   req.on('error', reject);
   req.end(payload);
+  return promise;
+}
+
+/**
+ * Send `head` (request line and headers, `\r\n`-separated, no final blank line) verbatim over the server's
+ * socket, bypassing Node's client-side checks. Resolves with the status code, or 0 if the connection closed
+ * without a response.
+ */
+export function rawCall(server: Server, head: string): Promise<number> {
+  const conn = net.connect(server.socket!);
+  const { promise, resolve, reject } = Promise.withResolvers<number>();
+  let text = '';
+  conn.setEncoding('utf8').on('data', (d) => { text += d; });
+  conn.on('error', reject);
+  conn.on('close', () => resolve(Number(/^HTTP\/1\.1 (\d{3})/.exec(text)?.[1] ?? 0)));
+  conn.end(`${head}\r\nConnection: close\r\n\r\n`);
   return promise;
 }
 
