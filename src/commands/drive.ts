@@ -1,107 +1,112 @@
-import { Command } from 'commander';
-import { GraphClient } from '../graph-client.js';
+import { Command, Option } from 'commander';
+import { GraphClient, type ConflictBehavior } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
 import { detectMimeType } from '../mime.js';
+import { saveOrStream } from '../files.js';
+import { drivePath, odataQuote } from '../graph-helpers.js';
+import { listRequest, paginationOptions, type ListOptions } from '../list.js';
 import { formatSize, outputOption, confirm, info } from '../utils.js';
 import fs from 'fs';
 import path from 'path';
 
+interface OutputOpts { output: string }
+interface SaveOpts { out?: string; force?: boolean }
+interface UploadOpts extends OutputOpts { contentType?: string; conflict: ConflictBehavior }
+interface FilesOpts extends ListOptions { filter?: string; select?: string }
+interface SearchOpts extends ListOptions { drive?: string }
+interface ShareOpts extends OutputOpts { type: string; scope: string; password?: string; expiry?: string }
+
+function conflictOption(defaultValue: ConflictBehavior): Option {
+  return new Option('--conflict <behavior>', 'If the name exists: rename, replace, fail')
+    .choices(['rename', 'replace', 'fail'])
+    .default(defaultValue);
+}
+
+function saveOptions(cmd: Command, outHelp: string): Command {
+  return cmd
+    .option('--out <path>', outHelp)
+    .option('--force', 'Overwrite an existing --out file');
+}
+
+/** Download `endpoint` unparsed to `--out` (no overwrite unless --force) or to stdout. */
+async function download(client: GraphClient, endpoint: string, opts: SaveOpts): Promise<void> {
+  const response = await client.requestBinary(endpoint);
+  const saved = await saveOrStream(response.body, { out: opts.out, force: opts.force });
+  if (saved.path) info(`Saved to ${path.resolve(saved.path)} (${formatSize(saved.bytes)})`);
+}
+
+/** Upload a local file to `itemPath` (colon path without trailing colon) and print the stored driveItem. */
+async function upload(client: GraphClient, itemPath: string, localPath: string, opts: UploadOpts): Promise<void> {
+  const contentType = opts.contentType || detectMimeType(path.basename(localPath));
+  info(`Uploading ${path.basename(localPath)} (${formatSize(fs.statSync(localPath).size)}, ${contentType})`);
+  const response = await client.uploadDriveItem(itemPath, localPath, { conflict: opts.conflict, contentType });
+  console.log(formatOutput(response.data, opts.output as OutputFormat));
+}
+
+function existingFile(filePath: string): string {
+  const resolved = path.resolve(filePath);
+  if (!fs.existsSync(resolved)) throw new Error(`File not found: ${resolved}`);
+  return resolved;
+}
+
+/** `value[key]` when `value` is an object, else undefined (Graph payloads are untyped JSON). */
+function field(value: unknown, key: string): unknown {
+  return typeof value === 'object' && value !== null && key in value ? Reflect.get(value, key) : undefined;
+}
+
 export function registerDriveCommands(program: Command, getClient: () => GraphClient): void {
   const drive = program.command('drive').description('OneDrive file operations');
+  const itemRoot = (driveId: string, itemId: string) =>
+    `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}`;
 
-  drive
+  paginationOptions(drive
     .command('list')
-    .description('List available drives')
+    .description('List available drives'))
     .addOption(outputOption())
-    .action(handleErrors(async (opts) => {
-      const client = getClient();
-      const response = await client.request('/me/drives');
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+    .action(handleErrors(async (opts: ListOptions) => {
+      await listRequest(getClient(), '/me/drives', {}, opts);
     }));
 
   drive
     .command('root <driveId>')
     .description('Get root folder of a drive')
     .addOption(outputOption())
-    .action(handleErrors(async (driveId: string, opts) => {
-      const client = getClient();
-      const response = await client.request(`/drives/${encodeURIComponent(driveId)}/root`);
+    .action(handleErrors(async (driveId: string, opts: OutputOpts) => {
+      const response = await getClient().request(`/drives/${encodeURIComponent(driveId)}/root`);
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  drive
+  paginationOptions(drive
     .command('files <driveId> <folderId>')
     .description('List files in a folder')
-    .option('--top <n>', 'Number of items')
     .option('--filter <filter>', 'OData filter')
-    .option('--select <fields>', 'Fields to return')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+    .option('--select <fields>', 'Fields to return'))
     .addOption(outputOption())
-    .action(handleErrors(async (driveId: string, folderId: string, opts) => {
-      const client = getClient();
+    .action(handleErrors(async (driveId: string, folderId: string, opts: FilesOpts) => {
       const queryParams: Record<string, string> = {};
-      if (opts.top) queryParams['$top'] = opts.top;
       if (opts.filter) queryParams['$filter'] = opts.filter;
       if (opts.select) queryParams['$select'] = opts.select;
-
-      const endpoint = `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(folderId)}/children`;
-      const response = opts.all
-        ? await client.requestAllPages(
-            endpoint,
-            { queryParams },
-            opts.pageLimit ? parseInt(opts.pageLimit) : undefined,
-            opts.pageDelay ? parseInt(opts.pageDelay) : undefined,
-          )
-        : await client.request(endpoint, { queryParams });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await listRequest(getClient(), `${itemRoot(driveId, folderId)}/children`, { queryParams }, opts);
     }));
 
-  drive
+  saveOptions(drive
     .command('download <driveId> <itemId> <childId>')
-    .description('Download a file')
-    .option('--out <path>', 'Output file path')
-    .action(handleErrors(async (driveId: string, itemId: string, childId: string, opts) => {
-      const client = getClient();
-      const endpoint = `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}/children/${encodeURIComponent(childId)}/content`;
-      const response = await client.request(endpoint);
-      const data = response.data as Record<string, unknown>;
-
-      if (data.contentBytes) {
-        const outPath = path.resolve(opts.out || `download_${childId}`);
-        fs.writeFileSync(outPath, Buffer.from(data.contentBytes as string, 'base64'));
-        console.log(`Downloaded to ${outPath} (${data.size} bytes)`);
-      } else {
-        console.log(formatOutput(response.data, 'json'));
-      }
+    .description('Download a file (to --out, or raw bytes to stdout)'), 'Output file path (default: stdout)')
+    .action(handleErrors(async (driveId: string, itemId: string, childId: string, opts: SaveOpts) => {
+      await download(getClient(), `${itemRoot(driveId, itemId)}/children/${encodeURIComponent(childId)}/content`, opts);
     }));
 
   drive
     .command('upload <driveId> <parentId> <filePath>')
-    .description('Upload a file (auto-detects MIME type, streams large files)')
+    .description('Upload a file into a folder (auto-detects MIME type, streams large files)')
     .option('--content-type <mime>', 'Override MIME type')
+    .addOption(conflictOption('rename'))
     .addOption(outputOption())
-    .action(handleErrors(async (driveId: string, parentId: string, filePath: string, opts) => {
-      const resolvedPath = path.resolve(filePath);
-      if (!fs.existsSync(resolvedPath)) {
-        throw new Error(`File not found: ${resolvedPath}`);
-      }
-
-      const client = getClient();
-      const fileName = path.basename(resolvedPath);
-      const contentType = opts.contentType || detectMimeType(fileName);
-      const stat = fs.statSync(resolvedPath);
-
-      console.error(`Uploading ${fileName} (${formatSize(stat.size)}, ${contentType})`);
-
-      // Use colon-based path syntax — colons are delimiters, not encoded
-      const itemPath = `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(parentId)}:/${fileName}`;
-      const response = await client.uploadDriveItem(itemPath, resolvedPath, { conflict: 'replace', contentType });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+    .action(handleErrors(async (driveId: string, parentId: string, filePath: string, opts: UploadOpts) => {
+      const localPath = existingFile(filePath);
+      const itemPath = drivePath(itemRoot(driveId, parentId), path.basename(localPath));
+      await upload(getClient(), itemPath, localPath, opts);
     }));
 
   drive
@@ -109,52 +114,28 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
     .description('Delete a drive item')
     .action(handleErrors(async (driveId: string, itemId: string) => {
       await confirm(`Delete drive item ${itemId.substring(0, 16)}...?`);
-      const client = getClient();
-      await client.request(`/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}`, {
-        method: 'DELETE',
-      });
+      await getClient().request(itemRoot(driveId, itemId), { method: 'DELETE' });
       info('Item deleted.');
     }));
 
-  drive
+  saveOptions(drive
     .command('download-shared <shareId>')
-    .description('Download a file via sharing link')
-    .option('--out <path>', 'Output file path')
-    .action(handleErrors(async (shareId: string, opts) => {
-      const client = getClient();
-      const response = await client.request(
-        `/shares/${encodeURIComponent(shareId)}/driveItem/content`
-      );
-      const data = response.data as Record<string, unknown>;
-
-      if (data.contentBytes) {
-        const outPath = path.resolve(opts.out || `shared_download`);
-        fs.writeFileSync(outPath, Buffer.from(data.contentBytes as string, 'base64'));
-        console.log(`Downloaded to ${outPath} (${data.size} bytes)`);
-      } else {
-        console.log(formatOutput(response.data, 'json'));
-      }
+    .description('Download a file via sharing link (to --out, or raw bytes to stdout)'), 'Output file path (default: stdout)')
+    .action(handleErrors(async (shareId: string, opts: SaveOpts) => {
+      await download(getClient(), `/shares/${encodeURIComponent(shareId)}/driveItem/content`, opts);
     }));
+
   // ── Search ───────────────────────────────────────────────────
-  drive
+  paginationOptions(drive
     .command('search <query>')
     .description('Search files across OneDrive')
-    .option('--drive <driveId>', 'Limit to specific drive')
-    .option('--top <n>', 'Number of results', '25')
+    .option('--drive <driveId>', 'Limit to specific drive'), 25)
     .addOption(outputOption())
-    .action(handleErrors(async (query: string, opts) => {
-      const client = getClient();
-      const queryParams: Record<string, string> = { '$top': opts.top };
-
-      // Don't encodeURIComponent the query — it's part of the OData function URL,
-      // and buildUrl will encode query params separately. Single quotes are escaped.
-      const safeQuery = query.replace(/'/g, "''");
-      const endpoint = opts.drive
-        ? `/drives/${encodeURIComponent(opts.drive)}/root/search(q='${safeQuery}')`
-        : `/me/drive/root/search(q='${safeQuery}')`;
-
-      const response = await client.request(endpoint, { queryParams });
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+    .action(handleErrors(async (query: string, opts: SearchOpts) => {
+      // The query is an OData string literal inside the path: quote it, then URL-encode so #, ?, % survive.
+      const fn = `search(q=${encodeURIComponent(odataQuote(query))})`;
+      const endpoint = opts.drive ? `/drives/${encodeURIComponent(opts.drive)}/root/${fn}` : `/me/drive/root/${fn}`;
+      await listRequest(getClient(), endpoint, {}, opts);
     }));
 
   // ── Create folder ───────────────────────────────────────────
@@ -162,19 +143,15 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
     .command('mkdir <driveId> <parentId> <name>')
     .description('Create a folder')
     .addOption(outputOption())
-    .action(handleErrors(async (driveId: string, parentId: string, name: string, opts) => {
-      const client = getClient();
-      const response = await client.request(
-        `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(parentId)}/children`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            name,
-            folder: {},
-            '@microsoft.graph.conflictBehavior': 'rename',
-          }),
-        }
-      );
+    .action(handleErrors(async (driveId: string, parentId: string, name: string, opts: OutputOpts) => {
+      const response = await getClient().request(`${itemRoot(driveId, parentId)}/children`, {
+        method: 'POST',
+        body: JSON.stringify({
+          name,
+          folder: {},
+          '@microsoft.graph.conflictBehavior': 'rename',
+        }),
+      });
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
@@ -187,8 +164,7 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
     .option('--password <password>', 'Password-protect the link')
     .option('--expiry <datetime>', 'Expiration datetime (ISO 8601)')
     .addOption(outputOption())
-    .action(handleErrors(async (driveId: string, itemId: string, opts) => {
-      const client = getClient();
+    .action(handleErrors(async (driveId: string, itemId: string, opts: ShareOpts) => {
       const body: Record<string, unknown> = {
         type: opts.type,
         scope: opts.scope,
@@ -196,16 +172,15 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
       if (opts.password) body.password = opts.password;
       if (opts.expiry) body.expirationDateTime = opts.expiry;
 
-      const response = await client.request(
-        `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}/createLink`,
-        { method: 'POST', body: JSON.stringify(body) }
-      );
+      const response = await getClient().request(`${itemRoot(driveId, itemId)}/createLink`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
 
-      const data = response.data as Record<string, unknown>;
-      const link = data.link as Record<string, unknown>;
-      if (link?.webUrl && opts.output !== 'json') {
+      const webUrl = field(field(response.data, 'link'), 'webUrl');
+      if (typeof webUrl === 'string' && (opts.output === 'text' || opts.output === 'table')) {
         console.log(`Sharing link (${opts.type}, ${opts.scope}):`);
-        console.log(`  ${link.webUrl}`);
+        console.log(`  ${webUrl}`);
       } else {
         console.log(formatOutput(response.data, opts.output as OutputFormat));
       }
@@ -216,11 +191,8 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
     .command('permissions <driveId> <itemId>')
     .description('List sharing permissions on a file or folder')
     .addOption(outputOption())
-    .action(handleErrors(async (driveId: string, itemId: string, opts) => {
-      const client = getClient();
-      const response = await client.request(
-        `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}/permissions`
-      );
+    .action(handleErrors(async (driveId: string, itemId: string, opts: OutputOpts) => {
+      const response = await getClient().request(`${itemRoot(driveId, itemId)}/permissions`);
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
@@ -229,29 +201,28 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
     .command('quota')
     .description('Show OneDrive storage usage and quota')
     .addOption(outputOption('text'))
-    .action(handleErrors(async (opts) => {
-      const client = getClient();
-      const response = await client.request('/me/drive', {
+    .action(handleErrors(async (opts: OutputOpts) => {
+      const response = await getClient().request('/me/drive', {
         queryParams: { '$select': 'quota' },
       });
-      const data = response.data as Record<string, unknown>;
-      const quota = data.quota as Record<string, unknown>;
+      const quota = field(response.data, 'quota');
 
-      if (opts.output === 'json' || opts.output === 'yaml') {
-        console.log(formatOutput(data, opts.output as OutputFormat));
-      } else {
-        const used = quota?.used as number || 0;
-        const total = quota?.total as number || 0;
-        const remaining = quota?.remaining as number || 0;
-        const deleted = quota?.deleted as number || 0;
-        const pct = total > 0 ? Math.round((used / total) * 100) : 0;
-
-        console.log('OneDrive Storage:');
-        console.log(`  Used:      ${formatSize(used)} (${pct}%)`);
-        console.log(`  Remaining: ${formatSize(remaining)}`);
-        console.log(`  Total:     ${formatSize(total)}`);
-        if (deleted > 0) console.log(`  In trash:  ${formatSize(deleted)}`);
+      if (opts.output !== 'text' || typeof quota !== 'object' || quota === null) {
+        console.log(formatOutput(response.data, opts.output as OutputFormat));
+        return;
       }
+      const bytes = (key: string) => {
+        const v = field(quota, key);
+        return typeof v === 'number' ? v : 0;
+      };
+      const used = bytes('used');
+      const total = bytes('total');
+      const pct = total > 0 ? Math.round((used / total) * 100) : 0;
+      console.log('OneDrive Storage:');
+      console.log(`  Used:      ${formatSize(used)} (${pct}%)`);
+      console.log(`  Remaining: ${formatSize(bytes('remaining'))}`);
+      console.log(`  Total:     ${formatSize(total)}`);
+      if (bytes('deleted') > 0) console.log(`  In trash:  ${formatSize(bytes('deleted'))}`);
     }));
 
   // ── Get item info ───────────────────────────────────────────
@@ -259,72 +230,36 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
     .command('info <driveId> <itemId>')
     .description('Get metadata for a file or folder')
     .addOption(outputOption())
-    .action(handleErrors(async (driveId: string, itemId: string, opts) => {
-      const client = getClient();
-      const response = await client.request(
-        `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}`
-      );
+    .action(handleErrors(async (driveId: string, itemId: string, opts: OutputOpts) => {
+      const response = await getClient().request(itemRoot(driveId, itemId));
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
   // ── Path-based shortcuts ──────────────────────────────────
-  drive
+  paginationOptions(drive
     .command('ls [path]')
-    .description('List files by path (e.g. "/Documents", "/Documents/Reports")')
-    .option('--top <n>', 'Number of items')
+    .description('List files by path (e.g. "/Documents", "/Documents/Reports")'))
     .addOption(outputOption())
-    .action(handleErrors(async (drivePath: string | undefined, opts) => {
-      const client = getClient();
-      const queryParams: Record<string, string> = {};
-      if (opts.top) queryParams['$top'] = opts.top;
-
-      const endpoint = drivePath
-        ? `/me/drive/root:/${drivePath.replace(/^\//, '')}:/children`
-        : '/me/drive/root/children';
-      const response = await client.request(endpoint, { queryParams });
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+    .action(handleErrors(async (userPath: string | undefined, opts: ListOptions) => {
+      await listRequest(getClient(), drivePath('/me/drive/root', userPath ?? '', '/children'), {}, opts);
     }));
 
-  drive
+  saveOptions(drive
     .command('cat <path>')
-    .description('Download a file by path (e.g. "/Documents/notes.md")')
-    .option('--out <file>', 'Save to file instead of stdout')
-    .action(handleErrors(async (drivePath: string, opts) => {
-      const client = getClient();
-      const cleanPath = drivePath.replace(/^\//, '');
-      const response = await client.request(`/me/drive/root:/${cleanPath}:/content`);
-      const data = response.data as Record<string, unknown>;
-
-      if (data.contentBytes) {
-        const buf = Buffer.from(data.contentBytes as string, 'base64');
-        if (opts.out) {
-          const outPath = (await import('path')).resolve(opts.out);
-          (await import('fs')).writeFileSync(outPath, buf);
-          info(`Saved to ${outPath} (${formatSize(buf.length)})`);
-        } else {
-          process.stdout.write(buf);
-        }
-      } else {
-        console.log(formatOutput(response.data, 'json'));
-      }
+    .description('Download a file by path (e.g. "/Documents/notes.md"); raw bytes to stdout'), 'Save to file instead of stdout')
+    .action(handleErrors(async (userPath: string, opts: SaveOpts) => {
+      await download(getClient(), drivePath('/me/drive/root', userPath, '/content'), opts);
     }));
 
   drive
     .command('cp <localFile> <remotePath>')
-    .description('Upload a file by path (e.g. ./report.pdf /Documents/report.pdf)')
+    .description('Upload a file by path (e.g. ./report.pdf /Documents/report.pdf; a path ending in / is a folder)')
     .option('--content-type <mime>', 'Override MIME type')
+    .addOption(conflictOption('replace'))
     .addOption(outputOption())
-    .action(handleErrors(async (localFile: string, remotePath: string, opts) => {
-      const resolvedPath = path.resolve(localFile);
-      if (!fs.existsSync(resolvedPath)) {
-        throw new Error(`File not found: ${resolvedPath}`);
-      }
-      const client = getClient();
-      const contentType = opts.contentType || detectMimeType(path.basename(resolvedPath));
-      const cleanPath = remotePath.replace(/^\//, '');
-      const itemPath = `/me/drive/root:/${cleanPath}`;
-      const response = await client.uploadDriveItem(itemPath, resolvedPath, { conflict: 'replace', contentType });
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+    .action(handleErrors(async (localFile: string, remotePath: string, opts: UploadOpts) => {
+      const localPath = existingFile(localFile);
+      const target = remotePath.endsWith('/') || remotePath === '' ? `${remotePath}/${path.basename(localPath)}` : remotePath;
+      await upload(getClient(), drivePath('/me/drive/root', target), localPath, opts);
     }));
 }
-

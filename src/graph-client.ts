@@ -118,6 +118,11 @@ export class GraphClient {
     this.baseUrl = `https://graph.microsoft.com/${this.apiVersion}`;
   }
 
+  /** True under `--dry-run`: requests are previewed on stderr, nothing is sent. */
+  get isDryRun(): boolean {
+    return this.dryRun;
+  }
+
   buildUrl(endpoint: string, queryParams?: Record<string, string>, apiVersion?: ApiVersion): string {
     let url = apiVersion ? `https://graph.microsoft.com/${apiVersion}${endpoint}` : `${this.baseUrl}${endpoint}`;
 
@@ -411,7 +416,8 @@ export class GraphClient {
     return parseResponse(response);
   }
 
-  private assertAllowed(method: string, endpoint: string): void {
+  /** Throws when `--read-only` blocks this request; call before preparatory reads (e.g. an ETag GET) of a write. */
+  assertAllowed(method: string, endpoint: string): void {
     if (this.readOnly && !isReadOnlyAllowed(method, endpoint)) {
       throw new Error(`Read-only mode: ${method} requests are blocked. Remove --read-only to proceed.`);
     }
