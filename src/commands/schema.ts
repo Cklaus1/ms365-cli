@@ -1,5 +1,7 @@
 import { Command } from 'commander';
 import { handleErrors } from '../errors.js';
+import { formatOutput, type OutputFormat } from '../formatter.js';
+import { outputOption } from '../utils.js';
 
 /**
  * Endpoint catalog with parameter schemas for introspection.
@@ -202,35 +204,56 @@ const ENDPOINTS: Record<string, EndpointSchema> = {
   },
 };
 
+/** Endpoint keys with a schema (`mail.list`, …). */
+export function endpointKeys(): string[] {
+  return Object.keys(ENDPOINTS);
+}
+
+function editDistance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) {
+      row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = row;
+  }
+  return prev[b.length];
+}
+
+/** Keys of the same service, else keys within a small edit distance. */
+function suggestEndpoints(endpoint: string): string[] {
+  const keys = endpointKeys();
+  const service = endpoint.split('.')[0];
+  const sameService = keys.filter(k => k.split('.')[0] === service);
+  if (sameService.length > 0) return sameService;
+  return keys.filter(k => editDistance(k, endpoint) <= 3);
+}
+
 export function registerSchemaCommands(program: Command): void {
   program
-    .command('schema <endpoint>')
+    .command('schema [endpoint]')
     .description('Introspect API schema for an endpoint (e.g. mail.list, calendar.create)')
     .option('--list', 'List all available endpoint schemas')
-    .action(handleErrors(async (endpoint: string, opts) => {
+    .addOption(outputOption('json'))
+    .action(handleErrors(async (endpoint: string | undefined, opts: { list?: boolean; output: OutputFormat }) => {
       if (opts.list || endpoint === 'list') {
-        console.log('Available schemas:\n');
-        const grouped: Record<string, string[]> = {};
-        for (const [key, val] of Object.entries(ENDPOINTS)) {
-          const [service] = key.split('.');
-          if (!grouped[service]) grouped[service] = [];
-          grouped[service].push(`  ${key.padEnd(25)} ${val.method.padEnd(6)} ${val.path}`);
-        }
-        for (const [service, entries] of Object.entries(grouped)) {
-          console.log(`${service}:`);
-          entries.forEach(e => console.log(e));
-          console.log('');
-        }
-        console.log(`Usage: ms365 schema <endpoint>  (e.g. ms365 schema mail.send)`);
+        const list = Object.entries(ENDPOINTS).map(([key, val]) => ({
+          endpoint: key,
+          method: val.method,
+          path: val.path,
+          description: val.description,
+        }));
+        console.log(formatOutput(list, opts.output));
         return;
       }
 
+      if (!endpoint) throw new Error('Specify an endpoint (e.g. ms365 schema mail.list) or run: ms365 schema --list');
+
       const schema = ENDPOINTS[endpoint];
       if (!schema) {
-        const suggestions = Object.keys(ENDPOINTS)
-          .filter(k => k.startsWith(endpoint.split('.')[0]))
-          .join(', ');
-        const hint = suggestions ? `\nDid you mean: ${suggestions}` : '';
+        const suggestions = suggestEndpoints(endpoint);
+        const hint = suggestions.length > 0 ? `\nDid you mean: ${suggestions.join(', ')}` : '';
         throw new Error(`Unknown endpoint: ${endpoint}${hint}\nRun: ms365 schema --list`);
       }
 
@@ -239,22 +262,15 @@ export function registerSchemaCommands(program: Command): void {
         path: schema.path,
         description: schema.description,
         scopes: schema.scopes,
-        parameters: {} as Record<string, unknown>,
+        parameters: Object.fromEntries(schema.parameters.map(p => [p.name, {
+          type: p.type,
+          required: p.required,
+          location: p.location,
+          description: p.description,
+        }])),
       };
+      if (schema.responseHint) output.response = schema.responseHint;
 
-      for (const param of schema.parameters) {
-        (output.parameters as Record<string, unknown>)[param.name] = {
-          type: param.type,
-          required: param.required,
-          location: param.location,
-          description: param.description,
-        };
-      }
-
-      if (schema.responseHint) {
-        output.response = schema.responseHint;
-      }
-
-      console.log(JSON.stringify(output, null, 2));
+      console.log(formatOutput(output, opts.output));
     }));
 }
