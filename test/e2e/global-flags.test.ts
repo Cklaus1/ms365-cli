@@ -86,3 +86,20 @@ describe('.env settings apply before the logger starts', () => {
     expect(fs.readFileSync(path.join(cwd, logs[0]), 'utf8')).toContain('"level":"debug"');
   });
 });
+
+describe('MS365_CLI_TOKEN needs no config dir', () => {
+  it('a Graph command works when HOME/.config cannot be created', async () => {
+    // A regular file as HOME: mkdir fails with ENOTDIR even as root (chmod would not stop root).
+    const home = path.join(tempDir('ms365-home-'), 'not-a-dir');
+    fs.writeFileSync(home, '');
+    const r = await runCli(['mail', 'list', '-o', 'json'], {
+      home,
+      env: { ...CLIENT, MS365_CLI_TOKEN: 'fake' },
+      routes: [{ match: '/me/messages', body: { value: [{ id: 'm1' }] } }],
+    });
+    expect(r.stderr).toBe('');
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.stdout)).toEqual({ value: [{ id: 'm1' }] });
+    expect(r.requests[0].headers.authorization).toBe('Bearer fake');
+  });
+});

@@ -192,6 +192,11 @@ export interface AuthManagerOptions {
   clientId?: string;
 }
 
+/** A pre-obtained token from the environment (CLI or MCP server name); it bypasses the token cache entirely. */
+export function envToken(): string | undefined {
+  return process.env.MS365_CLI_TOKEN || process.env.MS365_MCP_OAUTH_TOKEN || undefined;
+}
+
 export class AuthManager {
   readonly clientId: string;
   private readonly msalApp: PublicClientApplication;
@@ -239,9 +244,8 @@ export class AuthManager {
   }
 
   async getToken(forceRefresh = false): Promise<string> {
-    // Check env var token first (accept both CLI and MCP server names)
-    const envToken = process.env.MS365_CLI_TOKEN || process.env.MS365_MCP_OAUTH_TOKEN;
-    if (envToken) return envToken;
+    const token = envToken();
+    if (token) return token;
 
     if (this.accessToken && this.tokenExpiry && this.tokenExpiry > Date.now() && !forceRefresh) {
       return this.accessToken;

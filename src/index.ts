@@ -3,7 +3,7 @@ import dotenv from 'dotenv';
 dotenv.config({ quiet: true });
 
 import { Command, CommanderError } from 'commander';
-import { AuthManager, buildScopes } from './auth.js';
+import { AuthManager, buildScopes, envToken } from './auth.js';
 import { GraphClient } from './graph-client.js';
 import { exitProcess, reportError } from './errors.js';
 import { registerAllCommands } from './commands/registry.js';
@@ -77,7 +77,7 @@ function getClient(): GraphClient {
 // Register all command modules
 registerAllCommands(program, getAuth, getClient);
 
-// Apply global flags and load the token cache before any command that talks to Graph.
+// Apply global flags and load the token cache before any command that talks to Graph (an env token needs no cache).
 program.hook('preAction', async (_program, actionCommand) => {
   const g = globals();
   if (g.quiet) setQuiet(true);
@@ -88,7 +88,7 @@ program.hook('preAction', async (_program, actionCommand) => {
   }
   logger.info(`Running: ms365 ${commandChain.join(' ')}`);
 
-  if (NO_AUTH_COMMANDS[commandChain[0]] || g.dryRun) return;
+  if (NO_AUTH_COMMANDS[commandChain[0]] || g.dryRun || envToken()) return;
   await getAuth().initialize();
 });
 
