@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import { REMOTE_ENTRY, runCli, tempDir, type FakeRoute, type RunOptions } from './run-cli.js';
 import { capsHeader, loginHome, startServeProxy, startServer, type Server } from './serve-harness.js';
@@ -9,6 +10,29 @@ const BYTES = Buffer.from(Array.from({ length: 70_000 }, (_, i) => (i * 7) % 256
 const LOCAL_ENV = { MS365_CLI_CLIENT_ID: '00000000-0000-0000-0000-000000000000', MS365_CLI_TOKEN: 'fake' };
 
 const remote = (args: string[], opts: RunOptions = {}) => runCli(args, { ...opts, entry: REMOTE_ENTRY });
+
+/** A malicious or compromised `ms365 serve`: answers every request with `files`. */
+async function hostileServe(files: unknown[]): Promise<{ url: string; close(): Promise<void> }> {
+  const server = http.createServer((req, res) => {
+    req.resume().on('end', () => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, request_id: 'req_x', data: null, files }));
+    });
+  });
+  const listening = Promise.withResolvers<void>();
+  server.listen(0, '127.0.0.1', listening.resolve);
+  await listening.promise;
+  const { port } = server.address() as { port: number };
+  return {
+    url: `http://127.0.0.1:${port}`,
+    async close() {
+      const closed = Promise.withResolvers<void>();
+      server.close(() => closed.resolve());
+      server.closeAllConnections();
+      await closed.promise;
+    },
+  };
+}
 
 describe('REMOTE-1d ms365-remote over MS365_REMOTE_URL', () => {
   let server: Server;
@@ -97,6 +121,35 @@ describe('REMOTE-1d ms365-remote over MS365_REMOTE_URL', () => {
     expect(r.code).toBe(1);
     expect(r.stdout).toBe('');
     expect(r.stderr).toContain('Missing capability: mail.send (capability_missing)');
+  });
+});
+
+describe('REMOTE-1d ms365-remote file names chosen by the server', () => {
+  const file = (name: string, contentType = 'application/octet-stream') => ({ name, contentType, size: 3, base64: 'YWJj' });
+
+  it('refuses empty and dot-leading names for named outputs: exit 1, nothing written', async () => {
+    for (const name of ['.bashrc', 'x/.env', '..', '.', '', '/']) {
+      const fake = await hostileServe([file(name)]);
+      const cwd = tempDir();
+      for (const args of [[], ['--force']]) {
+        const r = await remote(['mail', 'download-attachment', 'm1', 'a1', ...args], { cwd, env: { MS365_REMOTE_URL: fake.url } });
+        expect(r.code, `${JSON.stringify(name)} ${args}`).toBe(1);
+        expect(r.stdout).toBe('');
+        expect(r.stderr).toContain('--out');
+      }
+      expect(fs.readdirSync(cwd), JSON.stringify(name)).toEqual([]);
+      await fake.close();
+    }
+  });
+
+  it('names a profile photo profile-photo.<ext from content type> locally, like the local CLI', async () => {
+    const fake = await hostileServe([file('.bashrc', 'image/png')]);
+    const cwd = tempDir();
+    const r = await remote(['user', 'download-photo'], { cwd, env: { MS365_REMOTE_URL: fake.url } });
+    expect(r.code, r.stderr).toBe(0);
+    expect(fs.readdirSync(cwd)).toEqual(['profile-photo.png']);
+    expect(fs.readFileSync(path.join(cwd, 'profile-photo.png'), 'utf8')).toBe('abc');
+    await fake.close();
   });
 });
 

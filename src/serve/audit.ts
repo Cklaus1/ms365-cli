@@ -27,8 +27,13 @@ export class AuditLog {
     fs.fchmodSync(this.fd, 0o600);
   }
 
+  /** Never throws: a failed write (e.g. a full disk) is reported on stderr and the request still completes. */
   write(entry: AuditEntry): void {
-    fs.writeSync(this.fd, JSON.stringify(entry) + '\n');
+    try {
+      fs.writeSync(this.fd, JSON.stringify(entry) + '\n');
+    } catch (err) {
+      console.error(`Warning: audit log write failed (${this.file}): ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   close(): void {

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { aadRoutes } from '../auth-fake-aad.js';
 import { runCli, tempDir, type FakeRoute } from './run-cli.js';
-import { APP_CAP, call, capsHeader, DEFAULT_CLIENT_ID, loginHome, maxAlive, startServer } from './serve-harness.js';
+import { APP_CAP, call, capsHeader, DEFAULT_CLIENT_ID, loginHome, maxAlive, rawCall, startServer } from './serve-harness.js';
 
 const mode = (p: string) => fs.statSync(p).mode & 0o777;
 const MESSAGES: FakeRoute = { match: '/me/messages', method: 'GET', body: { value: [{ id: 'm1', subject: 'Hello' }] } };
@@ -54,6 +54,15 @@ describe('REMOTE-1a ms365 serve: transport', () => {
     await server.stop();
   });
 
+  it('answers an unparseable request target with an error status and keeps serving', async () => {
+    const server = await startServer();
+    // llhttp accepts `//[`, but the WHATWG URL parser rejects it (unclosed IPv6 host).
+    expect(await rawCall(server, 'GET //[ HTTP/1.1\r\nHost: x')).toBe(404);
+    expect((await call(server, { method: 'GET', path: '/v1/health' })).status).toBe(200);
+    expect(server.proc.exitCode).toBeNull();
+    expect(await server.stop()).toEqual({ code: 0, signal: null });
+  });
+
   it('waits for running requests before exiting on SIGTERM', async () => {
     const home = await loginHome();
     const server = await startServer({ home, routes: [{ ...MESSAGES, delayMs: 1500 }] });
@@ -89,6 +98,17 @@ describe('REMOTE-1b/1c authorization and execution', () => {
       expect(res.body).toMatchObject({ ok: false, error: { code: 'capability_missing' } });
       expect(res.body.request_id).toMatch(/^req_/);
     }
+    await server.stop();
+    expect(childStarts(server.procs(), server.proc.pid)).toBe(0);
+  });
+
+  it('denies a repeated Tailscale-App-Capabilities header even when the copies join into valid JSON', async () => {
+    const server = await startServer({ home, routes: [MESSAGES] });
+    // Node joins repeated custom headers with ", ": these halves would read as one grant for mail.read.
+    const first = `{"${APP_CAP}":[{"agent":"chief","allow":["mail.read"]}`;
+    const second = '{"allow":["mail.read"]}]}';
+    const head = `POST /v1/execute HTTP/1.1\r\nHost: x\r\nTailscale-App-Capabilities: ${first}\r\nTailscale-App-Capabilities: ${second}`;
+    expect(await rawCall(server, head, { command: 'mail.list' })).toBe(403);
     await server.stop();
     expect(childStarts(server.procs(), server.proc.pid)).toBe(0);
   });
@@ -186,6 +206,21 @@ describe('REMOTE-1b/1c authorization and execution', () => {
     expect(lines[0].request_id).toMatch(/^req_/);
     expect(typeof lines[0].duration_ms).toBe('number');
     expect(lines[1]).toMatchObject({ agent: 'cfo', command: 'mail.send', args: ['to'], status: 403, error: 'capability_missing' });
+  });
+
+  it('bounds caller-chosen audit fields: an unknown command and its arg keys are truncated', async () => {
+    const server = await startServer({ home, routes: [MESSAGES] });
+    const args = Object.fromEntries(Array.from({ length: 1000 }, (_, i) => [`${i}-${'k'.repeat(500)}`, 1]));
+    const res = await call(server, { caps: capsHeader(['mail.read']), body: { command: 'x'.repeat(100_000), args } });
+    expect(res.status).toBe(400);
+    await server.stop();
+    const text = fs.readFileSync(server.auditLog, 'utf8');
+    expect(text.length).toBeLessThan(4096);
+    const entry = JSON.parse(text) as { command: string; args: string[] };
+    expect(entry.command.length).toBeLessThanOrEqual(128);
+    expect(entry.command.startsWith('xxx')).toBe(true);
+    expect(entry.args).toHaveLength(32);
+    expect(entry.args.every(k => k.length <= 64)).toBe(true);
   });
 
   it('forwards --read-only from server start to every child', async () => {
@@ -287,4 +322,18 @@ describe('REMOTE-1c files over the API', () => {
     expect(put!.body).toBe(`base64:${bytes.toString('base64')}`);
     expect(fs.existsSync('/etc/x.bin')).toBe(false);
   });
+
+  it('kills a download that grows past the 25 MB output limit: 502, nothing left on disk', async () => {
+    const home = await loginHome();
+    const tmp = tempDir('ms365-srv-tmp-');
+    // 30 MB, then the body never ends: only a size bound (not the 5 s timeout) can end this request with 502.
+    const huge = { match: '/drives/d1/items/i1/children/c1/content', method: 'GET', bodySize: 30 * 1024 * 1024, stall: true, headers: { 'content-type': 'application/octet-stream' } };
+    const server = await startServer({ home, env: { TMPDIR: tmp }, args: ['--timeout', '5'], routes: [huge] });
+    const res = await call(server, { caps: capsHeader(['drive.read']), body: { command: 'drive.download', positionals: ['d1', 'i1', 'c1'] } });
+    expect(res.status, JSON.stringify(res.body)).toBe(502);
+    expect(res.body.error).toEqual({ code: 'command_failed', message: 'Output file exceeds the 25 MB remote limit' });
+    expect((await call(server, { method: 'GET', path: '/v1/health' })).status).toBe(200);
+    expect(fs.readdirSync(tmp)).toEqual([]);
+    await server.stop();
+  }, 20_000);
 });

@@ -4,7 +4,7 @@ import { configDir } from '../auth.js';
 import { buildCommandTree } from '../command-tree.js';
 import { handleErrors } from '../errors.js';
 import { buildChildEnv } from '../serve/executor.js';
-import { checkTransport, serve } from '../serve/server.js';
+import { checkTransport, MAX_FILE_BYTES, serve } from '../serve/server.js';
 import { introspectionProgram } from './registry.js';
 
 interface ServeOpts {
@@ -61,6 +61,7 @@ export function registerServeCommand(program: Command): void {
           env: buildChildEnv(process.env),
           timeoutMs: opts.timeout * 1000,
           maxStdoutBytes: 50 * 1024 * 1024,
+          maxFileBytes: MAX_FILE_BYTES,
           concurrency: 4,
         },
       });

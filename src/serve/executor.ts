@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 
 /** Server-side environment variables a child may see. Never MS365_CLI_TOKEN: children use the host's token cache. */
 const FORWARDED_ENV = [
@@ -35,6 +37,8 @@ export interface ExecutorOptions {
   env: Record<string, string>;
   timeoutMs: number;
   maxStdoutBytes: number;
+  /** Limit on the total size of the files a child writes into its working directory; it is killed past it. */
+  maxFileBytes: number;
   concurrency: number;
 }
 
@@ -85,15 +89,19 @@ export class Executor {
     const o = this.options;
     const { promise, resolve } = Promise.withResolvers<ExecResult>();
     let timedOut = false;
+    let tooLarge = false;
     const child = execFile(
       process.execPath,
       [...o.nodeArgs, o.cliEntry, ...o.startFlags, ...argv],
       { cwd, env: o.env, encoding: 'buffer', maxBuffer: o.maxStdoutBytes, killSignal: 'SIGKILL', windowsHide: true },
       (err, stdout, stderr) => {
         clearTimeout(timer);
+        watcher.close();
         const stderrText = stderr.toString('utf8');
         if (timedOut) {
           resolve({ status: 'timeout', message: `Command timed out after ${o.timeoutMs / 1000} s` });
+        } else if (tooLarge) {
+          resolve({ status: 'failed', message: `Output file exceeds the ${o.maxFileBytes / 1024 / 1024} MB remote limit` });
         } else if (err && 'code' in err && err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
           resolve({ status: 'failed', message: `Command output exceeds the ${o.maxStdoutBytes / 1024 / 1024} MB limit` });
         } else if (err) {
@@ -103,6 +111,14 @@ export class Executor {
         }
       },
     );
+    // Every write into cwd (download temp files included) is checked as it happens, so a large download
+    // stops at the limit instead of filling the disk until the timeout.
+    const watcher = fs.watch(cwd, () => {
+      if (tooLarge || dirSize(cwd) <= o.maxFileBytes) return;
+      tooLarge = true;
+      child.kill('SIGKILL');
+    });
+    watcher.on('error', () => watcher.close());
     // No stdin: destructive commands refuse without a TTY (non-goal: no --yes).
     child.stdin?.end();
     const timer = setTimeout(() => {
@@ -111,4 +127,13 @@ export class Executor {
     }, o.timeoutMs);
     return promise;
   }
+}
+
+/** Total size of the regular files directly in `dir` (entries that vanish meanwhile count as 0). */
+function dirSize(dir: string): number {
+  let total = 0;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isFile()) total += fs.statSync(path.join(dir, entry.name), { throwIfNoEntry: false })?.size ?? 0;
+  }
+  return total;
 }

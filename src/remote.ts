@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Command, CommanderError } from 'commander';
 import { introspectionProgram } from './commands/registry.js';
+import { photoExtension } from './commands/user.js';
 import { exitProcess, reportError } from './errors.js';
 import { saveOrStream } from './files.js';
 import { formatOutput, type OutputFormat } from './formatter.js';
@@ -28,6 +29,7 @@ interface Invocation {
 
 interface RemoteFile {
   name: string;
+  contentType?: string;
   base64: string;
 }
 
@@ -105,10 +107,24 @@ function parseRemoteResponse(value: unknown, status: number): RemoteResponse {
   if (!Array.isArray(rawFiles)) throw invalid;
   for (const f of rawFiles) {
     if (typeof f?.name !== 'string' || typeof f.base64 !== 'string') throw invalid;
-    files.push({ name: f.name, base64: f.base64 });
+    files.push({ name: f.name, contentType: typeof f.contentType === 'string' ? f.contentType : undefined, base64: f.base64 });
   }
   const stderr = 'stderr' in value && typeof value.stderr === 'string' ? value.stderr : undefined;
   return { ok: true, data: 'data' in value ? value.data : null, files, stderr };
+}
+
+/**
+ * Local name for a returned file when the user gave no file name: the server's choice reduced to its last path
+ * segment, refusing empty and dot names (`.bashrc`, `.env`) a malicious server could plant. A profile photo is
+ * named `profile-photo.<ext>` from its content type, exactly like the local CLI.
+ */
+function localFileName(command: string, file: RemoteFile): string {
+  if (command === 'user.download-photo') return `profile-photo${photoExtension(file.contentType ?? '')}`;
+  const name = path.basename(file.name.replace(/\\/g, '/'));
+  if (name === '' || name.startsWith('.')) {
+    throw new Error(`Refusing the file name "${file.name}" from ms365 serve. Choose a file name with --out <file>.`);
+  }
+  return name;
 }
 
 /** REMOTE-0: `tailscale ssh <host> -- ms365 <argv>`; stdio and exit code pass through. File paths are the host's. */
@@ -196,8 +212,8 @@ async function runHttp(baseUrl: string, invocation: Invocation, dryRun: boolean)
   if (remote?.output && file) {
     const bytes = Buffer.from(file.base64, 'base64');
     let target = outPath;
-    if (outIsDir) target = path.join(outPath!, path.basename(file.name));
-    else if (target === undefined && remote.output === 'named') target = path.basename(file.name);
+    if (outIsDir) target = path.join(outPath!, localFileName(invocation.command, file));
+    else if (target === undefined && remote.output === 'named') target = localFileName(invocation.command, file);
     const saved = await saveOrStream(bytes, { out: target, force: force === true });
     if (saved.path) info(`Saved to ${path.resolve(saved.path)} (${formatSize(saved.bytes)})`);
   }

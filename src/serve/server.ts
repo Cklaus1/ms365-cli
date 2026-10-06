@@ -20,6 +20,16 @@ const MAX_BODY_BYTES = MAX_FILE_BYTES + 1024 * 1024;
 
 const LOOPBACK_HOSTS = ['127.0.0.1', 'localhost', '::1'];
 
+/** Bounds for caller-chosen text in audit lines, so a caller cannot grow the log by what it sends. */
+const AUDIT_TEXT_MAX = 128;
+const AUDIT_ARGS_MAX = 32;
+const AUDIT_ARG_KEY_MAX = 64;
+
+/** `text` cut to at most `max` characters, ending in "…" when cut. */
+function clip(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
 export type ErrorCode = 'capability_missing' | 'invalid_args' | 'command_failed' | 'timeout' | 'not_found';
 
 /** Error response: `{ ok: false, request_id, error: { code, message } }` with an HTTP status. */
@@ -146,16 +156,17 @@ function parseStdout(stdout: Buffer): unknown {
   }
 }
 
+/** Returned output files; sizes are checked with `stat` first, so an oversized file is never read into memory. */
 async function collectOutputs(dir: string): Promise<OutputFile[]> {
-  const files: OutputFile[] = [];
+  const entries = (await fsp.readdir(dir, { withFileTypes: true })).filter(e => e.isFile());
   let total = 0;
-  for (const entry of await fsp.readdir(dir, { withFileTypes: true })) {
-    if (!entry.isFile()) continue;
+  for (const entry of entries) total += (await fsp.stat(path.join(dir, entry.name))).size;
+  if (total > MAX_FILE_BYTES) {
+    throw new ApiError(502, 'command_failed', `Output file exceeds the ${MAX_FILE_BYTES / 1024 / 1024} MB remote limit`);
+  }
+  const files: OutputFile[] = [];
+  for (const entry of entries) {
     const bytes = await fsp.readFile(path.join(dir, entry.name));
-    total += bytes.byteLength;
-    if (total > MAX_FILE_BYTES) {
-      throw new ApiError(502, 'command_failed', `Output file exceeds the ${MAX_FILE_BYTES / 1024 / 1024} MB remote limit`);
-    }
     files.push({ name: entry.name, contentType: detectMimeType(entry.name), size: bytes.byteLength, base64: bytes.toString('base64') });
   }
   return files;
@@ -173,22 +184,23 @@ class RemoteServer {
   async handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const started = performance.now();
     const requestId = `req_${randomBytes(8).toString('hex')}`;
-    const url = new URL(req.url ?? '/', 'http://localhost');
+    // `URL.parse` instead of `new URL`: llhttp accepts targets the WHATWG parser rejects (e.g. `//[`); they get a 404.
+    const pathname = URL.parse(req.url ?? '/', 'http://localhost')?.pathname ?? '';
     const forwarded = req.headers['x-forwarded-for'];
     const entry: AuditEntry = {
       ts: new Date().toISOString(),
       request_id: requestId,
       agent: null,
-      src: (Array.isArray(forwarded) ? forwarded.join(', ') : forwarded) ?? null,
+      src: forwarded === undefined ? null : clip(Array.isArray(forwarded) ? forwarded.join(', ') : forwarded, AUDIT_TEXT_MAX),
       method: req.method ?? '',
-      path: url.pathname,
+      path: clip(pathname, AUDIT_TEXT_MAX),
       command: null,
       args: [],
       status: 500,
       duration_ms: 0,
     };
     try {
-      const body = await this.route(req, url.pathname, entry);
+      const body = await this.route(req, pathname, entry);
       entry.status = 200;
       json(res, 200, { ok: true, request_id: requestId, ...body });
     } catch (err) {
@@ -204,7 +216,7 @@ class RemoteServer {
 
   private caller(req: http.IncomingMessage, entry: AuditEntry): Caller {
     try {
-      const caller = parseAppCapabilities(req.headers[APP_CAPS_HEADER], this.options.appCap);
+      const caller = parseAppCapabilities(req.headersDistinct[APP_CAPS_HEADER], this.options.appCap);
       entry.agent = caller.agent;
       return caller;
     } catch (err) {
@@ -236,8 +248,9 @@ class RemoteServer {
 
   private async execute(caller: Caller, request: ExecuteRequest, files: Map<string, File>, entry: AuditEntry): Promise<Record<string, unknown>> {
     const node = findCommand(this.options.tree, request.command);
-    entry.command = node?.path ?? request.command;
-    entry.args = Object.keys(request.args);
+    // Caller-chosen text is bounded in the audit log: an unknown command and arbitrary keys are clipped.
+    entry.command = node?.path ?? clip(request.command, AUDIT_TEXT_MAX);
+    entry.args = Object.keys(request.args).slice(0, AUDIT_ARGS_MAX).map(key => clip(key, AUDIT_ARG_KEY_MAX));
     if (!node) throw new ApiError(400, 'invalid_args', `Unknown command: ${request.command}`);
 
     const policy = remotePolicy(node.path);
@@ -352,10 +365,17 @@ export async function serve(options: ServeOptions): Promise<void> {
   const inflight = new Set<Promise<void>>();
   let stopping = false;
   const server = http.createServer((req, res) => {
-    const handled = app.handle(req, res).finally(() => {
-      inflight.delete(handled);
-      if (stopping) server.closeIdleConnections();
-    });
+    const handled = app.handle(req, res)
+      .catch((err: unknown) => {
+        // handle() answers every error itself; this only guards against a bug there taking the server down.
+        console.error(`Warning: request failed: ${err instanceof Error ? err.message : String(err)}`);
+        if (!res.headersSent) json(res, 500, { ok: false, error: { code: 'command_failed', message: 'Internal server error' } });
+        else res.destroy();
+      })
+      .finally(() => {
+        inflight.delete(handled);
+        if (stopping) server.closeIdleConnections();
+      });
     inflight.add(handled);
   });
 
