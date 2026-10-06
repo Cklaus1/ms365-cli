@@ -8,7 +8,8 @@
 - [x] CORE-5 confirm → CancelledError (core part) (af26654)
 
 ## Tier 1 — parallel
-- [ ] AUTH: AUTH-1/2/3, msal bump (Q8), keytar removal, GRAPH-7 auth side, AUTH-4, auth status exit (CORE-5), setup re-prompt (MISC-1)
+- [x] AUTH: AUTH-1/2/3, msal bump (Q8), keytar removal, GRAPH-7 auth side, AUTH-4, auth status exit (CORE-5), setup re-prompt (MISC-1) (b138d27, merged)
+- [x] Node 24 LTS target (user decision; c57b227)
 - [ ] GRAPH: GRAPH-1, GRAPH-5/7, GRAPH-4, GRAPH-2, GRAPH-3, GRAPH-6, CORE-4 dry-run/streamPages, FMT-1, PAGE-1 helpers, quoting helpers, command test harness
 
 ## Tier 2 — parallel command slices

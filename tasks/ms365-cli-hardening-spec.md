@@ -108,6 +108,7 @@ Critical-path extra gate: CORE-1 and AUTH-1/2 need an end-to-end process test (s
 - Concurrency: last writer wins. A concurrent login on two machines that share a cache can drop one newly added account — acceptable, and moot under REMOTE-1 (one host). No lockfile.
 - Migration: tokens stored only in the OS keychain are not migrated; affected users run `ms365 auth login` once (changelog entry). Users who already used the file fallback keep the same path.
 - **Accept:** headless `auth login` (fake MSAL) writes the cache file at 0600 inside a 0700 dir, exit 0; 10 concurrent processes that refresh leave a cache that parses; a silent refresh persists the cache (content changes); `grep -r keytar src package.json` → empty.
+- [REVISED: implementation] `device-code.txt` is no longer written at all (message goes to stderr only); a leftover file from older versions is deleted when login completes.
 
 ### AUTH-3 (P1) Scopes don't cover implemented commands `[graph-doc]`
 - No `MailboxSettings.*` anywhere (`auth.ts:43-72`) → `mail rules/rule/create-rule/update-rule`, `user mailbox-settings`, `user set-ooo`/`get-ooo` get 403.
@@ -115,6 +116,7 @@ Critical-path extra gate: CORE-1 and AUTH-1/2 need an end-to-end process test (s
 - `cal rooms` needs `Place.Read.All` if moved to `/places` (CAL-1).
 - **Fix:** single scope table keyed by command group; setup derives from it; add `MailboxSettings.ReadWrite`.
 - [REVISED: consequences + cite] Adding scopes makes every existing session's `acquireTokenSilent` fail with `interaction_required`. Ship AUTH-3 in the same change set as AUTH-2 (which already forces one re-login; one changelog entry). Map `InteractionRequiredAuthError` to "Permissions changed — run: ms365 auth login". Add `'MailboxSettings.ReadWrite': ['MailboxSettings.Read']` to `SCOPE_HIERARCHY` (`auth.ts:33-40`). The setup table is `setup.ts:26-41` (`:167` is the one-off use, never saved). `Place.Read.All` is not needed (CAL-1 uses beta `findRooms`, Q12).
+- [REVISED: implementation] The scope set is not persisted: setup and commands both derive scopes from one `SCOPE_GROUPS` table via `buildScopes(orgMode)`, so they always agree for a given org mode; setup prints the env exports to set (`MS365_CLI_ORG_MODE=true`, custom `MS365_CLI_CLIENT_ID`). A persisted scope file would be a second config source, which Q3 rejected.
 
 ### AUTH-4 (P1) Setup wizard can't bootstrap `[code]`
 - `setup.ts:60-64` calls `getAuth()` before asking for a client ID → throws "run: ms365 auth setup" (circular). Option "[1] built-in app registration" has no built-in client ID. "Use existing login?" answer ignored (`setup.ts:66-73`). Windows `start "url"` opens a blank console (`setup.ts:116-118`).
@@ -122,6 +124,7 @@ Critical-path extra gate: CORE-1 and AUTH-1/2 need an end-to-end process test (s
 - Risks to cover: tenants can block or require admin consent for this app → on `AADSTS65001`, `AADSTS50105`, `AADSTS700016`, `AADSTS90094`, `AADSTS53003`, `AADSTS7000112`, `AADSTS50020`, `AADSTS500208`, print a message pointing to the custom-app path (option [2]). [INFERENCE] Personal Microsoft accounts likely work via `/common` but are untested; say so in setup text and README. [REVISED: added risk] The standalone Graph CLI was retired (2026-08-28); the app ID lives on through Microsoft Graph PowerShell and could change under Microsoft's control — README notes this and the override.
 - [REVISED: added] `user set-presence`/`clear-presence` read `process.env.MS365_CLI_CLIENT_ID` directly (`user.ts:123-124,142-143`); USER-2's switch to `setUserPreferredPresence` removes that dependency. Nothing else may read the client ID from env except `AuthManager`.
 - Also fix: construct `AuthManager` only after a client ID is resolved; honor "Use existing login?"; on Windows run `start "" "<url>"`.
+- [REVISED: implementation] Setup still calls `getAuth()` once, read-only, for the "already logged in?" check (cannot throw now that a default client ID exists); the new login uses a fresh `AuthManager(buildScopes(orgMode), { clientId })`. The AADSTS custom-app hint is shown only while the built-in client ID is in use.
 - **Accept:** fresh `HOME`, no env → `ms365 auth setup` reaches the device-code prompt with no throw; `MS365_CLI_CLIENT_ID=x` → the custom ID is used (asserted via MSAL config in a unit test).
 
 ---
@@ -218,6 +221,7 @@ Critical-path extra gate: CORE-1 and AUTH-1/2 need an end-to-end process test (s
 - README: default output is TTY→table / pipe→json, README says JSON default (`README.md:207`); "429 up to 3 retries" is 3 attempts / 2 retries; `--quiet` and `MS365_CLI_READ_ONLY` undocumented; command counts (mail 36, drive 16) and missing `ls/cat/cp` docs; "Dry-run skips authentication" false until PLANNER-1.
 - `.env` is loaded from **cwd** (`index.ts:1`). **Decided (Q3): keep it.** README must say so explicitly: a globally installed `ms365` reads the `.env` of the current directory, so set agent/remote settings (`MS365_REMOTE_URL`, client ID) [REVISED: was `MS365_CLI_GRAPH_PROXY`, proxy design replaced by Q9] as real environment variables in the agent's shell/service environment, not in per-project `.env` files. Known risk accepted: a project `.env` containing `MS365_CLI_TOKEN`/`MS365_CLI_CLIENT_ID` overrides silently. The repo `.env` also holds an unrelated third-party API key (`.env:1`) — gitignored, but it doesn't belong to this tool.
 - Dependencies: drop `keytar` (Q5, AUTH-2); bump `@azure/msal-node` to the current major in the same change as AUTH-2 (Q8) — clears the `uuid` advisory; absorb breaking API changes in `auth.ts` while it's being rewritten anyway. `npm audit --omit=dev` → 0 after.
+- [REVISED: user decision 2026-10-06] Target Node 24 LTS: `engines.node >=24`, TS target ES2024, tsup target `node24`, `.nvmrc` = 24, `@types/node` ^24. (msal-node 5–7 require Node ≥20 anyway.) README requirements must say Node ≥24.
 - No command-level tests. Each P0/P1 fix lands with a mocked-`fetch` regression test asserting the outbound request (method, URL, body) — the pattern `test/graph-client.test.ts` already uses.
 
 ---
