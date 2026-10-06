@@ -41,14 +41,15 @@ All notable changes to this project are documented here. The format follows [Kee
 - `mail triage` no longer fails with `InefficientFilter`; `--include-read` keeps your `--filter`. [MAIL-5]
 - `mail reply --html` sends an HTML body; `mail read -o json|yaml` includes attachments; triage CSV/YAML/text show full IDs. [MAIL-7]
 - Quotes in `--search` values are escaped (`mail list`, `contacts list`, `groups list`, `search people`). [MAIL-8, GROUPS-1]
-- Calendar and workflow times are read in your local time zone; day and week boundaries are local. [WF-1]
+- Calendar and workflow times are read in your local time zone; day and week boundaries are local, including To Do due dates in `workflow digest`. A `TZ` the runtime cannot name falls back to UTC. [WF-1, WF-3]
 - `workflow meeting-prep` skips all-day and in-progress events; `focus-time` handles multi-day events and validates `--work-start`/`--work-end` (`HH:MM`); `digest` scans every To Do list; `email-to-task` uses the default list and honours `-o`; `file-announce` posts escaped HTML. [WF-3, MISC-1]
 - `cal rooms`/`room-lists` call the beta endpoints they need. [CAL-1]
 - `cal decline` proposes new times in `--timezone` (default local) instead of UTC and rejects `--no-notify` with a proposal or a lone `--propose-end`; `cal update --timezone` alone is rejected; `cal view` gains `--top`. [CAL-2]
 - `todo --importance`/`--status` are validated; update commands with no field fail with "Nothing to update" instead of sending an empty PATCH (todo, contacts, calendar, planner). [TODO-1]
 - Drive paths with `#`, `?`, `%` or spaces reach the right file (`drive ls/cat/cp`, `sp site-by-path`). [DRIVE-1]
 - `excel sort-range` calls `sort/apply`; `format-range` PATCHes font and fill separately and `--font-bold` is optional. [EXCEL-1]
-- `sp delta` prints `nextLink`/`deltaLink` and resumes with `--delta-link`. [SP-2]
+- `sp delta` prints `nextLink`/`deltaLink` and resumes with `--delta-link` (both the `sites/delta` and `sites/delta()` link forms). [SP-2]
+- Dates that do not exist (`2026-02-30`) or are incomplete (`2026-12`) are rejected instead of rolling over to another day (`todo`, `mail flag`, `planner`, `user set-ooo`, `workflow email-to-task`).
 - Planner ETag lookups go through the Graph client (API version, retry, read-only); `--dry-run` updates/deletes work without login. [PLANNER-1]
 - `planner create-plan` uses `container` instead of the deprecated `owner`. [PLANNER-2]
 - `onenote page` prints raw HTML; `onenote pages` pages. [ONENOTE-1]
@@ -78,7 +79,9 @@ All notable changes to this project are documented here. The format follows [Kee
 
 - `mail download-attachment` reduces the sender-supplied file name to its base name, so an attachment cannot write outside the target directory (path traversal). [MAIL-1]
 - Non-idempotent requests (`POST`/`PATCH`, and uploads with `--conflict rename`) are retried only on 429, never after a timeout or 5xx, so a send cannot be delivered twice; the error says the request may have been applied. `teams`/`chat` send commands no longer exit 1 after a successful post. [GRAPH-1, GRAPH-3, TEAMS-1]
-- `sp delta --delta-link` accepts only `https://graph.microsoft.com/…/sites/delta()` links, so a pasted URL cannot send your bearer token to another host. [SP-2]
+- `sp delta --delta-link` accepts only `https://graph.microsoft.com/…/sites/delta` links, so a pasted URL cannot send your bearer token to another host. [SP-2]
+- `.`/`..` path segments are rejected before any request: `sp site-by-path contoso.sharepoint.com ../../me/messages` used to read the mailbox, and under `ms365 serve` a `sharepoint.read` grant could reach any Graph resource.
+- `ms365 serve`: a malformed request target no longer crashes the service; download output is capped at 25 MB while the command runs (the child is killed past it); a repeated `Tailscale-App-Capabilities` header is denied; audit lines are bounded. `ms365-remote` refuses server-chosen file names that start with `.` and names profile photos locally. [REMOTE-1]
 - `mail create-rule` asks for confirmation before creating a rule with no conditions (a catch-all that could delete or forward every message); `mail delete-attachment` asks too. [MAIL-2, MAIL-7]
 - Token cache files are 0600 in a 0700 directory, re-applied on every start, written atomically; `device-code.txt` is no longer written. [AUTH-2]
 - `@azure/msal-node` 7 (clears the `uuid` advisory). [Q8]

@@ -447,7 +447,7 @@ ms365 cal create-calendar --name "Side Project" --color lightGreen
 ms365 cal update-calendar <calendarId> --name "Renamed"
 ```
 
-- Event reads return times in your local time zone; day and week boundaries are local.
+- Event reads return times in your local time zone; day and week boundaries are local. If the runtime cannot name the zone (a POSIX `TZ` such as `JST-9`, or an empty `TZ=`), UTC is used.
 - `cal create --timezone` defaults to `UTC`.
 - `decline --propose-start`/`--propose-end` must be given together, cannot be combined with `--no-notify`, and are interpreted in `--timezone` (default: the local zone).
 - `update` / `update-calendar` with no fields fail with "Nothing to update" (exit 1). `update --timezone` needs `--start` or `--end`.
@@ -592,7 +592,7 @@ ms365 --org-mode sp delta                  # Track site changes
 ms365 --org-mode sp delta --delta-link "<nextLink or deltaLink>"
 ```
 
-`sp delta` prints `{ value, nextLink }` or `{ value, deltaLink }`. Pass `nextLink` back with `--delta-link` to continue, or a saved `deltaLink` to get later changes; `--all` drains the whole round. Only `https://graph.microsoft.com/…/sites/delta()` links are accepted.
+`sp delta` prints `{ value, nextLink }` or `{ value, deltaLink }`. Pass `nextLink` back with `--delta-link` to continue, or a saved `deltaLink` to get later changes; `--all` drains the whole round. Only `https://graph.microsoft.com/…/sites/delta` links (with or without `()`) are accepted.
 
 ---
 
