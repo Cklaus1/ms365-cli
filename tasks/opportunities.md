@@ -22,3 +22,5 @@
 | 18 | Teams send commands print nothing on stdout, so callers can't get the created message id; add `-o` | P3 | OrgSlice |
 | 19 | `.version('0.1.0')` hard-coded in `index.ts`; read from package.json | P3 | MetaSlice |
 | 20 | Free-text option values (`calendar --color`, `drive share --type/--scope`, `user set-ooo --status`, `search --entity`) lack `.choices()`; REMOTE-1 validation and generated skills would then enforce/document them | P3 | MetaSlice |
+| 21 | In `--dry-run`, `mail send/reply` and others still print success messages ("Email sent successfully."); only teams and `user set-presence` check `status !== 0` | P2 | DocsTrack |
+| 22 | Only 35 of 175 commands have a `schema` ENDPOINTS entry; generate the catalog or annotate per command to stop drift | P3 | DocsTrack |

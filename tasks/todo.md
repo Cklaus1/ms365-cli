@@ -19,11 +19,11 @@
 - [x] ORG: TEAMS-1/2, USER-1..3, GROUPS-1 (9341206)
 - [x] META: SCHEMA-1, SKILLS-1 (f1d68f0; + 1913d82 src/commands/registry.ts)
 
-## Tier 3 — remote
+## Tier 3 — remote (slice/remote, RemoteTrack)
 - [ ] REMOTE-1a/b/c `ms365 serve`
 - [ ] REMOTE-1d `ms365-remote` + REMOTE-0 ssh mode
 
 ## Tier 4
-- [ ] §6 docs/hygiene, README, CHANGELOG, npm audit 0
+- [ ] §6 docs/hygiene, README, CHANGELOG, schema ENDPOINTS (slice/docs, DocsTrack); npm audit 0 (verified at 9415b9d)
 - [ ] Implementation review loop
 - [ ] End-of-run report
