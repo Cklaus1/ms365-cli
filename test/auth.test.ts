@@ -11,6 +11,11 @@ describe('buildScopes', () => {
     expect(scopes).toContain('Files.ReadWrite');
   });
 
+  it('covers mail rules, mailbox settings and auto-replies (AUTH-3)', () => {
+    expect(buildScopes(false)).toContain('MailboxSettings.ReadWrite');
+    expect(buildScopes(true)).toContain('MailboxSettings.ReadWrite');
+  });
+
   it('excludes org scopes when orgMode is false', () => {
     const scopes = buildScopes(false);
     expect(scopes).not.toContain('Chat.Read');
@@ -54,6 +59,7 @@ describe('buildScopes', () => {
       ['Tasks.ReadWrite', 'Tasks.Read'],
       ['Contacts.ReadWrite', 'Contacts.Read'],
       ['Presence.ReadWrite', 'Presence.Read'],
+      ['MailboxSettings.ReadWrite', 'MailboxSettings.Read'],
     ];
     for (const [higher, lower] of pairs) {
       if (scopes.includes(higher)) {
