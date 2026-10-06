@@ -1,25 +1,11 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+// quiet: dotenv 17 otherwise prints a banner to stdout, breaking `-o json` pipelines.
+dotenv.config({ quiet: true });
 
-// Exit immediately on broken pipe — prevents zombie processes when piped to head/tail/etc.
-process.stdout.on('error', (err) => {
-  if (err.code === 'EPIPE' || err.code === 'ERR_STREAM_DESTROYED') process.exit(0);
-});
-process.stderr.on('error', (err) => {
-  if (err.code === 'EPIPE' || err.code === 'ERR_STREAM_DESTROYED') process.exit(0);
-});
-
-// Force stdout to flush after every write — prevents buffering when not a TTY
-// (e.g., when run from scripts, Claude Code, or piped to another process)
-const origWrite = process.stdout.write.bind(process.stdout);
-process.stdout.write = function(chunk: any, ...args: any[]): boolean {
-  const result = origWrite(chunk, ...args);
-  try { (process.stdout as any)._handle?.flush?.(); } catch {}
-  return result;
-};
-
-import { Command } from 'commander';
+import { Command, CommanderError } from 'commander';
 import { AuthManager, buildScopes } from './auth.js';
 import { GraphClient } from './graph-client.js';
+import { exitProcess, reportError } from './errors.js';
 import { registerAuthCommands } from './commands/auth.js';
 import { registerMailCommands } from './commands/mail.js';
 import { registerCalendarCommands } from './commands/calendar.js';
@@ -41,6 +27,26 @@ import { registerSetupCommand } from './commands/setup.js';
 import logger from './logger.js';
 import { setQuiet } from './utils.js';
 
+// Exit immediately on broken pipe - prevents zombie processes when piped to head/tail/etc.
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EPIPE' || err.code === 'ERR_STREAM_DESTROYED') process.exit(0);
+  });
+}
+
+const envFlag = (...names: string[]) => names.some(n => process.env[n] === 'true' || process.env[n] === '1');
+
+interface GlobalOptions {
+  orgMode?: boolean;
+  readOnly?: boolean;
+  dryRun?: boolean;
+  apiVersion: string;
+  quiet?: boolean;
+}
+
+/** Commands that run without a client ID or token cache. */
+const NO_AUTH_COMMANDS: Record<string, true> = { auth: true, schema: true, 'generate-skills': true };
+
 const program = new Command();
 
 program
@@ -50,51 +56,37 @@ program
   .option('--org-mode', 'Enable organization mode (Teams, SharePoint, shared mailboxes)')
   .option('--read-only', 'Restrict to read-only operations')
   .option('--dry-run', 'Preview the API request without executing it')
-  .option('--api-version <version>', 'Graph API version (default: v1.0)', 'v1.0')
-  .option('-q, --quiet', 'Suppress non-data output (confirmations, progress)');
+  .option('--api-version <version>', 'Graph API version', process.env.MS365_CLI_API_VERSION || 'v1.0')
+  .option('-q, --quiet', 'Suppress non-data output (confirmations, progress)')
+  // Global flags must precede the subcommand, so an argument value like `--body --dry-run` can never flip a mode.
+  .enablePositionalOptions()
+  .exitOverride();
 
-// Determine flags from env or argv
-const orgMode =
-  process.argv.includes('--org-mode') ||
-  process.env.MS365_CLI_ORG_MODE === 'true' ||
-  process.env.MS365_CLI_ORG_MODE === '1' ||
-  process.env.MS365_MCP_ORG_MODE === 'true' ||
-  process.env.MS365_MCP_ORG_MODE === '1';
-
-const dryRun = process.argv.includes('--dry-run');
-const readOnly =
-  process.argv.includes('--read-only') ||
-  process.env.MS365_CLI_READ_ONLY === 'true' ||
-  process.env.MS365_CLI_READ_ONLY === '1';
-
-if (process.argv.includes('--quiet') || process.argv.includes('-q')) {
-  setQuiet(true);
+/** Global flags after Commander parsing; env vars fill in what the command line leaves unset. */
+function globals(): GlobalOptions {
+  const opts = program.opts<GlobalOptions>();
+  return {
+    ...opts,
+    orgMode: opts.orgMode || envFlag('MS365_CLI_ORG_MODE', 'MS365_MCP_ORG_MODE'),
+    readOnly: opts.readOnly || envFlag('MS365_CLI_READ_ONLY'),
+  };
 }
 
-// Extract --api-version value (CLI flag takes precedence over env var)
-let apiVersion = process.env.MS365_CLI_API_VERSION || 'v1.0';
-const apiIdx = process.argv.indexOf('--api-version');
-if (apiIdx !== -1 && process.argv[apiIdx + 1]) {
-  apiVersion = process.argv[apiIdx + 1];
-}
-
-const scopes = buildScopes(orgMode);
-
-// Lazy-initialized singletons
+// Lazy-initialized singletons, built from parsed global options on first use.
 let authManager: AuthManager | null = null;
 let graphClient: GraphClient | null = null;
 
 function getAuth(): AuthManager {
   if (!authManager) {
-    authManager = new AuthManager(scopes);
+    authManager = new AuthManager(buildScopes(Boolean(globals().orgMode)));
   }
   return authManager;
 }
 
 function getClient(): GraphClient {
   if (!graphClient) {
-    const auth = getAuth();
-    graphClient = new GraphClient(auth, dryRun, apiVersion, readOnly);
+    const g = globals();
+    graphClient = new GraphClient(getAuth(), Boolean(g.dryRun), g.apiVersion, Boolean(g.readOnly));
   }
   return graphClient;
 }
@@ -119,27 +111,31 @@ registerSchemaCommands(program);
 registerGenerateSkillsCommand(program);
 registerSetupCommand(program, getAuth);
 
-// Ensure auth is initialized before non-auth commands
-program.hook('preAction', async (thisCommand) => {
+// Apply global flags and load the token cache before any command that talks to Graph.
+program.hook('preAction', async (_program, actionCommand) => {
+  const g = globals();
+  if (g.quiet) setQuiet(true);
+
   const commandChain: string[] = [];
-  let cmd: Command | null = thisCommand;
-  while (cmd) {
+  for (let cmd: Command | null = actionCommand; cmd && cmd !== program; cmd = cmd.parent) {
     commandChain.unshift(cmd.name());
-    cmd = cmd.parent;
   }
+  logger.info(`Running: ms365 ${commandChain.join(' ')}`);
 
-  // Skip auth initialization for auth commands and dry-run
-  if (commandChain.includes('auth')) return;
-  if (dryRun) return;
-
-  logger.info(`Running: ms365 ${commandChain.slice(1).join(' ')}`);
-
-  const auth = getAuth();
-  await auth.initialize();
+  if (NO_AUTH_COMMANDS[commandChain[0]] || g.dryRun) return;
+  await getAuth().initialize();
 });
 
-program.parseAsync(process.argv).catch((err) => {
-  logger.error(err.message);
-  console.error('Error:', err.message);
-  process.exit(1);
-});
+async function main(): Promise<number> {
+  try {
+    await program.parseAsync(process.argv);
+    return typeof process.exitCode === 'number' ? process.exitCode : 0;
+  } catch (err) {
+    // --help / --version throw with exitCode 0; usage errors were already printed by Commander.
+    if (err instanceof CommanderError) return err.exitCode;
+    reportError(err);
+    return 1;
+  }
+}
+
+main().then(exitProcess);
