@@ -6,24 +6,7 @@ import { Command, CommanderError } from 'commander';
 import { AuthManager, buildScopes } from './auth.js';
 import { GraphClient } from './graph-client.js';
 import { exitProcess, reportError } from './errors.js';
-import { registerAuthCommands } from './commands/auth.js';
-import { registerMailCommands } from './commands/mail.js';
-import { registerCalendarCommands } from './commands/calendar.js';
-import { registerDriveCommands } from './commands/drive.js';
-import { registerTodoCommands } from './commands/todo.js';
-import { registerContactsCommands } from './commands/contacts.js';
-import { registerTeamsCommands } from './commands/teams.js';
-import { registerSharePointCommands } from './commands/sharepoint.js';
-import { registerPlannerCommands } from './commands/planner.js';
-import { registerOneNoteCommands } from './commands/onenote.js';
-import { registerExcelCommands } from './commands/excel.js';
-import { registerSearchCommands } from './commands/search.js';
-import { registerUserCommands } from './commands/user.js';
-import { registerWorkflowCommands } from './commands/workflow.js';
-import { registerGroupsCommands } from './commands/groups.js';
-import { registerSchemaCommands } from './commands/schema.js';
-import { registerGenerateSkillsCommand } from './commands/generate-skills.js';
-import { registerSetupCommand } from './commands/setup.js';
+import { registerAllCommands } from './commands/registry.js';
 import logger from './logger.js';
 import { setQuiet } from './utils.js';
 
@@ -92,24 +75,7 @@ function getClient(): GraphClient {
 }
 
 // Register all command modules
-registerAuthCommands(program, getAuth);
-registerMailCommands(program, getClient);
-registerCalendarCommands(program, getClient);
-registerDriveCommands(program, getClient);
-registerTodoCommands(program, getClient);
-registerContactsCommands(program, getClient);
-registerTeamsCommands(program, getClient);
-registerSharePointCommands(program, getClient);
-registerPlannerCommands(program, getClient);
-registerOneNoteCommands(program, getClient);
-registerExcelCommands(program, getClient);
-registerSearchCommands(program, getClient);
-registerUserCommands(program, getClient);
-registerWorkflowCommands(program, getClient);
-registerGroupsCommands(program, getClient);
-registerSchemaCommands(program);
-registerGenerateSkillsCommand(program);
-registerSetupCommand(program, getAuth);
+registerAllCommands(program, getAuth, getClient);
 
 // Apply global flags and load the token cache before any command that talks to Graph.
 program.hook('preAction', async (_program, actionCommand) => {

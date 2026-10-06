@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { runCli, tempDir, type RunResult } from '../e2e/run-cli.js';
 import { buildCommandTree, type CommandTree } from '../../src/command-tree.js';
-import { introspectionProgram } from '../../src/commands/generate-skills.js';
+import { introspectionProgram } from '../../src/commands/registry.js';
 import { endpointKeys } from '../../src/commands/schema.js';
 
 function readTree(dir: string): Record<string, string> {

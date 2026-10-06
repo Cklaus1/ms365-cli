@@ -3,7 +3,7 @@ import { Command, Option } from 'commander';
 import {
   buildArgv, buildCommandTree, findCommand, InvalidInvocationError, validateInvocation, type CommandNode,
 } from '../src/command-tree.js';
-import { introspectionProgram } from '../src/commands/generate-skills.js';
+import { introspectionProgram } from '../src/commands/registry.js';
 
 /** Program shaped like the CLI root: global flag, positional options, one group with an alias. */
 function sampleProgram(): Command {
