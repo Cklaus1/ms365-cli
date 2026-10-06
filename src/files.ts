@@ -53,12 +53,21 @@ export async function saveOrStream(source: Source, opts: SaveOptions = {}, stdou
     if (force) {
       fs.renameSync(tmp, out);
     } else {
-      // link fails with EEXIST if `out` appeared meanwhile: no-overwrite stays atomic.
+      // link fails with EEXIST if `out` appeared meanwhile: no-overwrite stays atomic. Filesystems
+      // without hard links (vfat/exFAT, some FUSE/network mounts) get an exclusive copy instead.
       try {
         fs.linkSync(tmp, out);
       } catch (err: unknown) {
-        if (err instanceof Error && 'code' in err && err.code === 'EEXIST') throw existsError(out);
-        throw err;
+        const code = errorCode(err);
+        if (code === 'EEXIST') throw existsError(out);
+        if (!(code && NO_HARD_LINKS[code])) throw err;
+        try {
+          fs.copyFileSync(tmp, out, fs.constants.COPYFILE_EXCL);
+        } catch (copyErr: unknown) {
+          if (errorCode(copyErr) === 'EEXIST') throw existsError(out);
+          fs.rmSync(out, { force: true }); // EXCL: anything at `out` now is our partial copy
+          throw copyErr;
+        }
       }
       fs.rmSync(tmp, { force: true });
     }
@@ -71,6 +80,13 @@ export async function saveOrStream(source: Source, opts: SaveOptions = {}, stdou
 
 function existsError(out: string): Error {
   return new Error(`File exists: ${out}. Use --force to overwrite.`);
+}
+
+/** link() errors meaning "no hard links on this filesystem". */
+const NO_HARD_LINKS: Record<string, true> = { EPERM: true, ENOTSUP: true, ENOSYS: true };
+
+function errorCode(err: unknown): string | undefined {
+  return err instanceof Error && 'code' in err && typeof err.code === 'string' ? err.code : undefined;
 }
 
 async function* chunks(source: ReadableStream<Uint8Array> | Uint8Array): AsyncGenerator<Uint8Array> {

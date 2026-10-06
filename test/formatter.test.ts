@@ -374,6 +374,19 @@ describe('FMT-1 yaml scalars and keys', () => {
     expect(yaml([input])).toBe(`- ${expected}\n`);
   });
 
+  it.each([
+    '2026-10-06', '2026-1-6', '0b101', '-0b1_0', '1_000', '1_000.5', '0777', '0x_1F', '1.2.3', '5.', '=', '<<',
+    '1:20', '-1:20:30.5', '.inf', '-.Inf', '.NaN', '~', '0o17', '0x1F', '1e5', '+12', 'off', 'Y',
+  ])('YAML 1.1 non-string %j is quoted (as value and key)', (input) => {
+    expect(yaml({ v: input })).toBe(`v: "${input}"\n`);
+    expect(yaml({ [input]: 1 })).toBe(`"${input}": 1\n`);
+  });
+
+  it.each(['v1.2', '2026-10', '12345-6789', 'a=b', '<<a', '_1', '1.2e', '0b2', 'x1_000', '2026-10-06 notes'])(
+    'look-alike %j stays plain', (input) => {
+      expect(yaml({ v: input })).toBe(`v: ${input}\n`);
+    });
+
   it('quotes keys the same way (driveItem fixture)', () => {
     const item = {
       '@microsoft.graph.downloadUrl': 'https://x.example/d?a=1',

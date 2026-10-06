@@ -56,3 +56,50 @@ describe('CORE-7 .env loading is silent', () => {
     expect(() => JSON.parse(r.stdout)).not.toThrow();
   });
 });
+
+describe('.env settings apply before the logger starts', () => {
+  it('MS365_CLI_LOG_LEVEL=debug from .env logs to stderr; stdout stays pure JSON', async () => {
+    const cwd = tempDir();
+    fs.writeFileSync(path.join(cwd, '.env'), 'MS365_CLI_LOG_LEVEL=debug\n');
+    const r = await runCli(['mail', 'list', '-o', 'json'], {
+      cwd,
+      env: { ...CLIENT, MS365_CLI_TOKEN: 'fake' },
+      routes: [{ match: '/me/messages', body: { value: [{ id: 'm1' }] } }],
+    });
+    expect(r.code).toBe(0);
+    expect(r.stderr).toMatch(/^\[debug\] /m);
+    expect(JSON.parse(r.stdout)).toEqual({ value: [{ id: 'm1' }] });
+  });
+
+  it('MS365_CLI_LOG_FILE from .env receives the log', async () => {
+    const cwd = tempDir();
+    const logFile = path.join(cwd, 'cli.log');
+    fs.writeFileSync(path.join(cwd, '.env'), `MS365_CLI_LOG_LEVEL=debug\nMS365_CLI_LOG_FILE=${logFile}\n`);
+    const r = await runCli(['mail', 'list', '-o', 'json'], {
+      cwd,
+      env: { ...CLIENT, MS365_CLI_TOKEN: 'fake' },
+      routes: [{ match: '/me/messages', body: { value: [] } }],
+    });
+    expect(r.code).toBe(0);
+    const logs = fs.readdirSync(cwd).filter((f) => /^cli-\d{4}-\d\d-\d\d\.log$/.test(f)); // daily-rotated name
+    expect(logs).toHaveLength(1);
+    expect(fs.readFileSync(path.join(cwd, logs[0]), 'utf8')).toContain('"level":"debug"');
+  });
+});
+
+describe('MS365_CLI_TOKEN needs no config dir', () => {
+  it('a Graph command works when HOME/.config cannot be created', async () => {
+    // A regular file as HOME: mkdir fails with ENOTDIR even as root (chmod would not stop root).
+    const home = path.join(tempDir('ms365-home-'), 'not-a-dir');
+    fs.writeFileSync(home, '');
+    const r = await runCli(['mail', 'list', '-o', 'json'], {
+      home,
+      env: { ...CLIENT, MS365_CLI_TOKEN: 'fake' },
+      routes: [{ match: '/me/messages', body: { value: [{ id: 'm1' }] } }],
+    });
+    expect(r.stderr).toBe('');
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.stdout)).toEqual({ value: [{ id: 'm1' }] });
+    expect(r.requests[0].headers.authorization).toBe('Bearer fake');
+  });
+});

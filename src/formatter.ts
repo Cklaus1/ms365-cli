@@ -282,8 +282,12 @@ function inlineValue(val: unknown): string {
 }
 
 const YAML_INDICATOR_START = /^[-?:,[\]{}#&*!|>'"%@`]/;
-/** YAML 1.1 + 1.2 plain scalars that would not load as strings (bools, null, numbers, inf/nan). */
-const YAML_NON_STRING = /^(~|null|true|false|yes|no|on|off|y|n|[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?|0x[0-9a-f]+|0o[0-7]+|[+-]?\.inf|\.nan)$/i;
+/**
+ * YAML 1.1 + 1.2 plain scalars that would not load as strings: bools, null, `=` (value), `<<` (merge),
+ * ints/floats incl. 1.1 `_` separators, `0b`, leading-0 octal, `0x`/`0o`, `1.2.3`-style 1.1 floats,
+ * inf/nan, and date-only timestamps. Sexagesimal and timestamps with a time contain `:`, quoted anyway.
+ */
+const YAML_NON_STRING = /^(~|null|true|false|yes|no|on|off|y|n|=|<<|[-+]?(?=\.?\d)[\d_]*(\.[\d._]*)?(e[-+]?\d+)?|[-+]?0b[01_]+|[-+]?0x[\da-f_]+|[-+]?0o[0-7]+|[-+]?\.inf|\.nan|\d{4}-\d\d?-\d\d?)$/i;
 
 /** A string as a YAML scalar (value or key): plain when it reads back as the same string, else double-quoted. */
 function yamlScalar(s: string): string {

@@ -116,3 +116,35 @@ describe('GRAPH-2 requestBinary + saveOrStream', () => {
     expect(calls).toHaveLength(1);
   });
 });
+
+describe('saveOrStream on filesystems without hard links (vfat/exFAT/FUSE)', () => {
+  const noLink = (code: string) => Object.assign(new Error(`${code}: link not supported`), { code });
+
+  it.each(['EPERM', 'ENOTSUP', 'ENOSYS'])('saves without --force when link fails with %s, leaving no temp file', async (code) => {
+    vi.spyOn(fs, 'linkSync').mockImplementation(() => { throw noLink(code); });
+    const dir = tmp();
+    const out = path.join(dir, 'a.pdf');
+    expect(await saveOrStream(PDF, { out })).toEqual({ path: out, bytes: PDF.byteLength });
+    expect(fs.readFileSync(out).equals(PDF)).toBe(true);
+    expect(fs.readdirSync(dir)).toEqual(['a.pdf']);
+  });
+
+  it('still refuses to overwrite a file that appeared during the download', async () => {
+    const dir = tmp();
+    const out = path.join(dir, 'a.txt');
+    vi.spyOn(fs, 'linkSync').mockImplementation(() => {
+      fs.writeFileSync(out, 'racer');
+      throw noLink('EPERM');
+    });
+    await expect(saveOrStream(Buffer.from('new'), { out })).rejects.toThrow(/File exists.*--force/);
+    expect(fs.readFileSync(out, 'utf8')).toBe('racer');
+    expect(fs.readdirSync(dir)).toEqual(['a.txt']);
+  });
+
+  it('other link errors still fail the save', async () => {
+    vi.spyOn(fs, 'linkSync').mockImplementation(() => { throw noLink('EIO'); });
+    const dir = tmp();
+    await expect(saveOrStream(Buffer.from('x'), { out: path.join(dir, 'a.txt') })).rejects.toThrow('EIO');
+    expect(fs.readdirSync(dir)).toEqual([]);
+  });
+});
