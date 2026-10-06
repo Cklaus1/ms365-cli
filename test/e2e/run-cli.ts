@@ -71,9 +71,9 @@ export async function runCli(args: string[], opts: RunOptions = {}): Promise<Run
   child.stderr.setEncoding('utf8').on('data', (d) => { stderr += d; });
   child.stdin.end(opts.stdin ?? '');
   const timeout = setTimeout(() => child.kill('SIGKILL'), opts.timeoutMs ?? 20_000);
-  const [code, signal] = await new Promise<[number | null, NodeJS.Signals | null]>((resolve) => {
-    child.on('close', (c, s) => resolve([c, s]));
-  });
+  const exited = Promise.withResolvers<[number | null, NodeJS.Signals | null]>();
+  child.on('close', (c, s) => exited.resolve([c, s]));
+  const [code, signal] = await exited.promise;
   clearTimeout(timeout);
   const requests = logPath && fs.existsSync(logPath)
     ? fs.readFileSync(logPath, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l))
