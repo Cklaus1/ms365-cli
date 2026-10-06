@@ -51,6 +51,16 @@ export interface GraphResponse {
   count?: number;
 }
 
+/** An unparsed response body (GRAPH-2). `body` is null for a dry-run preview or an empty body. */
+export interface BinaryResponse {
+  body: ReadableStream<Uint8Array> | null;
+  /** HTTP status; 0 for a dry-run preview. */
+  status: number;
+  contentType: string;
+  /** From Content-Length, when the server sent one. */
+  contentLength?: number;
+}
+
 /** A non-2xx answer from Graph after the retry policy gave up. */
 export class GraphError extends Error {
   constructor(message: string, readonly status: number, readonly code?: string) {
@@ -108,14 +118,9 @@ export class GraphClient {
     }
 
     if (this.dryRun) {
-      // stderr unconditionally: --quiet must not hide what would be sent, and stdout stays data-only.
-      process.stderr.write(`[dry-run] ${method} ${url}\n`);
-      if (options.body) process.stderr.write(`[dry-run] Body: ${options.body}\n`);
-      if (options.headers && Object.keys(options.headers).length > 0) {
-        process.stderr.write(`[dry-run] Headers: ${JSON.stringify(options.headers)}\n`);
-      }
       const data: Record<string, unknown> = { dryRun: true, method, url };
       if (options.body) data.body = parseJsonOr(options.body);
+      this.preview(method, url, options);
       return { data, status: 0 };
     }
 
@@ -125,6 +130,44 @@ export class GraphClient {
       body: options.body,
     });
     return parseResponse(response);
+  }
+
+  /**
+   * GET (or `options.method`) whose body is never parsed or decoded: returns the byte stream as-is,
+   * whatever the content type (a `.json` file comes back verbatim). Same auth/timeout/retry/401 core
+   * and read-only/dry-run handling as `request()`; dry-run returns `{ body: null, status: 0 }`.
+   */
+  async requestBinary(endpoint: string, options: GraphRequestOptions = {}): Promise<BinaryResponse> {
+    const url = this.buildUrl(endpoint, options.queryParams);
+    const method = (options.method || 'GET').toUpperCase();
+    logger.debug(`${method} ${url} (binary)`);
+
+    if (this.readOnly && !isReadOnlyAllowed(method, endpoint)) {
+      throw new Error(`Read-only mode: ${method} requests are blocked. Remove --read-only to proceed.`);
+    }
+    if (this.dryRun) {
+      this.preview(method, url, options);
+      return { body: null, status: 0, contentType: '' };
+    }
+
+    const response = await this.send(url, { method, headers: { ...options.headers }, body: options.body });
+    const length = response.headers.get('content-length');
+    return {
+      body: response.body,
+      status: response.status,
+      contentType: response.headers.get('content-type') ?? '',
+      contentLength: length === null ? undefined : Number(length),
+    };
+  }
+
+  /** Dry-run preview, on stderr unconditionally: --quiet must not hide what would be sent, stdout stays data-only. */
+  private preview(method: string, url: string, options: { body?: string; headers?: Record<string, string> }, extra?: string): void {
+    process.stderr.write(`[dry-run] ${method} ${url}\n`);
+    if (options.body) process.stderr.write(`[dry-run] Body: ${options.body}\n`);
+    if (options.headers && Object.keys(options.headers).length > 0) {
+      process.stderr.write(`[dry-run] Headers: ${JSON.stringify(options.headers)}\n`);
+    }
+    if (extra) process.stderr.write(`[dry-run] ${extra}\n`);
   }
 
   /**
