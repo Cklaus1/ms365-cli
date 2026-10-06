@@ -35,7 +35,10 @@ All notable changes to this project are documented here. The format follows [Kee
 - Upload sessions resume after a failed chunk and are cancelled when they give up; upload progress respects `--quiet`. [GRAPH-3, MISC-1]
 - `@odata.etag`, `@odata.count`, `@odata.deltaLink` and `@odata.type` are kept for the commands that need them and stripped only on output. [GRAPH-4]
 - Paging (`--all`) uses the same request core as the first page, keeping headers, the retry policy and error messages. `--page-limit`/`--page-delay` work on every list command. [GRAPH-5, PAGE-1]
-- `-o yaml` quotes values that YAML would misread; table cells escape line breaks; CSV keeps negative numbers. [FMT-1]
+- `-o yaml` quotes values that YAML would misread, including YAML 1.1 forms such as date-only strings, `0b…`, digits with `_`, `=` and `<<`; table cells escape line breaks; CSV keeps negative numbers. [FMT-1]
+- Downloads with `--out` and no `--force` work on filesystems without hard links (vfat/exFAT, some FUSE mounts); they still never overwrite an existing file. [GRAPH-2]
+- `MS365_CLI_LOG_LEVEL` / `MS365_CLI_LOG_FILE` set in `.env` take effect.
+- With `MS365_CLI_TOKEN` set, Graph commands no longer need a writable `~/.config/ms365-cli`.
 - `mail create-rule` sends the required `sequence`, needs at least one action, and `--enabled`/`--no-enabled` work; `update-rule --enabled yes` enables. `--from` matches exact sender addresses. [MAIL-2]
 - `mail flag --due` sends the required start date (new `--start`). [MAIL-4]
 - `mail triage` no longer fails with `InefficientFilter`; `--include-read` keeps your `--filter`. [MAIL-5]

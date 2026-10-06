@@ -227,7 +227,7 @@ ms365 auth remove <accountId>  # Remove an account
 export MS365_CLI_TOKEN=eyJ0eXAiOiJKV1Qi...
 ```
 
-An access token in `MS365_CLI_TOKEN` (or `MS365_MCP_OAUTH_TOKEN`) is used as-is instead of the token cache.
+An access token in `MS365_CLI_TOKEN` (or `MS365_MCP_OAUTH_TOKEN`) is used as-is instead of the token cache. Graph commands then do not read or create `~/.config/ms365-cli`, so they also work with a read-only or missing `HOME` (CI, containers).
 
 ---
 
