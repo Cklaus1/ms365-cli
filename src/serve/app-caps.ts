@@ -21,10 +21,16 @@ export class CapsHeaderError extends Error {
   }
 }
 
-/** Parse the header value for capability key `appCap`; throws CapsHeaderError on anything but a usable grant. */
+/**
+ * Parse the header value(s) for capability key `appCap`; throws CapsHeaderError on anything but a usable grant.
+ * Pass every received copy (`req.headersDistinct`): Node's `req.headers` joins repeated copies with ", ".
+ */
 export function parseAppCapabilities(header: string | string[] | undefined, appCap: string): Caller {
+  if (Array.isArray(header)) {
+    if (header.length > 1) throw new CapsHeaderError(`Repeated ${APP_CAPS_HEADER} header`);
+    header = header[0];
+  }
   if (header === undefined || header === '') throw new CapsHeaderError(`Missing ${APP_CAPS_HEADER} header`);
-  if (Array.isArray(header)) throw new CapsHeaderError(`Repeated ${APP_CAPS_HEADER} header`);
   if (header.trimStart().startsWith('=?')) throw new CapsHeaderError(`RFC 2047 encoded ${APP_CAPS_HEADER} header is not accepted`);
 
   let parsed: unknown;

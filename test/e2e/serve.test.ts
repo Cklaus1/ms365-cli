@@ -102,6 +102,17 @@ describe('REMOTE-1b/1c authorization and execution', () => {
     expect(childStarts(server.procs(), server.proc.pid)).toBe(0);
   });
 
+  it('denies a repeated Tailscale-App-Capabilities header even when the copies join into valid JSON', async () => {
+    const server = await startServer({ home, routes: [MESSAGES] });
+    // Node joins repeated custom headers with ", ": these halves would read as one grant for mail.read.
+    const first = `{"${APP_CAP}":[{"agent":"chief","allow":["mail.read"]}`;
+    const second = '{"allow":["mail.read"]}]}';
+    const head = `POST /v1/execute HTTP/1.1\r\nHost: x\r\nTailscale-App-Capabilities: ${first}\r\nTailscale-App-Capabilities: ${second}`;
+    expect(await rawCall(server, head, { command: 'mail.list' })).toBe(403);
+    await server.stop();
+    expect(childStarts(server.procs(), server.proc.pid)).toBe(0);
+  });
+
   it('runs granted commands and refuses the rest per capability', async () => {
     const server = await startServer({ home, routes: [MESSAGES] });
     const caps = capsHeader(['mail.read']);

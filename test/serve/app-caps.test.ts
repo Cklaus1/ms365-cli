@@ -14,10 +14,16 @@ describe('REMOTE-1b Tailscale-App-Capabilities parsing', () => {
     expect([...caller.allow].sort()).toEqual(['calendar.read', 'mail.read']);
   });
 
+  it('accepts the one-copy array of req.headersDistinct', () => {
+    const caller = parseAppCapabilities([JSON.stringify({ [CAP]: [{ agent: 'chief', allow: ['mail.read'] }] })], CAP);
+    expect([...caller.allow]).toEqual(['mail.read']);
+  });
+
   it.each([
     ['missing', undefined],
     ['empty', ''],
     ['repeated', ['{}', '{}']],
+    ['no copies', []],
     ['{}', '{}'],
     ['RFC 2047', '=?utf-8?b?e30=?='],
     ['malformed JSON', '{"example.com/cap/ms365": ['],

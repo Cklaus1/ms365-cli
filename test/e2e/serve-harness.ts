@@ -200,18 +200,22 @@ export function call(server: Server, opts: CallOptions = {}): Promise<CallResult
 }
 
 /**
- * Send `head` (request line and headers, `\r\n`-separated, no final blank line) verbatim over the server's
- * socket, bypassing Node's client-side checks. Resolves with the status code, or 0 if the connection closed
- * without a response.
+ * Send `head` (request line and headers, `\r\n`-separated, no final blank line) and an optional JSON body
+ * verbatim over the server's socket, bypassing Node's client-side checks (e.g. to repeat a header). Resolves
+ * with the status code, or 0 if the connection closed without a response.
  */
-export function rawCall(server: Server, head: string): Promise<number> {
+export function rawCall(server: Server, head: string, body?: unknown): Promise<number> {
   const conn = net.connect(server.socket!);
   const { promise, resolve, reject } = Promise.withResolvers<number>();
   let text = '';
   conn.setEncoding('utf8').on('data', (d) => { text += d; });
   conn.on('error', reject);
   conn.on('close', () => resolve(Number(/^HTTP\/1\.1 (\d{3})/.exec(text)?.[1] ?? 0)));
-  conn.end(`${head}\r\nConnection: close\r\n\r\n`);
+  const payload = body === undefined ? '' : JSON.stringify(body);
+  const framing = body === undefined ? '' : `\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(payload)}`;
+  // write, not end: the server drops a half-closed connection before an asynchronous response is ready.
+  // `Connection: close` makes the server close it after responding.
+  conn.write(`${head}${framing}\r\nConnection: close\r\n\r\n${payload}`);
   return promise;
 }
 

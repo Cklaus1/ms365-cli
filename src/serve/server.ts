@@ -206,7 +206,7 @@ class RemoteServer {
 
   private caller(req: http.IncomingMessage, entry: AuditEntry): Caller {
     try {
-      const caller = parseAppCapabilities(req.headers[APP_CAPS_HEADER], this.options.appCap);
+      const caller = parseAppCapabilities(req.headersDistinct[APP_CAPS_HEADER], this.options.appCap);
       entry.agent = caller.agent;
       return caller;
     } catch (err) {
