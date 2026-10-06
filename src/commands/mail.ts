@@ -1,7 +1,12 @@
-import { Command } from 'commander';
+import fs from 'node:fs';
+import path from 'node:path';
+import { Command, InvalidArgumentError } from 'commander';
 import { GraphClient } from '../graph-client.js';
-import { formatOutput, streamPages, type OutputFormat } from '../formatter.js';
+import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
+import { saveOrStream } from '../files.js';
+import { odataQuote, searchQuote } from '../graph-helpers.js';
+import { listRequest, paginationOptions } from '../list.js';
 import { parseDate, truncate, parseRecipients, formatSize, outputOption, confirm, info } from '../utils.js';
 
 // Well-known folder names that Graph API supports directly
@@ -12,97 +17,93 @@ const WELL_KNOWN_FOLDERS = [
   'recoverableitemsdeletions', 'scheduled', 'searchfolders', 'serverfailures',
 ];
 
+/** Graph mail folder IDs are long base64 strings; display names of that shape are not looked up. */
+const FOLDER_ID = /^[A-Za-z0-9+/=_-]{32,}$/;
+
+const RULES = '/me/mailFolders/inbox/messageRules';
+
+interface MailFolder {
+  id: string;
+  displayName?: string;
+  childFolderCount?: number;
+}
+
 /**
- * Resolve a folder display name to its ID.
- * First tries well-known folder names (case-insensitive), then searches by displayName.
+ * Resolve a folder name or ID in `mailbox` (`/me` or `/users/{id}`) to a value usable in
+ * `mailFolders/{x}` paths and as a move `destinationId`. Well-known names ("Sent Items" -> `sentitems`)
+ * and ID-shaped values pass through. Anything else is a display name: an exact OData match among the
+ * top-level folders, else a breadth-first, case-insensitive walk of every childFolders level (the
+ * shallowest match wins; two matches at that depth are ambiguous). Throws when nothing matches.
+ * Dry-run cannot look names up and returns the name unchanged.
  */
-async function resolveFolderName(client: GraphClient, name: string): Promise<string | null> {
-  // Check if it's a well-known name
-  const normalized = name.toLowerCase().replace(/\s+/g, '');
-  const wellKnown = WELL_KNOWN_FOLDERS.find(f => f === normalized);
-  if (wellKnown) {
-    // Graph API accepts well-known names directly as folder IDs
-    return wellKnown;
-  }
+async function resolveFolder(client: GraphClient, name: string, mailbox = '/me'): Promise<string> {
+  const wellKnown = name.toLowerCase().replace(/\s+/g, '');
+  if (WELL_KNOWN_FOLDERS.includes(wellKnown)) return wellKnown;
+  if (FOLDER_ID.test(name)) return name;
 
-  // Search by displayName — validate input to prevent OData filter injection
-  const safeName = name.replace(/[^a-zA-Z0-9 _\-().]/g, '').trim();
-  if (!safeName) return null;
-  const response = await client.request('/me/mailFolders', {
-    queryParams: {
-      '$filter': `displayName eq '${safeName.replace(/'/g, "''")}'`,
-      '$select': 'id,displayName',
-      '$top': '1',
-    },
+  const $select = 'id,displayName,childFolderCount';
+  const exact = await client.request(`${mailbox}/mailFolders`, {
+    queryParams: { $filter: `displayName eq ${odataQuote(name)}`, $select },
   });
-  const data = response.data as Record<string, unknown>;
-  const folders = (data.value as Array<Record<string, unknown>>) || [];
-  if (folders.length > 0) {
-    return folders[0].id as string;
-  }
+  if (exact.status === 0) return name;
+  const hit = (exact.data as { value?: MailFolder[] }).value?.[0];
+  if (hit) return hit.id;
 
-  // Fallback: try case-insensitive match on all folders
-  const allResponse = await client.request('/me/mailFolders', {
-    queryParams: { '$select': 'id,displayName', '$top': '100' },
-  });
-  const allData = allResponse.data as Record<string, unknown>;
-  const allFolders = (allData.value as Array<Record<string, unknown>>) || [];
-  const match = allFolders.find(
-    f => (f.displayName as string || '').toLowerCase() === name.toLowerCase()
-  );
-  return match ? (match.id as string) : null;
+  const wanted = name.toLowerCase();
+  let level = [`${mailbox}/mailFolders`];
+  while (level.length > 0) {
+    const matches: string[] = [];
+    const next: string[] = [];
+    for (const endpoint of level) {
+      const res = await client.requestAllPages(endpoint, { queryParams: { $select, $top: '100' } });
+      for (const folder of (res.data as { value?: MailFolder[] }).value ?? []) {
+        if ((folder.displayName ?? '').toLowerCase() === wanted) matches.push(folder.id);
+        if ((folder.childFolderCount ?? 0) > 0) {
+          next.push(`${mailbox}/mailFolders/${encodeURIComponent(folder.id)}/childFolders`);
+        }
+      }
+    }
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1) {
+      throw new Error(`Folder name "${name}" is ambiguous (${matches.length} folders). Pass the folder ID from: ms365 mail folders`);
+    }
+    level = next;
+  }
+  throw new Error(`Folder "${name}" not found. Run: ms365 mail folders -o table`);
+}
+
+/** After a batch: print every failure (full ID + Graph error) and fail the command if there was any. */
+function failOnBatchErrors(failed: Array<{ id: string; error: string }>, total: number): void {
+  if (failed.length === 0) return;
+  for (const f of failed) console.error(`Failed: ${f.id}: ${f.error}`);
+  throw new Error(`${failed.length} of ${total} message(s) failed.`);
 }
 
 export function registerMailCommands(program: Command, getClient: () => GraphClient): void {
   const mail = program.command('mail').description('Outlook mail operations');
 
-  mail
-    .command('list')
-    .description('List inbox messages')
-    .option('--top <n>', 'Number of messages to return', '10')
+  paginationOptions(
+    mail
+      .command('list')
+      .description('List messages across all folders (use --folder inbox for the inbox only)'),
+    10,
+  )
     .option('--filter <filter>', 'OData filter expression')
     .option('--select <fields>', 'Comma-separated fields to return')
-    .option('--search <query>', 'Search query')
-    .option('--folder <name>', 'Folder name or ID (e.g. "Drafts", "Sent Items", "Archive", or a folder ID)')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+    .option('--search <query>', 'Search query (KQL, sent as one quoted $search phrase)')
+    .option('--folder <name>', 'Folder name or ID (e.g. "Inbox", "Sent Items", "Archive", a nested folder name, or a folder ID)')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();
       const queryParams: Record<string, string> = {};
-      if (opts.top) queryParams['$top'] = opts.top;
       if (opts.filter) queryParams['$filter'] = opts.filter;
       if (opts.select) queryParams['$select'] = opts.select;
-      if (opts.search) queryParams['$search'] = `"${opts.search}"`;
+      if (opts.search) queryParams['$search'] = searchQuote(opts.search);
 
-      let endpoint = '/me/messages';
-      if (opts.folder) {
-        // Try as well-known name first, then resolve
-        const folderId = await resolveFolderName(client, opts.folder) || opts.folder;
-        endpoint = `/me/mailFolders/${encodeURIComponent(folderId)}/messages`;
-      }
-
-      if (opts.all && (opts.output === 'json' || opts.output === 'csv')) {
-        // Stream page-by-page for json/csv to avoid buffering all results in memory
-        const pages = client.requestPagesStreaming(
-          endpoint,
-          { queryParams },
-          opts.pageLimit ? parseInt(opts.pageLimit) : undefined,
-          opts.pageDelay ? parseInt(opts.pageDelay) : undefined,
-        );
-        await streamPages(pages, opts.output as OutputFormat);
-      } else {
-        const response = opts.all
-          ? await client.requestAllPages(
-              endpoint,
-              { queryParams },
-              opts.pageLimit ? parseInt(opts.pageLimit) : undefined,
-              opts.pageDelay ? parseInt(opts.pageDelay) : undefined,
-            )
-          : await client.request(endpoint, { queryParams });
-        console.log(formatOutput(response.data, opts.output as OutputFormat));
-      }
+      const endpoint = opts.folder
+        ? `/me/mailFolders/${encodeURIComponent(await resolveFolder(client, opts.folder))}/messages`
+        : '/me/messages';
+      await listRequest(client, endpoint, { queryParams }, opts);
     }));
 
   mail
@@ -140,9 +141,17 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       );
 
       const msg = response.data as Record<string, unknown>;
+      let attachments: Array<Record<string, unknown>> = [];
+      if (msg.hasAttachments) {
+        const attResponse = await client.request(
+          `/me/messages/${encodeURIComponent(messageId)}/attachments`,
+          { queryParams: { '$select': 'id,name,contentType,size' } }
+        );
+        attachments = (attResponse.data as { value?: Array<Record<string, unknown>> }).value ?? [];
+      }
 
-      if (opts.output === 'json') {
-        console.log(formatOutput(response.data, 'json'));
+      if (opts.output === 'json' || opts.output === 'yaml') {
+        console.log(formatOutput({ ...msg, attachments }, opts.output));
       } else {
         // Human-readable output
         const from = (msg.from as Record<string, unknown>)?.emailAddress as Record<string, unknown>;
@@ -178,71 +187,57 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
           }
           lines.push(content);
         }
-        console.log(lines.join('\n'));
-      }
-
-      // Also show attachment list if present
-      if (msg.hasAttachments) {
-        const attResponse = await client.request(
-          `/me/messages/${encodeURIComponent(messageId)}/attachments`,
-          { queryParams: { '$select': 'id,name,contentType,size' } }
-        );
-        const attData = attResponse.data as Record<string, unknown>;
-        const attachments = attData.value as Array<Record<string, unknown>>;
-        if (attachments && attachments.length > 0 && opts.output !== 'json') {
-          console.log(`\nAttachments (${attachments.length}):`);
+        if (attachments.length > 0) {
+          lines.push('', `Attachments (${attachments.length}):`);
           for (const att of attachments) {
             const sizeKb = Math.round((att.size as number || 0) / 1024);
-            console.log(`  - ${att.name} (${att.contentType}, ${sizeKb} KB) [${att.id}]`);
+            lines.push(`  - ${att.name} (${att.contentType}, ${sizeKb} KB) [${att.id}]`);
           }
         }
+        console.log(lines.join('\n'));
       }
     }));
 
-  mail
-    .command('triage')
-    .description('Show inbox summary — unread messages with key metadata')
-    .option('--top <n>', 'Number of messages', '20')
-    .option('--filter <filter>', 'OData filter (default: unread)', 'isRead eq false')
-    .option('--folder <folderId>', 'Mail folder ID')
-    .option('--include-read', 'Include read messages too')
+  paginationOptions(
+    mail
+      .command('triage')
+      .description('Show inbox summary — unread inbox messages with key metadata'),
+    20,
+  )
+    .option('--filter <filter>', 'OData filter (default: isRead eq false)')
+    .option('--folder <name>', 'Folder name or ID (default: inbox)')
+    .option('--include-read', 'Include read messages too (drops the default unread filter, keeps --filter)')
     .addOption(outputOption('table'))
     .action(handleErrors(async (opts) => {
       const client = getClient();
+      const filter: string | undefined = opts.filter ?? (opts.includeRead ? undefined : 'isRead eq false');
+      // Graph rejects $orderby on a property that does not lead the $filter (InefficientFilter).
       const queryParams: Record<string, string> = {
-        '$top': opts.top,
         '$select': 'id,subject,from,receivedDateTime,hasAttachments,importance,categories,flag,isRead,bodyPreview',
         '$orderby': 'receivedDateTime desc',
+        '$filter': `receivedDateTime ge 1900-01-01T00:00:00Z${filter ? ` and (${filter})` : ''}`,
       };
-      if (!opts.includeRead) {
-        queryParams['$filter'] = opts.filter;
-      }
-
-      const endpoint = opts.folder
-        ? `/me/mailFolders/${encodeURIComponent(opts.folder)}/messages`
-        : '/me/messages';
-
-      const response = await client.request(endpoint, { queryParams });
-      const data = response.data as Record<string, unknown>;
-      const messages = (data.value as Array<Record<string, unknown>>) || [];
-
-      if (messages.length === 0) {
-        console.log('No messages found.');
-        return;
-      }
+      const folder = opts.folder ? await resolveFolder(client, opts.folder) : 'inbox';
+      const endpoint = `/me/mailFolders/${encodeURIComponent(folder)}/messages`;
 
       if (opts.output === 'json') {
-        console.log(formatOutput(response.data, 'json'));
+        await listRequest(client, endpoint, { queryParams }, opts);
         return;
       }
 
-      // Build a clean summary
+      const request = { queryParams: { ...queryParams, '$top': String(opts.top) } };
+      const response = opts.all
+        ? await client.requestAllPages(endpoint, request, opts.pageLimit, opts.pageDelay)
+        : await client.request(endpoint, request);
+      const messages = (response.data as { value?: Array<Record<string, unknown>> }).value ?? [];
+      const table = opts.output === 'table';
+
+      // Build a clean summary; only the table shortens dates and IDs for width.
       const rows = messages.map((msg) => {
         const from = (msg.from as Record<string, unknown>)?.emailAddress as Record<string, unknown>;
         const flag = msg.flag as Record<string, unknown>;
         const categories = (msg.categories as string[]) || [];
-        const date = new Date(msg.receivedDateTime as string);
-        const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const id = msg.id as string || '';
 
         const indicators: string[] = [];
         if (msg.hasAttachments) indicators.push('[A]');
@@ -251,21 +246,20 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         if (categories.length > 0) indicators.push(`[${categories[0]}]`);
 
         return {
-          date: dateStr,
+          date: table
+            ? new Date(msg.receivedDateTime as string).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+            : msg.receivedDateTime,
           from: truncate(from?.name as string || from?.address as string || '', 25),
           subject: truncate(msg.subject as string || '(no subject)', 50),
           flags: indicators.join(' '),
-          id: (msg.id as string || '').substring(0, 12) + '...',
+          id: table ? id.substring(0, 12) + '...' : id,
         };
       });
 
-      if (opts.output === 'csv') {
-        console.log(formatOutput(rows, 'csv'));
-      } else {
-        // Table output
-        console.log(`Inbox: ${messages.length} message(s)  [A]=attachment [!]=high priority [F]=flagged\n`);
-        console.log(formatOutput(rows, 'table'));
+      if (table && rows.length > 0) {
+        info(`${messages.length} message(s)  [A]=attachment [!]=high priority [F]=flagged`);
       }
+      console.log(formatOutput(rows, opts.output as OutputFormat));
     }));
 
   mail
@@ -319,35 +313,28 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
   mail
     .command('move <messageId>')
     .description('Move a message to a folder')
-    .requiredOption('--folder <folderId>', 'Destination folder ID')
+    .requiredOption('--folder <name>', 'Destination folder name or ID')
     .action(handleErrors(async (messageId: string, opts) => {
       const client = getClient();
+      const destinationId = await resolveFolder(client, opts.folder);
       await client.request(`/me/messages/${encodeURIComponent(messageId)}/move`, {
         method: 'POST',
-        body: JSON.stringify({ destinationId: opts.folder }),
+        body: JSON.stringify({ destinationId }),
       });
       info('Message moved.');
     }));
 
-  mail
-    .command('folders')
-    .description('List mail folders')
+  paginationOptions(mail.command('folders').description('List mail folders'), 100)
     .option('--parent <folderId>', 'List child folders of this folder')
-    .option('--all', 'Fetch all pages (including nested child folders)')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();
       const endpoint = opts.parent
         ? `/me/mailFolders/${encodeURIComponent(opts.parent)}/childFolders`
         : '/me/mailFolders';
-      const queryParams: Record<string, string> = {
-        '$select': 'id,displayName,parentFolderId,childFolderCount,totalItemCount,unreadItemCount',
-        '$top': '100',
-      };
-      const response = opts.all
-        ? await client.requestAllPages(endpoint, { queryParams })
-        : await client.request(endpoint, { queryParams });
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await listRequest(client, endpoint, {
+        queryParams: { '$select': 'id,displayName,parentFolderId,childFolderCount,totalItemCount,unreadItemCount' },
+      }, opts);
     }));
 
   mail
@@ -356,10 +343,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .addOption(outputOption())
     .action(handleErrors(async (folderName: string, opts) => {
       const client = getClient();
-      const folderId = await resolveFolderName(client, folderName);
-      if (!folderId) {
-        throw new Error(`Folder "${folderName}" not found. Run: ms365 mail folders -o table`);
-      }
+      const folderId = await resolveFolder(client, folderName);
       const response = await client.request(`/me/mailFolders/${encodeURIComponent(folderId)}`);
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
@@ -414,37 +398,19 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         body: JSON.stringify(message),
       });
 
-      const created = response.data as Record<string, unknown>;
-      if (opts.output !== 'json') {
-        console.log(`Draft created. ID: ${created.id}`);
-      } else {
-        console.log(formatOutput(response.data, 'json'));
-      }
+      info('Draft created.');
+      console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  mail
-    .command('drafts')
-    .description('List draft emails')
-    .option('--top <n>', 'Number of drafts', '10')
+  paginationOptions(mail.command('drafts').description('List draft emails'), 10)
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
-      const client = getClient();
-      // Drafts folder has well-known name "Drafts"
-      const folderId = await resolveFolderName(client, 'Drafts');
-      if (!folderId) {
-        throw new Error('Drafts folder not found.');
-      }
-      const response = await client.request(
-        `/me/mailFolders/${encodeURIComponent(folderId)}/messages`,
-        {
-          queryParams: {
-            '$top': opts.top,
-            '$select': 'id,subject,toRecipients,createdDateTime,lastModifiedDateTime,bodyPreview,hasAttachments',
-            '$orderby': 'lastModifiedDateTime desc',
-          },
-        }
-      );
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await listRequest(getClient(), '/me/mailFolders/drafts/messages', {
+        queryParams: {
+          '$select': 'id,subject,toRecipients,createdDateTime,lastModifiedDateTime,bodyPreview,hasAttachments',
+          '$orderby': 'lastModifiedDateTime desc',
+        },
+      }, opts);
     }));
 
   mail
@@ -490,16 +456,10 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       info('Draft sent.');
     }));
 
-  mail
-    .command('attachments <messageId>')
-    .description('List attachments for a message')
+  paginationOptions(mail.command('attachments <messageId>').description('List attachments for a message'))
     .addOption(outputOption())
     .action(handleErrors(async (messageId: string, opts) => {
-      const client = getClient();
-      const response = await client.request(
-        `/me/messages/${encodeURIComponent(messageId)}/attachments`
-      );
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await listRequest(getClient(), `/me/messages/${encodeURIComponent(messageId)}/attachments`, {}, opts);
     }));
 
   mail
@@ -542,6 +502,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .command('delete-attachment <messageId> <attachmentId>')
     .description('Delete an attachment')
     .action(handleErrors(async (messageId: string, attachmentId: string) => {
+      await confirm(`Delete attachment ${attachmentId.substring(0, 16)}...?`);
       const client = getClient();
       await client.request(
         `/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`,
@@ -553,21 +514,30 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
   mail
     .command('download-attachment <messageId> <attachmentId>')
     .description('Download an attachment to a file')
-    .option('--out <path>', 'Output file path (default: attachment name)')
+    .option('--out <path>', 'Output file, or an existing directory (default: the attachment name in the current directory)')
+    .option('--force', 'Overwrite an existing file')
     .action(handleErrors(async (messageId: string, attachmentId: string, opts) => {
       const client = getClient();
-      const response = await client.request(
-        `/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`
-      );
-      const data = response.data as Record<string, unknown>;
-      const name = data.name as string || 'attachment';
-      const contentBytes = data.contentBytes as string;
-      if (!contentBytes) {
-        throw new Error('No content found. This may be a reference attachment or item attachment.');
+      const endpoint = `/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`;
+      const meta = (await client.request(endpoint, { queryParams: { '$select': 'id,name,contentType,size' } })).data as Record<string, unknown>;
+      if (meta['@odata.type'] === '#microsoft.graph.referenceAttachment') {
+        throw new Error('This is a reference attachment (a link to a cloud file); it has no content to download.');
       }
-      const outPath = (await import('path')).resolve(opts.out || name);
-      (await import('fs')).writeFileSync(outPath, Buffer.from(contentBytes, 'base64'));
-      info(`Saved to ${outPath} (${formatSize(Buffer.from(contentBytes, 'base64').length)})`);
+
+      let out: string | undefined = opts.out;
+      const intoDir = out !== undefined && fs.statSync(out, { throwIfNoEntry: false })?.isDirectory() === true;
+      if (out === undefined || intoDir) {
+        // The name comes from the sender: keep only its last path segment so it stays in the target directory.
+        const name = path.basename(String(meta.name ?? 'attachment').replace(/\\/g, '/'));
+        if (name === '' || name === '.' || name === '..') {
+          throw new Error(`Unsafe attachment name "${meta.name}". Choose a file name with --out <file>.`);
+        }
+        out = out === undefined ? name : path.join(out, name);
+      }
+
+      const response = await client.requestBinary(`${endpoint}/$value`);
+      const saved = await saveOrStream(response.body, { out, force: opts.force });
+      if (saved.path) info(`Saved to ${path.resolve(saved.path)} (${formatSize(saved.bytes)})`);
     }));
 
   mail
@@ -579,11 +549,13 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .action(handleErrors(async (messageId: string, opts) => {
       const client = getClient();
       const action = opts.replyAll ? 'replyAll' : 'reply';
+      // Graph takes either a plain-text comment or a message body, never both.
+      const payload = opts.html
+        ? { message: { body: { contentType: 'HTML', content: opts.body } } }
+        : { comment: opts.body };
       await client.request(`/me/messages/${encodeURIComponent(messageId)}/${action}`, {
         method: 'POST',
-        body: JSON.stringify({
-          comment: opts.body,
-        }),
+        body: JSON.stringify(payload),
       });
       info('Reply sent.');
     }));
@@ -634,12 +606,16 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .command('flag <messageId>')
     .description('Set follow-up flag on a message')
     .option('--due <date>', 'Due date (YYYY-MM-DD)')
+    .option('--start <date>', 'Start date (YYYY-MM-DD; with --due default: today, or the due date if earlier)')
     .action(handleErrors(async (messageId: string, opts) => {
       const client = getClient();
       const flag: Record<string, unknown> = { flagStatus: 'flagged' };
-      if (opts.due) {
-        flag.dueDateTime = { dateTime: parseDate(opts.due) + 'T00:00:00', timeZone: 'UTC' };
-      }
+      const due = opts.due ? parseDate(opts.due) : undefined;
+      // Graph rejects a dueDateTime without a startDateTime (400).
+      const today = new Date().toISOString().slice(0, 10);
+      const start = opts.start ? parseDate(opts.start) : due && (due < today ? due : today);
+      if (start) flag.startDateTime = { dateTime: `${start}T00:00:00`, timeZone: 'UTC' };
+      if (due) flag.dueDateTime = { dateTime: `${due}T00:00:00`, timeZone: 'UTC' };
       await client.request(`/me/messages/${encodeURIComponent(messageId)}`, {
         method: 'PATCH',
         body: JSON.stringify({ flag }),
@@ -683,35 +659,31 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         method: 'PATCH',
         body: JSON.stringify({ categories }),
       });
-      console.log(`Categories set: ${categories.join(', ')}`);
+      info(`Categories set: ${categories.join(', ')}`);
     }));
 
   // Shared mailbox commands (require --org-mode)
-  mail
-    .command('shared-list <userId>')
-    .description('List shared mailbox messages (requires --org-mode)')
-    .option('--top <n>', 'Number of messages', '10')
+  paginationOptions(
+    mail
+      .command('shared-list <userId>')
+      .description('List shared mailbox messages (requires --org-mode)'),
+    10,
+  )
     .option('--filter <filter>', 'OData filter')
     .option('--select <fields>', 'Fields to return')
-    .option('--folder <folderId>', 'Mail folder ID')
-    .option('--all', 'Fetch all pages')
+    .option('--folder <name>', 'Folder name or ID')
     .addOption(outputOption())
     .action(handleErrors(async (userId: string, opts) => {
       const client = getClient();
       const queryParams: Record<string, string> = {};
-      if (opts.top) queryParams['$top'] = opts.top;
       if (opts.filter) queryParams['$filter'] = opts.filter;
       if (opts.select) queryParams['$select'] = opts.select;
 
+      const mailbox = `/users/${encodeURIComponent(userId)}`;
       const endpoint = opts.folder
-        ? `/users/${encodeURIComponent(userId)}/mailFolders/${encodeURIComponent(opts.folder)}/messages`
-        : `/users/${encodeURIComponent(userId)}/messages`;
-
-      const response = opts.all
-        ? await client.requestAllPages(endpoint, { queryParams })
-        : await client.request(endpoint, { queryParams });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+        ? `${mailbox}/mailFolders/${encodeURIComponent(await resolveFolder(client, opts.folder, mailbox))}/messages`
+        : `${mailbox}/messages`;
+      await listRequest(client, endpoint, { queryParams }, opts);
     }));
 
   mail
@@ -753,18 +725,14 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
           saveToSentItems: true,
         }),
       });
-      console.log('Email sent from shared mailbox.');
+      info('Email sent from shared mailbox.');
     }));
 
   // ── Inbox rules ─────────────────────────────────────────────
-  mail
-    .command('rules')
-    .description('List inbox rules')
+  paginationOptions(mail.command('rules').description('List inbox rules'))
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
-      const client = getClient();
-      const response = await client.request('/me/mailFolders/inbox/messageRules');
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await listRequest(getClient(), RULES, {}, opts);
     }));
 
   mail
@@ -773,7 +741,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .addOption(outputOption())
     .action(handleErrors(async (ruleId: string, opts) => {
       const client = getClient();
-      const response = await client.request(`/me/mailFolders/inbox/messageRules/${encodeURIComponent(ruleId)}`);
+      const response = await client.request(`${RULES}/${encodeURIComponent(ruleId)}`);
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
@@ -781,7 +749,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .command('create-rule')
     .description('Create an inbox rule')
     .requiredOption('--name <name>', 'Rule display name')
-    .option('--from <addresses>', 'Comma-separated sender addresses to match')
+    .option('--from <addresses>', 'Comma-separated sender addresses to match (exact addresses)')
     .option('--subject-contains <words>', 'Comma-separated words to match in subject')
     .option('--move-to <folderId>', 'Move matching messages to folder ID')
     .option('--forward-to <addresses>', 'Comma-separated addresses to forward to')
@@ -789,14 +757,19 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .option('--mark-read', 'Mark matching messages as read')
     .option('--importance <level>', 'Set importance: low, normal, high')
     .option('--stop-processing', 'Stop processing subsequent rules')
-    .option('--enabled', 'Enable rule (default: true)')
+    .option('--sequence <n>', 'Rule order, lowest runs first (default: after the last existing rule)', (value: string) => {
+      if (!/^\d+$/.test(value)) throw new InvalidArgumentError('Expected a non-negative integer.');
+      return Number(value);
+    })
+    .option('--enabled', 'Create the rule enabled (default)')
+    .option('--no-enabled', 'Create the rule disabled')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();
 
       const conditions: Record<string, unknown> = {};
       if (opts.from) {
-        conditions.senderContains = opts.from.split(',').map((s: string) => s.trim());
+        conditions.fromAddresses = parseRecipients(opts.from);
       }
       if (opts.subjectContains) {
         conditions.subjectContains = opts.subjectContains.split(',').map((s: string) => s.trim());
@@ -821,15 +794,29 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       if (opts.stopProcessing) {
         actions.stopProcessingRules = true;
       }
+      if (Object.keys(actions).length === 0) {
+        throw new Error('Specify at least one action: --move-to, --forward-to, --delete, --mark-read, --importance or --stop-processing.');
+      }
+      if (Object.keys(conditions).length === 0) {
+        await confirm(`Rule "${opts.name}" has no conditions and applies to every incoming message. Create it?`);
+      }
+
+      let sequence: number | undefined = opts.sequence;
+      if (sequence === undefined) {
+        const existing = await client.requestAllPages(RULES);
+        const rules = (existing.data as { value?: Array<{ sequence?: number }> }).value ?? [];
+        sequence = Math.max(0, ...rules.map((r) => r.sequence ?? 0)) + 1;
+      }
 
       const rule: Record<string, unknown> = {
         displayName: opts.name,
+        sequence,
         conditions,
         actions,
         isEnabled: opts.enabled !== false,
       };
 
-      const response = await client.request('/me/mailFolders/inbox/messageRules', {
+      const response = await client.request(RULES, {
         method: 'POST',
         body: JSON.stringify(rule),
       });
@@ -840,16 +827,21 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .command('update-rule <ruleId>')
     .description('Update an inbox rule')
     .option('--name <name>', 'Rule display name')
-    .option('--enabled <bool>', 'Enable/disable rule (true/false)')
+    .option('--enabled <bool>', 'Enable or disable the rule: true/false (also yes/no, on/off, 1/0)', (value: string) => {
+      const v = value.toLowerCase();
+      if (['true', 'yes', 'on', '1'].includes(v)) return true;
+      if (['false', 'no', 'off', '0'].includes(v)) return false;
+      throw new InvalidArgumentError('Expected true or false.');
+    })
     .addOption(outputOption())
     .action(handleErrors(async (ruleId: string, opts) => {
       const client = getClient();
       const patch: Record<string, unknown> = {};
       if (opts.name) patch.displayName = opts.name;
-      if (opts.enabled !== undefined) patch.isEnabled = opts.enabled === 'true';
+      if (opts.enabled !== undefined) patch.isEnabled = opts.enabled;
 
       const response = await client.request(
-        `/me/mailFolders/inbox/messageRules/${encodeURIComponent(ruleId)}`,
+        `${RULES}/${encodeURIComponent(ruleId)}`,
         { method: 'PATCH', body: JSON.stringify(patch) }
       );
       console.log(formatOutput(response.data, opts.output as OutputFormat));
@@ -876,19 +868,17 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
           failed.push({ id, error: (err as Error).message });
         }
       }
-      console.log(`Marked ${succeeded} message(s) as read.`);
-      if (failed.length > 0) {
-        console.error(`Failed ${failed.length}: ${failed.map(f => f.id.substring(0, 12) + '...').join(', ')}`);
-      }
+      info(`Marked ${succeeded} message(s) as read.`);
+      failOnBatchErrors(failed, ids.length);
     }));
 
   mail
     .command('batch-move <messageIds>')
     .description('Move multiple messages to a folder (comma-separated IDs)')
-    .requiredOption('--folder <folderId>', 'Destination folder name or ID')
+    .requiredOption('--folder <name>', 'Destination folder name or ID')
     .action(handleErrors(async (messageIds: string, opts) => {
       const client = getClient();
-      const folderId = await resolveFolderName(client, opts.folder) || opts.folder;
+      const folderId = await resolveFolder(client, opts.folder);
       const ids = messageIds.split(',').map(id => id.trim()).filter(Boolean);
       let succeeded = 0;
       const failed: Array<{ id: string; error: string }> = [];
@@ -903,10 +893,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
           failed.push({ id, error: (err as Error).message });
         }
       }
-      console.log(`Moved ${succeeded} message(s).`);
-      if (failed.length > 0) {
-        console.error(`Failed ${failed.length}: ${failed.map(f => f.id.substring(0, 12) + '...').join(', ')}`);
-      }
+      info(`Moved ${succeeded} message(s).`);
+      failOnBatchErrors(failed, ids.length);
     }));
-
 }
