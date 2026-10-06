@@ -3,36 +3,46 @@ import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
 import { outputOption, confirm, info } from '../utils.js';
+import { paginationOptions, listRequest, type ListOptions } from '../list.js';
+import { searchQuote } from '../graph-helpers.js';
+
+interface ContactListOptions extends ListOptions {
+  filter?: string;
+  orderby?: string;
+  select?: string;
+  search?: string;
+}
+
+interface UpdateOptions {
+  givenName?: string;
+  surname?: string;
+  email?: string;
+  replaceEmail?: boolean;
+  phone?: string;
+  company?: string;
+  output: string;
+}
 
 export function registerContactsCommands(program: Command, getClient: () => GraphClient): void {
   const contacts = program.command('contacts').description('Outlook contacts');
 
-  contacts
-    .command('list')
-    .description('List contacts')
-    .option('--top <n>', 'Number of contacts')
-    .option('--filter <filter>', 'OData filter')
-    .option('--orderby <field>', 'Order results by field')
-    .option('--select <fields>', 'Fields to return')
-    .option('--search <query>', 'Search query')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+  paginationOptions(
+    contacts
+      .command('list')
+      .description('List contacts')
+      .option('--filter <filter>', 'OData filter')
+      .option('--orderby <field>', 'Order results by field')
+      .option('--select <fields>', 'Fields to return')
+      .option('--search <query>', 'Search query'),
+  )
     .addOption(outputOption())
-    .action(handleErrors(async (opts) => {
-      const client = getClient();
+    .action(handleErrors(async (opts: ContactListOptions) => {
       const queryParams: Record<string, string> = {};
-      if (opts.top) queryParams['$top'] = opts.top;
       if (opts.filter) queryParams['$filter'] = opts.filter;
       if (opts.orderby) queryParams['$orderby'] = opts.orderby;
       if (opts.select) queryParams['$select'] = opts.select;
-      if (opts.search) queryParams['$search'] = `"${opts.search}"`;
-
-      const response = opts.all
-        ? await client.requestAllPages('/me/contacts', { queryParams })
-        : await client.request('/me/contacts', { queryParams });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      if (opts.search) queryParams['$search'] = searchQuote(opts.search);
+      await listRequest(getClient(), '/me/contacts', { queryParams }, opts);
     }));
 
   contacts
@@ -83,7 +93,11 @@ export function registerContactsCommands(program: Command, getClient: () => Grap
     .option('--phone <phone>', 'Phone number')
     .option('--company <company>', 'Company name')
     .addOption(outputOption())
-    .action(handleErrors(async (contactId: string, opts) => {
+    .action(handleErrors(async (contactId: string, opts: UpdateOptions) => {
+      if (opts.replaceEmail && !opts.email) throw new Error('--replace-email needs --email.');
+      if (!opts.givenName && !opts.surname && !opts.email && !opts.phone && !opts.company) {
+        throw new Error('Nothing to update: give at least one of --given-name, --surname, --email, --phone, --company.');
+      }
       const client = getClient();
       const patch: Record<string, unknown> = {};
       if (opts.givenName) patch.givenName = opts.givenName;
@@ -123,14 +137,14 @@ export function registerContactsCommands(program: Command, getClient: () => Grap
     }));
 
   // ── Contact folders ─────────────────────────────────────────
-  contacts
-    .command('folders')
-    .description('List contact folders')
+  paginationOptions(
+    contacts
+      .command('folders')
+      .description('List contact folders'),
+  )
     .addOption(outputOption())
-    .action(handleErrors(async (opts) => {
-      const client = getClient();
-      const response = await client.request('/me/contactFolders');
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+    .action(handleErrors(async (opts: ListOptions) => {
+      await listRequest(getClient(), '/me/contactFolders', {}, opts);
     }));
 
   contacts
@@ -166,28 +180,18 @@ export function registerContactsCommands(program: Command, getClient: () => Grap
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  contacts
-    .command('folder-contacts <folderId>')
-    .description('List contacts in a specific folder')
-    .option('--top <n>', 'Number of contacts')
-    .option('--filter <filter>', 'OData filter')
-    .option('--orderby <field>', 'Order results by field')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+  paginationOptions(
+    contacts
+      .command('folder-contacts <folderId>')
+      .description('List contacts in a specific folder')
+      .option('--filter <filter>', 'OData filter')
+      .option('--orderby <field>', 'Order results by field'),
+  )
     .addOption(outputOption())
-    .action(handleErrors(async (folderId: string, opts) => {
-      const client = getClient();
+    .action(handleErrors(async (folderId: string, opts: ContactListOptions) => {
       const queryParams: Record<string, string> = {};
-      if (opts.top) queryParams['$top'] = opts.top;
       if (opts.filter) queryParams['$filter'] = opts.filter;
       if (opts.orderby) queryParams['$orderby'] = opts.orderby;
-
-      const endpoint = `/me/contactFolders/${encodeURIComponent(folderId)}/contacts`;
-      const response = opts.all
-        ? await client.requestAllPages(endpoint, { queryParams }, opts.pageLimit ? parseInt(opts.pageLimit) : undefined, opts.pageDelay ? parseInt(opts.pageDelay) : undefined)
-        : await client.request(endpoint, { queryParams });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await listRequest(getClient(), `/me/contactFolders/${encodeURIComponent(folderId)}/contacts`, { queryParams }, opts);
     }));
 }
