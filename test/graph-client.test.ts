@@ -56,6 +56,30 @@ describe('GraphClient', () => {
       const url = client.buildUrl('/me', {});
       expect(url).toBe('https://graph.microsoft.com/v1.0/me');
     });
+
+    // fetch parses URLs per WHATWG, which resolves these segments before sending:
+    // `root:/../../me/messages` would silently reach /me/messages.
+    it.each([
+      '/me/drive/root:/../../me/messages:/content',
+      '/sites/contoso.sharepoint.com:/../../me/messages',
+      '/me/messages/..',
+      '/me/messages/./x',
+      '/me/messages/%2E%2e/x',
+      '/me/messages/.%2E/x',
+      '/me/messages/%2e./x',
+      '/me/messages/%2e/x',
+      '/me/drive/root:/a\\..\\..\\me',
+    ])('rejects the dot segment in %s', (endpoint) => {
+      const client = new GraphClient(mockAuth);
+      expect(() => client.buildUrl(endpoint)).toThrow(/'\.' or '\.\.'/);
+    });
+
+    it('keeps dots that are part of a name', () => {
+      const client = new GraphClient(mockAuth);
+      expect(client.buildUrl('/me/drive/root:/a.b/.../..x/.env:/content'))
+        .toBe('https://graph.microsoft.com/v1.0/me/drive/root:/a.b/.../..x/.env:/content');
+      expect(client.buildUrl('/me/messages', { '$filter': "subject eq '../..'" })).toContain('$filter=');
+    });
   });
 
   describe('read-only mode', () => {

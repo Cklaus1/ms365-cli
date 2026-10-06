@@ -60,6 +60,17 @@ describe('DRIVE-1 sp site-by-path encodes the server-relative path', () => {
     expect(r.code).toBe(0);
     expect(r.stderr).toContain(`${BASE}/sites/contoso.sharepoint.com:/sites/R%26D%20%231\n`);
   });
+
+  it("refuses '..' segments instead of letting URL parsing climb to another Graph path", async () => {
+    const r = await runCli(['--org-mode', 'sp', 'site-by-path', 'contoso.sharepoint.com', '../../me/messages', '-o', 'json'], {
+      env: ENV,
+      routes: [{ match: '/me/messages', body: { value: [{ id: 'm1', subject: 'secret' }] } }],
+    });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("'.' or '..'");
+    expect(r.stdout).toBe('');
+    expect(r.requests).toHaveLength(0);
+  });
 });
 
 describe('PAGE-1 list-items', () => {

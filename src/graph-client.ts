@@ -124,6 +124,7 @@ export class GraphClient {
   }
 
   buildUrl(endpoint: string, queryParams?: Record<string, string>, apiVersion?: ApiVersion): string {
+    assertNoDotSegments(endpoint);
     let url = apiVersion ? `https://graph.microsoft.com/${apiVersion}${endpoint}` : `${this.baseUrl}${endpoint}`;
 
     if (queryParams && Object.keys(queryParams).length > 0) {
@@ -525,6 +526,21 @@ function nextExpectedOffset(data: unknown): number | undefined {
   if (!Array.isArray(ranges) || typeof ranges[0] !== 'string') return undefined;
   const start = Number.parseInt(ranges[0], 10);
   return Number.isNaN(start) ? undefined : start;
+}
+
+/**
+ * fetch parses URLs per WHATWG, which resolves `.`/`..` path segments (including `%2e` forms and `\`
+ * separators) before sending: a drive path or ID of `../../me/messages` would silently reach another
+ * Graph resource, and the dry-run preview would not show it. No Graph path has such a segment.
+ */
+function assertNoDotSegments(endpoint: string): void {
+  const pathPart = endpoint.split('?', 1)[0];
+  for (const segment of pathPart.split(/[/\\]/)) {
+    const s = segment.toLowerCase().replaceAll('%2e', '.');
+    if (s === '.' || s === '..') {
+      throw new Error(`Invalid path segment "${segment}" in ${pathPart}: paths and IDs cannot contain '.' or '..' segments.`);
+    }
+  }
 }
 
 function decodeSegment(segment: string): string {
