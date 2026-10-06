@@ -1,32 +1,116 @@
-import { Command } from 'commander';
+import { Command, InvalidArgumentError, Option } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
-import { parseDate, truncate, outputOption } from '../utils.js';
+import { parseDate, outputOption, info } from '../utils.js';
+import { preferTimezone } from '../graph-helpers.js';
 
-function todayRange(): { start: string; end: string } {
-  const now = new Date();
-  const start = new Date(now);
-  start.setUTCHours(0, 0, 0, 0);
-  const end = new Date(now);
-  end.setUTCHours(23, 59, 59, 999);
-  return {
-    start: start.toISOString(),
-    end: end.toISOString(),
-  };
+type Item = Record<string, unknown>;
+
+/** A Graph `dateTimeTimeZone`: offset-less wall-clock `dateTime` in `timeZone`. */
+interface DateTimeTimeZone {
+  dateTime?: unknown;
+  timeZone?: unknown;
 }
 
-function weekRange(): { start: string; end: string } {
-  const now = new Date();
-  const dayOfWeek = now.getDay();
-  const monday = new Date(now);
-  monday.setDate(now.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
-  monday.setHours(0, 0, 0, 0);
-  const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
-  sunday.setHours(23, 59, 59, 999);
-  return { start: monday.toISOString(), end: sunday.toISOString() };
+interface ReportOptions {
+  output: string;
 }
+
+const UTC_ZONES: Record<string, true> = { utc: true, 'etc/utc': true, gmt: true, 'etc/gmt': true, z: true, 'coordinated universal time': true };
+
+/** Offset of `timeZone` from UTC at `instant`, in ms (wall clock in the zone minus UTC). */
+function zoneOffset(instant: number, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric',
+  }).formatToParts(instant);
+  const part = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((p) => p.type === type)?.value);
+  const wall = Date.UTC(part('year'), part('month') - 1, part('day'), part('hour'), part('minute'), part('second'));
+  return wall - (instant - (instant % 1000));
+}
+
+/**
+ * The instant a Graph `dateTimeTimeZone` denotes. Graph sends offset-less wall-clock times in
+ * `timeZone` — the zone asked for with `Prefer: outlook.timezone`, UTC otherwise. A zone name the
+ * runtime does not know (e.g. a Windows name) is read as local time, the zone the CLI asks for.
+ */
+export function eventInstant(value: unknown): Date {
+  const { dateTime, timeZone } = (value ?? {}) as DateTimeTimeZone;
+  const raw = typeof dateTime === 'string' ? dateTime : '';
+  if (/(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw)) return new Date(raw);
+  const asUtc = Date.parse(`${raw}Z`);
+  const zone = typeof timeZone === 'string' ? timeZone : 'UTC';
+  if (Number.isNaN(asUtc) || UTC_ZONES[zone.toLowerCase()]) return new Date(asUtc);
+  try {
+    // Two passes so a DST change between the guess and the answer is accounted for.
+    const guess = asUtc - zoneOffset(asUtc, zone);
+    return new Date(asUtc - zoneOffset(guess, zone));
+  } catch {
+    return new Date(raw);
+  }
+}
+
+/** Local calendar day an event starts on; all-day events carry a date, not an instant. */
+function eventStartDay(ev: Item): Date {
+  const start = ev.start as DateTimeTimeZone | undefined;
+  if (ev.isAllDay && typeof start?.dateTime === 'string') {
+    const [y, m, d] = start.dateTime.slice(0, 10).split('-').map(Number);
+    return new Date(y, m - 1, d);
+  }
+  return eventInstant(start);
+}
+
+/** `YYYY-MM-DD` of `d` in the local zone. */
+function localDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Local midnight of `now`'s day plus `days`. */
+function localMidnight(now: Date, days = 0): Date {
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() + days);
+}
+
+function values(data: unknown): Item[] {
+  const value = (data as Item | undefined)?.value;
+  return Array.isArray(value) ? (value as Item[]) : [];
+}
+
+/** Every event overlapping [start, end), with times in the local zone, ordered by start. */
+async function calendarView(client: GraphClient, start: Date, end: Date, select: string): Promise<Item[]> {
+  const res = await client.requestAllPages('/me/calendarView', {
+    headers: preferTimezone(),
+    queryParams: {
+      startDateTime: start.toISOString(),
+      endDateTime: end.toISOString(),
+      '$select': select,
+      '$orderby': 'start/dateTime',
+      '$top': '100',
+    },
+  });
+  return values(res.data);
+}
+
+/** Unread messages in the inbox (the folder's own counter, not a page length). */
+async function inboxUnreadCount(client: GraphClient): Promise<number> {
+  const res = await client.request('/me/mailFolders/inbox', { queryParams: { '$select': 'unreadItemCount' } });
+  const count = (res.data as Item).unreadItemCount;
+  return typeof count === 'number' ? count : 0;
+}
+
+/** `HH:MM` (or `HH`) on a 24h clock → minutes since midnight; `24:00` allowed as end of day. */
+function clockMinutes(value: string): number {
+  const m = /^(\d{1,2})(?::(\d{2}))?$/.exec(value);
+  const hours = Number(m?.[1]);
+  const minutes = Number(m?.[2] ?? 0);
+  if (!m || hours > 24 || minutes > 59 || (hours === 24 && minutes > 0)) {
+    throw new InvalidArgumentError('Expected a 24h time HH:MM, e.g. 09:00.');
+  }
+  return hours * 60 + minutes;
+}
+
+const time = (d: Date) => d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+const HTML_ENTITIES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => HTML_ENTITIES[c]);
 
 export function registerWorkflowCommands(program: Command, getClient: () => GraphClient): void {
   const wf = program.command('workflow').alias('wf').description('Cross-service productivity workflows');
@@ -34,74 +118,41 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
   // ── standup-report ──────────────────────────────────────────────
   wf
     .command('standup')
-    .description("Today's standup: calendar events + open tasks + unread email count")
+    .description("Today's standup: calendar events + inbox unread count")
     .addOption(outputOption('text'))
-    .action(handleErrors(async (opts) => {
+    .action(handleErrors(async (opts: ReportOptions) => {
       const client = getClient();
-      const { start, end } = todayRange();
-
-      // Fetch in parallel: today's events, my planner tasks, todo tasks, unread count
-      const [eventsRes, unreadRes] = await Promise.all([
-        client.request('/me/calendarView', {
-          queryParams: {
-            startDateTime: start,
-            endDateTime: end,
-            '$select': 'subject,start,end,location,isAllDay,organizer',
-            '$orderby': 'start/dateTime',
-            '$top': '50',
-          },
-        }),
-        client.request('/me/messages', {
-          queryParams: {
-            '$filter': 'isRead eq false',
-            '$select': 'id',
-            '$top': '1',
-            '$count': 'true',
-          },
-        }),
+      const now = new Date();
+      const [events, unreadEmails] = await Promise.all([
+        calendarView(client, localMidnight(now), localMidnight(now, 1), 'subject,start,end,location,isAllDay,organizer'),
+        inboxUnreadCount(client),
       ]);
 
-      const events = ((eventsRes.data as Record<string, unknown>).value as Array<Record<string, unknown>>) || [];
-      const unreadData = unreadRes.data as Record<string, unknown>;
-      // Graph doesn't always return @odata.count, estimate from value array
-      const unreadCount = (unreadData.value as unknown[])?.length ?? 0;
-      const hasMoreUnread = unreadRes.nextLink ? '+' : '';
-
-      if (opts.output === 'json') {
-        console.log(JSON.stringify({ events, unreadEmails: `${unreadCount}${hasMoreUnread}` }, null, 2));
+      if (opts.output !== 'text') {
+        console.log(formatOutput({ events, unreadEmails }, opts.output as OutputFormat));
         return;
       }
 
-      // Human-readable standup report
-      const now = new Date();
       const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
-
       console.log(`Standup Report — ${dateStr}`);
       console.log('='.repeat(50));
 
-      // Calendar
       console.log(`\nCalendar (${events.length} events today):`);
       if (events.length === 0) {
         console.log('  No meetings today.');
       } else {
         for (const ev of events) {
-          const s = ev.start as Record<string, unknown>;
-          const e = ev.end as Record<string, unknown>;
-          const startTime = new Date(s.dateTime as string).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-          const endTime = new Date(e.dateTime as string).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-          const loc = (ev.location as Record<string, unknown>)?.displayName;
+          const loc = (ev.location as Item | undefined)?.displayName;
           const locStr = loc ? ` @ ${loc}` : '';
           if (ev.isAllDay) {
             console.log(`  [all day] ${ev.subject}${locStr}`);
           } else {
-            console.log(`  ${startTime}–${endTime}  ${ev.subject}${locStr}`);
+            console.log(`  ${time(eventInstant(ev.start))}–${time(eventInstant(ev.end))}  ${ev.subject}${locStr}`);
           }
         }
       }
 
-      // Unread emails
-      console.log(`\nUnread Emails: ${unreadCount}${hasMoreUnread}`);
-
+      console.log(`\nUnread Emails: ${unreadEmails}`);
       console.log('');
     }));
 
@@ -109,63 +160,51 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
   wf
     .command('meeting-prep')
     .description('Get details for the next upcoming meeting: attendees, agenda, location')
-    .option('--event-id <id>', 'Specific event ID (default: next upcoming event)')
+    .option('--event-id <id>', 'Specific event ID (default: next meeting starting in the next 24 hours)')
     .addOption(outputOption('text'))
-    .action(handleErrors(async (opts) => {
+    .action(handleErrors(async (opts: ReportOptions & { eventId?: string }) => {
       const client = getClient();
+      const select = 'subject,start,end,location,body,attendees,organizer,onlineMeeting,isAllDay,isCancelled';
 
-      let event: Record<string, unknown>;
-
+      let event: Item | undefined;
       if (opts.eventId) {
         const res = await client.request(`/me/events/${encodeURIComponent(opts.eventId)}`, {
-          queryParams: {
-            '$select': 'subject,start,end,location,body,attendees,organizer,onlineMeeting,isAllDay',
-          },
+          headers: preferTimezone(),
+          queryParams: { '$select': select },
         });
-        event = res.data as Record<string, unknown>;
+        event = res.data as Item;
       } else {
-        // Find the next upcoming event
-        const now = new Date().toISOString();
-        const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-        const res = await client.request('/me/calendarView', {
-          queryParams: {
-            startDateTime: now,
-            endDateTime: tomorrow,
-            '$select': 'subject,start,end,location,body,attendees,organizer,onlineMeeting,isAllDay',
-            '$orderby': 'start/dateTime',
-            '$top': '1',
-          },
-        });
-        const events = ((res.data as Record<string, unknown>).value as Array<Record<string, unknown>>) || [];
-        if (events.length === 0) {
-          console.log('No upcoming meetings in the next 24 hours.');
-          return;
-        }
-        event = events[0];
+        // The view also returns all-day and already-running events; the next meeting is the first timed one still ahead.
+        const now = new Date();
+        const events = await calendarView(client, now, new Date(now.getTime() + 24 * 60 * 60 * 1000), select);
+        event = events.find((ev) => !ev.isAllDay && !ev.isCancelled && eventInstant(ev.start) >= now);
       }
 
-      if (opts.output === 'json') {
-        console.log(formatOutput(event, 'json'));
+      if (!event) {
+        info('No upcoming meetings in the next 24 hours.');
+        if (opts.output !== 'text') console.log(formatOutput(null, opts.output as OutputFormat));
         return;
       }
 
-      // Human-readable meeting prep
-      const start = event.start as Record<string, unknown>;
-      const end = event.end as Record<string, unknown>;
-      const startTime = new Date(start.dateTime as string).toLocaleString('en-US', {
+      if (opts.output !== 'text') {
+        console.log(formatOutput(event, opts.output as OutputFormat));
+        return;
+      }
+
+      const startTime = eventInstant(event.start).toLocaleString('en-US', {
         weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
       });
-      const endTime = new Date(end.dateTime as string).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-      const loc = (event.location as Record<string, unknown>)?.displayName;
-      const organizer = (event.organizer as Record<string, unknown>)?.emailAddress as Record<string, unknown>;
-      const attendees = (event.attendees as Array<Record<string, unknown>>) || [];
-      const body = event.body as Record<string, unknown>;
-      const onlineMeeting = event.onlineMeeting as Record<string, unknown>;
+      const endTime = time(eventInstant(event.end));
+      const loc = (event.location as Item | undefined)?.displayName;
+      const organizer = (event.organizer as Item | undefined)?.emailAddress as Item | undefined;
+      const attendees = (event.attendees as Item[] | undefined) || [];
+      const body = event.body as Item | undefined;
+      const onlineMeeting = event.onlineMeeting as Item | undefined;
 
       console.log(`Meeting Prep`);
       console.log('='.repeat(50));
       console.log(`Subject:   ${event.subject}`);
-      console.log(`When:      ${startTime} – ${endTime}`);
+      console.log(`When:      ${event.isAllDay ? `${eventStartDay(event).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} (all day)` : `${startTime} – ${endTime}`}`);
       if (loc) console.log(`Where:     ${loc}`);
       if (onlineMeeting?.joinUrl) console.log(`Join:      ${onlineMeeting.joinUrl}`);
       if (organizer) console.log(`Organizer: ${organizer.name || ''} <${organizer.address || ''}>`);
@@ -173,8 +212,8 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
       if (attendees.length > 0) {
         console.log(`\nAttendees (${attendees.length}):`);
         for (const att of attendees) {
-          const email = att.emailAddress as Record<string, unknown>;
-          const status = (att.status as Record<string, unknown>)?.response || 'none';
+          const email = att.emailAddress as Item | undefined;
+          const status = (att.status as Item | undefined)?.response || 'none';
           const type = att.type || 'required';
           console.log(`  ${email?.name || ''} <${email?.address || ''}> [${type}, ${status}]`);
         }
@@ -198,35 +237,31 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
   wf
     .command('email-to-task <messageId>')
     .description('Convert an email into a To Do task')
-    .option('--list <listId>', 'To Do list ID (default: first list)')
+    .option('--list <listId>', 'To Do list ID (default: your default "Tasks" list)')
     .option('--due <date>', 'Due date (YYYY-MM-DD)')
-    .option('--importance <level>', 'Importance: low, normal, high', 'normal')
+    .addOption(new Option('--importance <level>', 'Importance').choices(['low', 'normal', 'high']).default('normal'))
     .addOption(outputOption())
-    .action(handleErrors(async (messageId: string, opts) => {
+    .action(handleErrors(async (messageId: string, opts: { list?: string; due?: string; importance: string; output: string }) => {
+      const due = opts.due ? parseDate(opts.due) : undefined;
       const client = getClient();
 
-      // Fetch the email
       const msgRes = await client.request(`/me/messages/${encodeURIComponent(messageId)}`, {
         queryParams: { '$select': 'subject,from,bodyPreview,webLink,receivedDateTime' },
       });
-      const msg = msgRes.data as Record<string, unknown>;
-      const from = (msg.from as Record<string, unknown>)?.emailAddress as Record<string, unknown>;
+      const msg = msgRes.data as Item;
+      const from = (msg.from as Item | undefined)?.emailAddress as Item | undefined;
 
-      // Determine target list
       let listId = opts.list;
       if (!listId) {
         const listsRes = await client.request('/me/todo/lists', {
-          queryParams: { '$top': '1' },
+          queryParams: { '$filter': "wellknownListName eq 'defaultList'" },
         });
-        const lists = ((listsRes.data as Record<string, unknown>).value as Array<Record<string, unknown>>) || [];
-        if (lists.length === 0) {
-          throw new Error('No To Do lists found. Create one first.');
-        }
-        listId = lists[0].id as string;
+        const list = values(listsRes.data)[0];
+        if (!list) throw new Error('No default To Do list found; pass --list <listId>.');
+        listId = list.id as string;
       }
 
-      // Create the task
-      const task: Record<string, unknown> = {
+      const task: Item = {
         title: `[Email] ${msg.subject || '(no subject)'}`,
         importance: opts.importance,
         body: {
@@ -239,140 +274,93 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
           ].filter(Boolean).join('\n'),
         },
       };
-
-      if (opts.due) {
-        task.dueDateTime = { dateTime: parseDate(opts.due) + 'T00:00:00', timeZone: 'UTC' };
-      }
+      if (due) task.dueDateTime = { dateTime: `${due}T00:00:00`, timeZone: 'UTC' };
 
       const taskRes = await client.request(`/me/todo/lists/${encodeURIComponent(listId)}/tasks`, {
         method: 'POST',
         body: JSON.stringify(task),
       });
-
-      if (opts.output === 'json') {
-        console.log(formatOutput(taskRes.data, 'json'));
-      } else {
-        const created = taskRes.data as Record<string, unknown>;
-        console.log(`Task created: "${created.title}"`);
-        if (created.id) console.log(`ID: ${created.id}`);
-      }
+      console.log(formatOutput(taskRes.data, opts.output as OutputFormat));
     }));
 
   // ── weekly-digest ───────────────────────────────────────────────
   wf
     .command('digest')
-    .description('Weekly digest: meetings this week, unread emails, tasks due')
+    .description('Weekly digest: meetings this week, inbox unread count, open tasks due this week and overdue (all To Do lists)')
     .addOption(outputOption('text'))
-    .action(handleErrors(async (opts) => {
+    .action(handleErrors(async (opts: ReportOptions) => {
       const client = getClient();
-      const { start, end } = weekRange();
+      const now = new Date();
+      const monday = localMidnight(now, -((now.getDay() + 6) % 7));
+      const nextMonday = localMidnight(monday, 7);
+      const sunday = localMidnight(monday, 6);
 
-      // Fetch in parallel
-      const [eventsRes, unreadRes, todoListsRes] = await Promise.all([
-        client.requestAllPages('/me/calendarView', {
-          queryParams: {
-            startDateTime: start,
-            endDateTime: end,
-            '$select': 'subject,start,end,isAllDay',
-            '$orderby': 'start/dateTime',
-            '$top': '100',
-          },
-        }),
-        client.request('/me/messages', {
-          queryParams: {
-            '$filter': 'isRead eq false',
-            '$select': 'id',
-            '$top': '1',
-          },
-        }),
-        client.request('/me/todo/lists', {
-          queryParams: { '$top': '10' },
-        }),
+      const [events, unreadEmails, listsRes] = await Promise.all([
+        calendarView(client, monday, nextMonday, 'subject,start,end,isAllDay'),
+        inboxUnreadCount(client),
+        client.requestAllPages('/me/todo/lists', { queryParams: { '$select': 'id,displayName' } }),
       ]);
 
-      const events = ((eventsRes.data as Record<string, unknown>).value as Array<Record<string, unknown>>) || [];
-      const unreadCount = ((unreadRes.data as Record<string, unknown>).value as unknown[])?.length || 0;
-      const hasMoreUnread = unreadRes.nextLink ? '+' : '';
-      const todoLists = ((todoListsRes.data as Record<string, unknown>).value as Array<Record<string, unknown>>) || [];
-
-      // Count tasks due this week across all lists
-      let tasksDueCount = 0;
-      let overdueTasks: Array<{ title: string; due: string }> = [];
-      for (const list of todoLists.slice(0, 5)) {
-        const tasksRes = await client.request(
-          `/me/todo/lists/${encodeURIComponent(list.id as string)}/tasks`,
-          {
-            queryParams: {
-              '$filter': `status ne 'completed'`,
-              '$select': 'title,dueDateTime,status',
-              '$top': '50',
-            },
-          }
-        );
-        const tasks = ((tasksRes.data as Record<string, unknown>).value as Array<Record<string, unknown>>) || [];
-        for (const t of tasks) {
-          const due = t.dueDateTime as Record<string, unknown>;
-          if (due?.dateTime) {
-            const dueDate = new Date(due.dateTime as string);
-            const endDate = new Date(end);
-            if (dueDate <= endDate) {
-              tasksDueCount++;
-              if (dueDate < new Date()) {
-                overdueTasks.push({
-                  title: t.title as string,
-                  due: dueDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-                });
-              }
-            }
-          }
+      // To Do due dates are dates (midnight in their zone): compare the date part with local dates.
+      const today = localDate(now);
+      const weekEnd = localDate(sunday);
+      let tasksDueThisWeek = 0;
+      const overdueTasks: Array<{ title: string; due: string }> = [];
+      for (const list of values(listsRes.data)) {
+        const tasksRes = await client.requestAllPages(`/me/todo/lists/${encodeURIComponent(list.id as string)}/tasks`, {
+          queryParams: {
+            '$filter': `status ne 'completed'`,
+            '$select': 'title,dueDateTime,status',
+            '$top': '100',
+          },
+        });
+        for (const t of values(tasksRes.data)) {
+          const dueAt = (t.dueDateTime as DateTimeTimeZone | undefined)?.dateTime;
+          if (typeof dueAt !== 'string') continue;
+          const due = dueAt.slice(0, 10);
+          if (due < today) overdueTasks.push({ title: t.title as string, due });
+          else if (due <= weekEnd) tasksDueThisWeek++;
         }
       }
 
-      if (opts.output === 'json') {
-        console.log(JSON.stringify({
-          week: { start, end },
+      if (opts.output !== 'text') {
+        console.log(formatOutput({
+          week: { start: localDate(monday), end: weekEnd },
           meetings: events.length,
-          unreadEmails: `${unreadCount}${hasMoreUnread}`,
-          tasksDueThisWeek: tasksDueCount,
+          unreadEmails,
+          tasksDueThisWeek,
           overdueTasks,
-        }, null, 2));
+        }, opts.output as OutputFormat));
         return;
       }
 
-      // Group events by day
-      const eventsByDay: Record<string, Array<Record<string, unknown>>> = {};
+      const eventsByDay = new Map<string, Item[]>();
       for (const ev of events) {
-        const s = ev.start as Record<string, unknown>;
-        const day = new Date(s.dateTime as string).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-        if (!eventsByDay[day]) eventsByDay[day] = [];
-        eventsByDay[day].push(ev);
+        const day = eventStartDay(ev).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        const dayEvents = eventsByDay.get(day);
+        if (dayEvents) dayEvents.push(ev);
+        else eventsByDay.set(day, [ev]);
       }
 
-      const weekStart = new Date(start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      const weekEnd = new Date(end).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-
-      console.log(`Weekly Digest — ${weekStart} to ${weekEnd}`);
+      const shortDate = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      console.log(`Weekly Digest — ${shortDate(monday)} to ${shortDate(sunday)}`);
       console.log('='.repeat(50));
       console.log(`Meetings:     ${events.length}`);
-      console.log(`Unread Email: ${unreadCount}${hasMoreUnread}`);
-      console.log(`Tasks Due:    ${tasksDueCount}`);
+      console.log(`Unread Email: ${unreadEmails}`);
+      console.log(`Tasks Due:    ${tasksDueThisWeek}`);
       if (overdueTasks.length > 0) {
         console.log(`Overdue:      ${overdueTasks.length}`);
       }
 
-      if (Object.keys(eventsByDay).length > 0) {
+      if (eventsByDay.size > 0) {
         console.log('\nCalendar:');
-        for (const [day, dayEvents] of Object.entries(eventsByDay)) {
+        for (const [day, dayEvents] of eventsByDay) {
           console.log(`  ${day}:`);
           for (const ev of dayEvents) {
-            const s = ev.start as Record<string, unknown>;
-            const e = ev.end as Record<string, unknown>;
             if (ev.isAllDay) {
               console.log(`    [all day] ${ev.subject}`);
             } else {
-              const st = new Date(s.dateTime as string).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-              const et = new Date(e.dateTime as string).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-              console.log(`    ${st}–${et}  ${ev.subject}`);
+              console.log(`    ${time(eventInstant(ev.start))}–${time(eventInstant(ev.end))}  ${ev.subject}`);
             }
           }
         }
@@ -381,7 +369,8 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
       if (overdueTasks.length > 0) {
         console.log('\nOverdue Tasks:');
         for (const t of overdueTasks) {
-          console.log(`  - ${t.title} (due ${t.due})`);
+          const [y, m, d] = t.due.split('-').map(Number);
+          console.log(`  - ${t.title} (due ${shortDate(new Date(y, m - 1, d))})`);
         }
       }
 
@@ -394,85 +383,68 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
     .description('Get file info and post announcement to a Teams channel (requires --org-mode)')
     .requiredOption('--team <teamId>', 'Team ID')
     .requiredOption('--channel <channelId>', 'Channel ID')
-    .option('--message <text>', 'Custom announcement message')
-    .action(handleErrors(async (driveId: string, itemId: string, opts) => {
+    .option('--message <text>', 'Custom announcement text (plain text)')
+    .addOption(outputOption())
+    .action(handleErrors(async (driveId: string, itemId: string, opts: { team: string; channel: string; message?: string; output: string }) => {
       const client = getClient();
 
-      // Get file metadata
       const fileRes = await client.request(
         `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}`,
         { queryParams: { '$select': 'name,webUrl,size,lastModifiedDateTime,createdBy' } }
       );
-      const file = fileRes.data as Record<string, unknown>;
+      const file = fileRes.data as Item;
 
+      // The message body is HTML: every value from the file or the user is escaped.
+      const name = escapeHtml(String(file.name ?? ''));
       const sizeKb = Math.round((file.size as number || 0) / 1024);
-      const customMsg = opts.message || `New file shared: **${file.name}**`;
-      const body = [
-        customMsg,
+      const content = [
+        opts.message ? escapeHtml(opts.message) : `New file shared: <b>${name}</b>`,
         '',
-        `File: [${file.name}](${file.webUrl})`,
+        `File: ${typeof file.webUrl === 'string' ? `<a href="${escapeHtml(file.webUrl)}">${name}</a>` : name}`,
         `Size: ${sizeKb} KB`,
-        `Modified: ${file.lastModifiedDateTime}`,
+        `Modified: ${escapeHtml(String(file.lastModifiedDateTime ?? ''))}`,
       ].join('<br>');
 
-      // Post to channel
-      await client.request(
+      const postRes = await client.request(
         `/teams/${encodeURIComponent(opts.team)}/channels/${encodeURIComponent(opts.channel)}/messages`,
         {
           method: 'POST',
-          body: JSON.stringify({
-            body: { contentType: 'html', content: body },
-          }),
+          body: JSON.stringify({ body: { contentType: 'html', content } }),
         }
       );
 
-      console.log(`Announced "${file.name}" to channel.`);
+      info(`Announced "${file.name}" to channel.`);
+      console.log(formatOutput(postRes.data, opts.output as OutputFormat));
     }));
 
   // ── focus-time ──────────────────────────────────────────────────
   wf
     .command('focus-time')
     .description('Find gaps in your calendar today for focus time')
-    .option('--work-start <hour>', 'Work day start hour (24h)', '9')
-    .option('--work-end <hour>', 'Work day end hour (24h)', '17')
+    .addOption(new Option('--work-start <HH:MM>', 'Work day start (24h)').argParser(clockMinutes).default(9 * 60, '09:00'))
+    .addOption(new Option('--work-end <HH:MM>', 'Work day end (24h)').argParser(clockMinutes).default(17 * 60, '17:00'))
     .addOption(outputOption('text'))
-    .action(handleErrors(async (opts) => {
+    .action(handleErrors(async (opts: ReportOptions & { workStart: number; workEnd: number }) => {
+      const workStartMin = opts.workStart;
+      const endMinute = opts.workEnd;
+      if (endMinute <= workStartMin) throw new Error('--work-end must be later than --work-start.');
+
       const client = getClient();
-      const { start, end } = todayRange();
-
-      const eventsRes = await client.request('/me/calendarView', {
-        queryParams: {
-          startDateTime: start,
-          endDateTime: end,
-          '$select': 'subject,start,end,isAllDay,showAs',
-          '$orderby': 'start/dateTime',
-          '$top': '50',
-        },
-      });
-
-      const events = ((eventsRes.data as Record<string, unknown>).value as Array<Record<string, unknown>>) || [];
-
-      const workStart = parseInt(opts.workStart);
-      const workEnd = parseInt(opts.workEnd);
       const now = new Date();
-      const today = new Date(now);
+      const dayStart = localMidnight(now);
+      const dayEnd = localMidnight(now, 1);
+      const events = await calendarView(client, dayStart, dayEnd, 'subject,start,end,isAllDay,showAs');
+
+      // Local wall-clock minute of today; events reaching into other days are clamped to today.
+      const minuteOfDay = (d: Date) => (d < dayStart ? 0 : d >= dayEnd ? 24 * 60 : d.getHours() * 60 + d.getMinutes());
 
       // Build busy intervals (skip all-day and free events)
-      const workStartMin = workStart * 60;
-      const endMinute = workEnd * 60;
       const busy: Array<{ start: number; end: number; subject: string }> = [];
       for (const ev of events) {
         if (ev.isAllDay) continue;
         if (ev.showAs === 'free') continue;
-        const s = new Date((ev.start as Record<string, unknown>).dateTime as string);
-        const e = new Date((ev.end as Record<string, unknown>).dateTime as string);
-        let startMin = s.getHours() * 60 + s.getMinutes();
-        let endMin = e.getHours() * 60 + e.getMinutes();
-        // Handle midnight-crossing meetings: clamp to work window end
-        if (endMin <= startMin) endMin = endMinute;
-        // Clamp to work window
-        startMin = Math.max(startMin, workStartMin);
-        endMin = Math.min(endMin, endMinute);
+        const startMin = Math.max(minuteOfDay(eventInstant(ev.start)), workStartMin);
+        const endMin = Math.min(minuteOfDay(eventInstant(ev.end)), endMinute);
         if (startMin >= endMin) continue;
         busy.push({ start: startMin, end: endMin, subject: ev.subject as string });
       }
@@ -492,7 +464,7 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
       }
 
       const gaps: Array<{ start: number; end: number; minutes: number }> = [];
-      let cursor = Math.max(workStartMin, now.getHours() * 60 + now.getMinutes());
+      let cursor = Math.max(workStartMin, minuteOfDay(now));
 
       for (const block of merged) {
         if (block.start > cursor) {
@@ -507,8 +479,8 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
         gaps.push({ start: cursor, end: endMinute, minutes: endMinute - cursor });
       }
 
-      if (opts.output === 'json') {
-        console.log(JSON.stringify({
+      if (opts.output !== 'text') {
+        console.log(formatOutput({
           gaps: gaps.map(g => ({
             start: `${Math.floor(g.start / 60)}:${String(g.start % 60).padStart(2, '0')}`,
             end: `${Math.floor(g.end / 60)}:${String(g.end % 60).padStart(2, '0')}`,
@@ -516,12 +488,12 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
           })),
           busyBlocks: busy.length,
           totalFocusMinutes: gaps.reduce((s, g) => s + g.minutes, 0),
-        }, null, 2));
+        }, opts.output as OutputFormat));
         return;
       }
 
       const fmtTime = (mins: number) => {
-        const h = Math.floor(mins / 60);
+        const h = Math.floor(mins / 60) % 24;
         const m = mins % 60;
         const period = h >= 12 ? 'PM' : 'AM';
         const h12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
@@ -530,7 +502,7 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
 
       const totalFocus = gaps.reduce((s, g) => s + g.minutes, 0);
 
-      console.log(`Focus Time — ${today.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}`);
+      console.log(`Focus Time — ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}`);
       console.log('='.repeat(50));
       console.log(`Meetings: ${busy.length}  |  Available focus: ${Math.floor(totalFocus / 60)}h ${totalFocus % 60}m\n`);
 
