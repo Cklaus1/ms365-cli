@@ -142,17 +142,20 @@ Critical-path extra gate: CORE-1 and AUTH-1/2 need an end-to-end process test (s
 - Whole file base64'd into memory.
 - **Fix:** `requestBinary(endpoint): Promise<ReadableStream|Buffer>` that never parses; commands stream to file via one shared `saveOrStream(out)` helper; honours dry-run/retry.
 - **Accept:** mocked `application/pdf` body round-trips byte-identical to `--out`.
+- [REVISED: signature] `requestBinary` returns `{ body: ReadableStream|null, status, contentType, contentLength? }`: commands need the content type (photo extension) and dry-run needs a null body. `saveOrStream(source, { out, force }, stdout?)` lives in `src/files.ts` and owns the no-overwrite rule (temp sibling + atomic link, "File exists … Use --force").
 
 ### GRAPH-3 (P1) Upload: >4 MB always fails; silent overwrite `[code]`
 - Callers pass `…:/name:/content` (`drive.ts:101,325`); session URL becomes `…:/content/createUploadSession` (`:324`) — Graph expects `…:/name:/createUploadSession`.
 - `conflictBehavior: 'replace'` hard-coded (`:332`); simple PUT also replaces. No timeout/retry on PUTs/chunks; failed session not cancelled. [REVISED: removed false photo claim — `user.ts:195-197` already rejects >4 MB before `uploadFile`.]
 - **Fix:** split `uploadFile` in two: `uploadDriveItem(itemPath, …)` appends `:/content` or `:/createUploadSession` itself; `putBinary(endpoint, …)` is a plain PUT used by `user upload-photo` (URL stays exactly `/me/photo/$value`). Conflict handling decided (Q4, refined Q11): `--conflict rename|replace|fail`; **`drive upload` defaults to `rename`**, **`drive cp` defaults to `replace`** (cp names an exact destination path; keeps the documented `cat` → edit → `cp` round trip). Simple PUT sends `?@microsoft.graph.conflictBehavior=<v>`; sessions send `item['@microsoft.graph.conflictBehavior']`. Output and `info()` report the **name Graph actually stored**, so agents see the rename. Chunk retry via `nextExpectedRanges`; cancel (DELETE) the session on failure.
 - **Accept:** mocked fetch: default `drive upload` URL carries `conflictBehavior=rename`, `drive cp` carries `replace`; a returned name that differs from the requested one shows up in the stderr notice and the JSON output (tests don't hard-code `report (1).docx`); >4 MB session URL ends `:/createUploadSession`; photo upload URL is exactly `/me/photo/$value`.
+- [REVISED: idempotency] A simple PUT with `conflictBehavior=rename` is not idempotent (a retry after a timeout can store a second copy), so it gets the POST retry policy (429 only); `replace`/`fail` PUTs stay retryable.
 
 ### GRAPH-4 (P1) All `@odata.*` annotations stripped from responses `[code]`
 - `removeODataProps` (`:456`) deletes `@odata.etag`, `@odata.count`, `@odata.deltaLink`, `@odata.type`. Consequences: Planner needs a raw `fetch` workaround (PLANNER-1); unread counts wrong (WF-2); `sp delta` cannot resume (SP-2); attachment kind indistinguishable.
 - **Fix (decided, Q6):** client returns the raw payload plus `{nextLink, deltaLink, count}` on `GraphResponse`; `removeODataProps` moves into `formatOutput`/`streamPages`. Every command that reads `response.data` gets checked (grep `response.data`/`.data as`). Rendered output stays byte-identical for unchanged commands (snapshot via existing formatter tests).
 - [REVISED: call sites + test] Commands that print `response.data` without `formatOutput` must strip explicitly: `workflow.ts:71,332,511` (`JSON.stringify`), `schema.ts:262`. `test/graph-client.test.ts:285-306` (asserts client-side stripping) is replaced by a test asserting `deltaLink`/`count` on `GraphResponse` and an output-side stripping test. Add command-level stdout tests with `@odata.etag`/`@odata.context` in the mocked payload.
+- [REVISED: implementation audit] Only `workflow.ts:71` leaks annotations (raw events through `JSON.stringify`) → `stripODataAnnotations` (new formatter export). `workflow.ts:332/511` print derived summaries and `schema.ts:258` prints local metadata — nothing to strip.
 
 ### GRAPH-5 (P1) Pagination path diverges from `request()`
 - `requestDirect` (`:209`) has no 401 refresh, drops caller headers (e.g. `ConsistencyLevel: eventual` for `groups list --search --all`), returns raw JSON in errors, different retry policy.
@@ -180,6 +183,7 @@ Critical-path extra gate: CORE-1 and AUTH-1/2 need an end-to-end process test (s
 - **MAIL-6 (P2)** `list`/`triage` default to `/me/messages` (all folders incl. Junk/Deleted) while described as inbox (`:79,222-224`).
 - **MAIL-7 (P2)** `reply --html` declared, unused (`:577`). `delete-attachment` has no confirm (`:542-551`). `read -o json` drops the attachment list it fetches (`:179-194`). triage truncates IDs in csv (`:258`), ignores yaml/text.
 - **MAIL-8 (P3)** `$search` value not quote-escaped (`:77`; same in `contacts.ts:29`). README count 35 vs 36 commands; attachment commands undocumented.
+- [REVISED: MAIL-8 helper] `searchQuote()` (`src/graph-helpers.ts`) wraps in double quotes and backslash-escapes `\` and `"` — not verified against Graph docs; MAIL slice confirms against the `$search` docs before adoption. `odataQuote()` gives `'O''Brien'` (used by MAIL-3).
 
 ### Calendar / Workflow / To Do / Contacts
 - **WF-1 (P1)** Graph event times (UTC, offset-less) parsed as local (`workflow.ts:90-91,158-161,346,373-374,467-470`); `todayRange` uses UTC day (`:7-16`) while `weekRange` uses local. Every non-UTC user gets shifted standup/digest/focus-time. Fix: send `Prefer: outlook.timezone="<IANA>"` from one helper for calendar reads; local-day boundaries.
@@ -210,9 +214,11 @@ Critical-path extra gate: CORE-1 and AUTH-1/2 need an end-to-end process test (s
 
 ### Cross-cutting
 - **PAGE-1 (P2)** `--page-limit`/`--page-delay` declared but ignored in `cal view`, `contacts list`, `chat list`, `groups list|my|distribution-lists|teams`, `user list`. Fix: one `paginationOptions()` + `listRequest(opts)` helper used by every list command (also removes ~15 copies of the same option block).
+- [REVISED: helper shape] `paginationOptions(cmd, defaultTop?)` adds the options to a Command and returns it (chainable), not an option list; `listRequest(client, endpoint, request, opts)` also takes `filterItems` so GROUPS-1's client-side `Unified` filter fits. Non-integer `--top`/`--page-limit`/`--page-delay` are rejected.
 - **SCHEMA-1 (P2)** `schema --list` rejected (`<endpoint>` required, `schema.ts:207-211`) though README, error text, and generated skills advertise it.
 - **SKILLS-1 (P2)** `generate-skills` catalog is hand-maintained: missing `user`, `groups`; emits `schema <svc>.list` hints for endpoints that don't exist. Fix: derive from the Commander tree.
 - **FMT-1 (P1)** YAML output invalid `[verified]`: `[EXTERNAL] Hi` → flow sequence, `- dash` → nested list, `~` → null, `\r` emitted raw inside quotes. Table: CR/LF in values breaks rows `[verified]`. CSV: `-5` becomes `"\t-5"` (formula guard mangles numbers). Fix: quote YAML scalars whose first char is in `-?:,[]{}#&*!|>'"%@\``, or that are `~`/case-variant bools or have leading/trailing space; escape `\r`,`\t`; collapse whitespace in table cells; formula guard exempts numeric literals. [REVISED: extended] YAML **keys** go through the same quoting (`formatter.ts:228-250`; e.g. `@microsoft.graph.downloadUrl` from `drive ls`); test with a driveItem fixture.
+- [REVISED: extended] YAML 1.1 short booleans `y`/`n` (any case) are quoted too, as values and keys.
 - **MISC-1 (P3)** [REVISED: added by adversarial review] Small defects: `workflow email-to-task` picks an arbitrary To Do list (`workflow.ts:218-225`) → default list (`wellknownListName eq 'defaultList'`); focus-time NaN on invalid `--start/--end` work hours (`workflow.ts:455-456`) → validate `HH:MM`; setup treats any unknown menu choice as option 2 (`setup.ts:86`) → re-prompt; upload progress ignores `--quiet` (`graph-client.ts:383`, `drive.ts:97`) → `info()`.
 
 ---
