@@ -13,11 +13,17 @@ const LEVEL_ORDER: Record<LogLevel, number> = {
 };
 
 class Logger {
-  private level: LogLevel;
-  private logFile: string | null;
+  private level: LogLevel = 'none';
+  private logFile: string | null = null;
   private stream: fs.WriteStream | null = null;
+  private configured = false;
 
-  constructor() {
+  /**
+   * Read MS365_CLI_LOG_LEVEL/LOG_FILE on first use, not at import: index.ts loads `.env` after all
+   * imports are evaluated (and bundling may hoist this module above any earlier side-effect import).
+   */
+  private configure(): void {
+    this.configured = true;
     const envLevel = process.env.MS365_CLI_LOG_LEVEL;
     this.level = (envLevel && envLevel in LEVEL_ORDER) ? envLevel as LogLevel : 'none';
     this.logFile = process.env.MS365_CLI_LOG_FILE || null;
@@ -41,6 +47,7 @@ class Logger {
   }
 
   private write(level: LogLevel, message: string, data?: unknown): void {
+    if (!this.configured) this.configure();
     if (!this.shouldLog(level)) return;
 
     const entry = {
