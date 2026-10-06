@@ -296,4 +296,18 @@ describe('REMOTE-1c files over the API', () => {
     expect(put!.body).toBe(`base64:${bytes.toString('base64')}`);
     expect(fs.existsSync('/etc/x.bin')).toBe(false);
   });
+
+  it('kills a download that grows past the 25 MB output limit: 502, nothing left on disk', async () => {
+    const home = await loginHome();
+    const tmp = tempDir('ms365-srv-tmp-');
+    // 30 MB, then the body never ends: only a size bound (not the 5 s timeout) can end this request with 502.
+    const huge = { match: '/drives/d1/items/i1/children/c1/content', method: 'GET', bodySize: 30 * 1024 * 1024, stall: true, headers: { 'content-type': 'application/octet-stream' } };
+    const server = await startServer({ home, env: { TMPDIR: tmp }, args: ['--timeout', '5'], routes: [huge] });
+    const res = await call(server, { caps: capsHeader(['drive.read']), body: { command: 'drive.download', positionals: ['d1', 'i1', 'c1'] } });
+    expect(res.status, JSON.stringify(res.body)).toBe(502);
+    expect(res.body.error).toEqual({ code: 'command_failed', message: 'Output file exceeds the 25 MB remote limit' });
+    expect((await call(server, { method: 'GET', path: '/v1/health' })).status).toBe(200);
+    expect(fs.readdirSync(tmp)).toEqual([]);
+    await server.stop();
+  }, 20_000);
 });

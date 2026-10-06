@@ -146,16 +146,17 @@ function parseStdout(stdout: Buffer): unknown {
   }
 }
 
+/** Returned output files; sizes are checked with `stat` first, so an oversized file is never read into memory. */
 async function collectOutputs(dir: string): Promise<OutputFile[]> {
-  const files: OutputFile[] = [];
+  const entries = (await fsp.readdir(dir, { withFileTypes: true })).filter(e => e.isFile());
   let total = 0;
-  for (const entry of await fsp.readdir(dir, { withFileTypes: true })) {
-    if (!entry.isFile()) continue;
+  for (const entry of entries) total += (await fsp.stat(path.join(dir, entry.name))).size;
+  if (total > MAX_FILE_BYTES) {
+    throw new ApiError(502, 'command_failed', `Output file exceeds the ${MAX_FILE_BYTES / 1024 / 1024} MB remote limit`);
+  }
+  const files: OutputFile[] = [];
+  for (const entry of entries) {
     const bytes = await fsp.readFile(path.join(dir, entry.name));
-    total += bytes.byteLength;
-    if (total > MAX_FILE_BYTES) {
-      throw new ApiError(502, 'command_failed', `Output file exceeds the ${MAX_FILE_BYTES / 1024 / 1024} MB remote limit`);
-    }
     files.push({ name: entry.name, contentType: detectMimeType(entry.name), size: bytes.byteLength, base64: bytes.toString('base64') });
   }
   return files;
