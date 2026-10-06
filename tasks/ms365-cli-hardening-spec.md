@@ -84,11 +84,12 @@ Critical-path extra gate: CORE-1 and AUTH-1/2 need an end-to-end process test (s
 - `src/index.ts:57-79` sets org-mode/dry-run/read-only/quiet with `process.argv.includes(...)` and api-version with `argv[indexOf('--api-version')+1]`. An argument value equal to `--dry-run` (e.g. `mail send --body "--dry-run"`) flips the mode; under REMOTE-1 a caller could flip `--org-mode` per request.
 - **Fix:** read global options from `program.opts()` in the preAction hook (after Commander parsing) and construct `AuthManager`/`GraphClient` lazily from them. Env vars (`MS365_CLI_READ_ONLY` etc.) keep working.
 - **Accept:** `mail send --to a@b.c --subject s --body "--dry-run"` with a mocked fetch performs the POST (not a dry run); `--dry-run` as a real flag still dry-runs.
+- [REVISED: implementation finding] Commander parses program options anywhere in argv by default, so `--body --dry-run` was consumed as the global flag even after the argv scan was removed. Fix extended with `program.enablePositionalOptions()`: global flags must precede the subcommand (matches every README example). `ms365 mail list --dry-run` now fails with `unknown option` (exit 1) instead of silently dry-running.
 
 ### CORE-7 (P1) dotenv 17 prints a banner to stdout on every run `[code]` [REVISED: added by adversarial review]
 - `src/index.ts:1` `import 'dotenv/config'` with dotenv 17.3.1 logs `[dotenv@17.3.1] injecting env (N) from .env -- tip: …` via `console.log` unless quiet (`node_modules/dotenv/lib/main.js:302-315`). Every `-o json | jq` pipeline breaks when a `.env` is present.
 - **Fix:** `import dotenv from 'dotenv'; dotenv.config({ quiet: true });` as the first statement. Lands with CORE-4.
-- **Accept:** built binary in a temp cwd containing a `.env` → `schema mail.list -o json` stdout parses as JSON.
+- **Accept:** built binary in a temp cwd containing a `.env` → `schema mail.list` stdout parses as JSON. [REVISED: `schema` has no `-o` option; it always prints JSON.]
 
 ---
 
