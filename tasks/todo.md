@@ -25,5 +25,5 @@
 
 ## Tier 4
 - [x] §6 docs/hygiene, README, CHANGELOG, schema ENDPOINTS (f2cb9b9; README Remote Access section added after REMOTE merge); npm audit 0
-- [x] Implementation review loop: 4 reviewers, 19 findings, all reproduced fail-first, all fixed (afd2b72, 903fafc, merges fix/cmds, fix/remote 0295592, fix/core); 579 tests; smoke 1-4 + dot-segment + impossible-date pass
+- [x] Implementation review loop: 4 reviewers, 15 findings + 1 follow-up (parseDate), all reproduced fail-first, all fixed (afd2b72, 903fafc, merges fix/cmds, fix/remote 0295592, fix/core 2df98e3); 579 tests; smoke 1-4 + dot-segment + impossible-date pass
 - [x] End-of-run report
