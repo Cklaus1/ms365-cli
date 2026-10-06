@@ -3,6 +3,17 @@ import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { outputOption, info } from '../utils.js';
 import { handleErrors } from '../errors.js';
+import { listRequest, paginationOptions, type ListOptions } from '../list.js';
+
+function messageBody(opts: { body: string; html?: boolean }): { contentType: string; content: string } {
+  return { contentType: opts.html ? 'html' : 'text', content: opts.body };
+}
+
+/** POST a message-like body; the success note is skipped in dry-run (status 0), whose preview is on stderr. */
+async function post(client: GraphClient, endpoint: string, body: unknown, done: string): Promise<void> {
+  const res = await client.request(endpoint, { method: 'POST', body: JSON.stringify(body) });
+  if (res.status !== 0) info(done);
+}
 
 export function registerTeamsCommands(program: Command, getClient: () => GraphClient): void {
   const teams = program.command('teams').description('Microsoft Teams (requires --org-mode)');
@@ -59,25 +70,15 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  teams
-    .command('channel-messages <teamId> <channelId>')
-    .description('List channel messages')
-    .option('--top <n>', 'Number of messages')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+  paginationOptions(
+    teams
+      .command('channel-messages <teamId> <channelId>')
+      .description('List channel messages'),
+  )
     .addOption(outputOption())
-    .action(handleErrors(async (teamId: string, channelId: string, opts) => {
-      const client = getClient();
-      const queryParams: Record<string, string> = {};
-      if (opts.top) queryParams['$top'] = opts.top;
-
+    .action(handleErrors(async (teamId: string, channelId: string, opts: ListOptions) => {
       const endpoint = `/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages`;
-      const response = opts.all
-        ? await client.requestAllPages(endpoint, { queryParams }, opts.pageLimit ? parseInt(opts.pageLimit) : undefined, opts.pageDelay ? parseInt(opts.pageDelay) : undefined)
-        : await client.request(endpoint, { queryParams });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await listRequest(getClient(), endpoint, {}, opts);
     }));
 
   teams
@@ -85,18 +86,13 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
     .description('Send a message to a channel')
     .requiredOption('--body <body>', 'Message body')
     .option('--html', 'Body is HTML')
-    .action(handleErrors(async (teamId: string, channelId: string, opts) => {
-      const client = getClient();
-      await client.request(
+    .action(handleErrors(async (teamId: string, channelId: string, opts: { body: string; html?: boolean }) => {
+      await post(
+        getClient(),
         `/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            body: { contentType: opts.html ? 'html' : 'text', content: opts.body },
-          }),
-        }
+        { body: messageBody(opts) },
+        'Channel message sent.',
       );
-      info('Channel message sent.');
     }));
 
   teams
@@ -104,41 +100,26 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
     .description('Reply to a channel message (threaded)')
     .requiredOption('--body <body>', 'Reply body')
     .option('--html', 'Body is HTML')
-    .action(handleErrors(async (teamId: string, channelId: string, messageId: string, opts) => {
-      const client = getClient();
-      await client.request(
+    .action(handleErrors(async (teamId: string, channelId: string, messageId: string, opts: { body: string; html?: boolean }) => {
+      await post(
+        getClient(),
         `/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}/replies`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            body: { contentType: opts.html ? 'html' : 'text', content: opts.body },
-          }),
-        }
+        { body: messageBody(opts) },
+        'Reply sent to channel thread.',
       );
-      info('Reply sent to channel thread.');
     }));
 
   // Chats
   const chat = program.command('chat').description('Teams chat (requires --org-mode)');
 
-  chat
-    .command('list')
-    .description('List chats')
-    .option('--top <n>', 'Number of chats')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+  paginationOptions(
+    chat
+      .command('list')
+      .description('List chats'),
+  )
     .addOption(outputOption())
-    .action(handleErrors(async (opts) => {
-      const client = getClient();
-      const queryParams: Record<string, string> = {};
-      if (opts.top) queryParams['$top'] = opts.top;
-
-      const response = opts.all
-        ? await client.requestAllPages('/me/chats', { queryParams })
-        : await client.request('/me/chats', { queryParams });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+    .action(handleErrors(async (opts: ListOptions) => {
+      await listRequest(getClient(), '/me/chats', {}, opts);
     }));
 
   chat
@@ -151,25 +132,14 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  chat
-    .command('messages <chatId>')
-    .description('List chat messages')
-    .option('--top <n>', 'Number of messages')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+  paginationOptions(
+    chat
+      .command('messages <chatId>')
+      .description('List chat messages'),
+  )
     .addOption(outputOption())
-    .action(handleErrors(async (chatId: string, opts) => {
-      const client = getClient();
-      const queryParams: Record<string, string> = {};
-      if (opts.top) queryParams['$top'] = opts.top;
-
-      const endpoint = `/chats/${encodeURIComponent(chatId)}/messages`;
-      const response = opts.all
-        ? await client.requestAllPages(endpoint, { queryParams }, opts.pageLimit ? parseInt(opts.pageLimit) : undefined, opts.pageDelay ? parseInt(opts.pageDelay) : undefined)
-        : await client.request(endpoint, { queryParams });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+    .action(handleErrors(async (chatId: string, opts: ListOptions) => {
+      await listRequest(getClient(), `/chats/${encodeURIComponent(chatId)}/messages`, {}, opts);
     }));
 
   chat
@@ -177,33 +147,22 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
     .description('Send a chat message')
     .requiredOption('--body <body>', 'Message body')
     .option('--html', 'Body is HTML')
-    .action(handleErrors(async (chatId: string, opts) => {
-      const client = getClient();
-      await client.request(`/chats/${encodeURIComponent(chatId)}/messages`, {
-        method: 'POST',
-        body: JSON.stringify({
-          body: { contentType: opts.html ? 'html' : 'text', content: opts.body },
-        }),
-      });
-      info('Message sent.');
+    .action(handleErrors(async (chatId: string, opts: { body: string; html?: boolean }) => {
+      await post(getClient(), `/chats/${encodeURIComponent(chatId)}/messages`, { body: messageBody(opts) }, 'Message sent.');
     }));
 
   chat
     .command('reply <chatId> <messageId>')
-    .description('Reply to a chat message')
+    .description('Reply to a chat message (posts a new message quoting it)')
     .requiredOption('--body <body>', 'Reply body')
     .option('--html', 'Body is HTML')
-    .action(handleErrors(async (chatId: string, messageId: string, opts) => {
-      const client = getClient();
-      await client.request(
-        `/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}/replies`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            body: { contentType: opts.html ? 'html' : 'text', content: opts.body },
-          }),
-        }
+    .action(handleErrors(async (chatId: string, messageId: string, opts: { body: string; html?: boolean }) => {
+      // Chats have no threaded /replies (channels only); Graph's chat reply is replyWithQuote.
+      await post(
+        getClient(),
+        `/chats/${encodeURIComponent(chatId)}/messages/replyWithQuote`,
+        { messageIds: [messageId], replyMessage: { body: messageBody(opts) } },
+        'Reply sent.',
       );
-      info('Reply sent.');
     }));
 }
