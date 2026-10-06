@@ -10,14 +10,14 @@
 ## Tier 1 — parallel
 - [x] AUTH: AUTH-1/2/3, msal bump (Q8), keytar removal, GRAPH-7 auth side, AUTH-4, auth status exit (CORE-5), setup re-prompt (MISC-1) (b138d27, merged)
 - [x] Node 24 LTS target (user decision; c57b227)
-- [ ] GRAPH: GRAPH-1, GRAPH-5/7, GRAPH-4, GRAPH-2, GRAPH-3, GRAPH-6, CORE-4 dry-run/streamPages, FMT-1, PAGE-1 helpers, quoting helpers, command test harness
+- [x] GRAPH: GRAPH-1, GRAPH-5/7, GRAPH-4, GRAPH-2, GRAPH-3, GRAPH-6, CORE-4 dry-run/streamPages, FMT-1, PAGE-1 helpers, quoting helpers (9415b9d, merged; 273 tests)
 
 ## Tier 2 — parallel command slices
-- [ ] MAIL: MAIL-1..8, CORE-4/5 mail parts
-- [ ] CALWF: WF-1..3, CAL-1/2, TODO-1, MISC-1 workflow parts
-- [ ] FILES: DRIVE-1/2, EXCEL-1, SP-1/2, PLANNER-1/2, ONENOTE-1, SEARCH-1
-- [ ] ORG: TEAMS-1/2, USER-1..3, GROUPS-1
-- [ ] META: SCHEMA-1, SKILLS-1 (command-tree introspection)
+- [x] MAIL: MAIL-1..8, CORE-4/5 mail parts (4372d01)
+- [x] CALWF: WF-1..3, CAL-1/2, TODO-1, MISC-1 workflow parts (b8523ee)
+- [x] FILES: DRIVE-1/2, EXCEL-1, SP-1/2, PLANNER-1/2, ONENOTE-1, SEARCH-1 (ab36c39; + 336eda7 base64 branch removed)
+- [x] ORG: TEAMS-1/2, USER-1..3, GROUPS-1 (9341206)
+- [x] META: SCHEMA-1, SKILLS-1 (f1d68f0; + 1913d82 src/commands/registry.ts)
 
 ## Tier 3 — remote
 - [ ] REMOTE-1a/b/c `ms365 serve`
