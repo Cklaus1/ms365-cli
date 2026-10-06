@@ -2,8 +2,9 @@ export type OutputFormat = 'json' | 'table' | 'csv' | 'text' | 'yaml';
 
 /**
  * Stream formatted output page-by-page from an async generator.
- * JSON streams as a valid array; CSV streams rows after a single header;
- * other formats fall back to buffering all items.
+ * JSON streams as a valid array (`[` only once the first item arrived; `[]` when empty);
+ * CSV streams rows after a single header; other formats fall back to buffering all items.
+ * `@odata.*` annotations are stripped from every item.
  */
 export async function streamPages(
   pages: AsyncGenerator<unknown[], void, undefined>,
@@ -12,15 +13,14 @@ export async function streamPages(
 ): Promise<void> {
   if (format === 'json') {
     let first = true;
-    write('[\n');
     for await (const page of pages) {
       for (const item of page) {
-        if (!first) write(',\n');
-        write(JSON.stringify(item, null, 2));
+        write(first ? '[\n' : ',\n');
+        write(JSON.stringify(stripODataAnnotations(item), null, 2));
         first = false;
       }
     }
-    write('\n]\n');
+    write(first ? '[]\n' : '\n]\n');
     return;
   }
 
@@ -29,7 +29,8 @@ export async function streamPages(
     const columnSet = new Set<string>();
     let columns: string[] = [];
     for await (const page of pages) {
-      const flatItems = page.map((item) => {
+      const flatItems = page.map((raw) => {
+        const item = stripODataAnnotations(raw);
         if (typeof item !== 'object' || item === null) return { value: String(item) };
         return flattenObject(item as Record<string, unknown>);
       });
@@ -66,21 +67,37 @@ export async function streamPages(
   write(formatOutput({ value: allItems }, format) + '\n');
 }
 
+/** Render data for stdout. `@odata.*` annotations are dropped from the rendering (the input is not modified). */
 export function formatOutput(data: unknown, format: OutputFormat): string {
+  const clean = stripODataAnnotations(data);
   switch (format) {
     case 'json':
-      return JSON.stringify(data, null, 2);
+      return JSON.stringify(clean, null, 2);
     case 'table':
-      return formatTable(data);
+      return formatTable(clean);
     case 'csv':
-      return formatCsv(data);
+      return formatCsv(clean);
     case 'text':
-      return formatText(data);
+      return formatText(clean);
     case 'yaml':
-      return formatYaml(data);
+      return formatYaml(clean);
     default:
-      return JSON.stringify(data, null, 2);
+      return JSON.stringify(clean, null, 2);
   }
+}
+
+/**
+ * Deep copy of `data` without `@odata.*` keys (context, etag, type, nextLink, count, …).
+ * Graph responses keep them (GraphClient returns raw payloads); only rendered output drops them.
+ */
+export function stripODataAnnotations(data: unknown): unknown {
+  if (Array.isArray(data)) return data.map(stripODataAnnotations);
+  if (typeof data !== 'object' || data === null) return data;
+  const out: Record<string, unknown> = {};
+  for (const [key, val] of Object.entries(data)) {
+    if (!key.startsWith('@odata.')) out[key] = stripODataAnnotations(val);
+  }
+  return out;
 }
 
 /**
@@ -146,7 +163,7 @@ function formatTable(data: unknown): string {
   for (const item of flatItems) {
     for (const col of columns) {
       const val = item[col] ?? '';
-      widths[col] = Math.min(Math.max(widths[col], val.length), 50);
+      widths[col] = Math.min(Math.max(widths[col], tableCell(val).length), 50);
     }
   }
 
@@ -155,7 +172,7 @@ function formatTable(data: unknown): string {
 
   const rows = flatItems.map(item => {
     return columns.map(col => {
-      const val = item[col] ?? '';
+      const val = tableCell(item[col] ?? '');
       return val.substring(0, 50).padEnd(widths[col]);
     }).join('  ');
   });
@@ -218,17 +235,7 @@ function toYaml(data: unknown, indent: number): string {
   if (data === null || data === undefined) return `${pad}null\n`;
   if (typeof data === 'boolean') return `${pad}${data}\n`;
   if (typeof data === 'number') return `${pad}${data}\n`;
-  if (typeof data === 'string') {
-    if (
-      data.includes('\n') || data.includes('"') || data.includes(':') || data.includes('#') ||
-      data === '' || data === 'true' || data === 'false' || data === 'null' ||
-      data === 'yes' || data === 'no' || data === 'on' || data === 'off' ||
-      /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(data)
-    ) {
-      return `${pad}"${data.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')}"\n`;
-    }
-    return `${pad}${data}\n`;
-  }
+  if (typeof data === 'string') return `${pad}${yamlScalar(data)}\n`;
   if (Array.isArray(data)) {
     if (data.length === 0) return `${pad}[]\n`;
     let out = '';
@@ -237,9 +244,9 @@ function toYaml(data: unknown, indent: number): string {
         const entries = Object.entries(item as Record<string, unknown>);
         if (entries.length > 0) {
           const [firstKey, firstVal] = entries[0];
-          out += `${pad}- ${firstKey}: ${inlineValue(firstVal)}\n`;
+          out += `${pad}- ${yamlScalar(firstKey)}: ${inlineValue(firstVal)}\n`;
           for (let j = 1; j < entries.length; j++) {
-            out += `${pad}  ${entries[j][0]}: ${inlineValue(entries[j][1])}\n`;
+            out += `${pad}  ${yamlScalar(entries[j][0])}: ${inlineValue(entries[j][1])}\n`;
           }
           continue;
         }
@@ -253,12 +260,11 @@ function toYaml(data: unknown, indent: number): string {
     if (entries.length === 0) return `${pad}{}\n`;
     let out = '';
     for (const [key, val] of entries) {
-      if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
-        out += `${pad}${key}:\n${toYaml(val, indent + 1)}`;
-      } else if (Array.isArray(val)) {
-        out += `${pad}${key}:\n${toYaml(val, indent + 1)}`;
+      const k = yamlScalar(key);
+      if (typeof val === 'object' && val !== null) {
+        out += `${pad}${k}:\n${toYaml(val, indent + 1)}`;
       } else {
-        out += `${pad}${key}: ${inlineValue(val)}\n`;
+        out += `${pad}${k}: ${inlineValue(val)}\n`;
       }
     }
     return out;
@@ -269,21 +275,37 @@ function toYaml(data: unknown, indent: number): string {
 function inlineValue(val: unknown): string {
   if (val === null || val === undefined) return 'null';
   if (typeof val === 'boolean' || typeof val === 'number') return String(val);
-  if (typeof val === 'string') {
-    // Quote strings that YAML would misinterpret as non-string types
-    if (
-      val.includes('\n') || val.includes('"') || val.includes(':') || val.includes('#') ||
-      val === '' || val === 'true' || val === 'false' || val === 'null' ||
-      val === 'yes' || val === 'no' || val === 'on' || val === 'off' ||
-      /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(val)
-    ) {
-      return `"${val.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')}"`;
-    }
-    return val;
-  }
+  if (typeof val === 'string') return yamlScalar(val);
   if (Array.isArray(val)) return JSON.stringify(val);
   if (typeof val === 'object') return JSON.stringify(val);
   return String(val);
+}
+
+const YAML_INDICATOR_START = /^[-?:,[\]{}#&*!|>'"%@`]/;
+/** YAML 1.1 + 1.2 plain scalars that would not load as strings (bools, null, numbers, inf/nan). */
+const YAML_NON_STRING = /^(~|null|true|false|yes|no|on|off|y|n|[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?|0x[0-9a-f]+|0o[0-7]+|[+-]?\.inf|\.nan)$/i;
+
+/** A string as a YAML scalar (value or key): plain when it reads back as the same string, else double-quoted. */
+function yamlScalar(s: string): string {
+  const plain =
+    s !== '' &&
+    !YAML_INDICATOR_START.test(s) &&
+    !YAML_NON_STRING.test(s) &&
+    s.trim() === s &&
+    !/[:#"\\\x00-\x1f\x7f\u0085\u2028\u2029]/.test(s);
+  return plain ? s : `"${yamlEscape(s)}"`;
+}
+
+const YAML_ESCAPES: Record<string, string> = { '\\': '\\\\', '"': '\\"', '\n': '\\n', '\r': '\\r', '\t': '\\t' };
+
+function yamlEscape(s: string): string {
+  return s.replace(/[\\"\x00-\x1f\x7f\u0085\u2028\u2029]/g,
+    (c) => YAML_ESCAPES[c] ?? `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
+
+/** One table cell: line breaks/tabs (any whitespace run) collapse to one space so rows never break. */
+function tableCell(val: string): string {
+  return val.replace(/\s+/g, ' ');
 }
 
 function extractItems(data: unknown): unknown[] {
@@ -295,13 +317,15 @@ function extractItems(data: unknown): unknown[] {
   return [data];
 }
 
+const NUMERIC_LITERAL = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
+
 function csvEscape(val: string): string {
-  // Prevent formula injection: prefix with tab if value starts with =, +, -, or @
+  // Prevent formula injection: prefix with tab if value starts with =, +, -, or @ (numbers are exempt)
   let safe = val;
-  if (/^[=+\-@]/.test(safe)) {
+  if (/^[=+\-@]/.test(safe) && !NUMERIC_LITERAL.test(safe)) {
     safe = '\t' + safe;
   }
-  if (safe.includes(',') || safe.includes('"') || safe.includes('\n') || safe !== val) {
+  if (/[,"\r\n]/.test(safe) || safe !== val) {
     return '"' + safe.replace(/"/g, '""') + '"';
   }
   return safe;

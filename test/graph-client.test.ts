@@ -89,7 +89,7 @@ describe('GraphClient', () => {
     it('blocks file uploads before touching filesystem', async () => {
       const client = new GraphClient(mockAuth, false, 'v1.0', true);
       await expect(
-        client.uploadFile('/me/drive/root:/test.txt:/content', '/nonexistent/path', 'text/plain')
+        client.uploadDriveItem('/me/drive/root:/test.txt', '/nonexistent/path', { conflict: 'fail' })
       ).rejects.toThrow('Read-only mode');
     });
   });
@@ -97,29 +97,27 @@ describe('GraphClient', () => {
   describe('dry-run mode', () => {
     it('returns dry-run response for POST', async () => {
       const client = new GraphClient(mockAuth, true);
-      const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
       const response = await client.request('/me/messages', {
         method: 'POST',
         body: JSON.stringify({ subject: 'test' }),
       });
       expect(response.status).toBe(0);
-      expect((response.data as any).dryRun).toBe(true);
-      expect((response.data as any).method).toBe('POST');
+      expect(response.data).toMatchObject({ dryRun: true, method: 'POST' });
       spy.mockRestore();
     });
 
     it('returns dry-run response for GET (default method)', async () => {
       const client = new GraphClient(mockAuth, true);
-      const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
       const response = await client.request('/me');
-      expect((response.data as any).dryRun).toBe(true);
-      expect((response.data as any).method).toBe('GET');
+      expect(response.data).toMatchObject({ dryRun: true, method: 'GET' });
       spy.mockRestore();
     });
 
     it('logs headers in dry-run when present', async () => {
       const client = new GraphClient(mockAuth, true);
-      const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
       await client.request('/me', {
         headers: { 'Prefer': 'outlook.body-content-type="text"' },
       });
@@ -147,7 +145,7 @@ describe('GraphClient', () => {
 
     it('yields dry-run data for single page', async () => {
       const client = new GraphClient(mockAuth, true);
-      const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
       const pages: unknown[][] = [];
       for await (const page of client.requestPagesStreaming('/me/messages')) {
         pages.push(page);
@@ -282,7 +280,7 @@ describe('GraphClient', () => {
       expect((response.data as any).message).toBe('OK');
     });
 
-    it('strips @odata properties from response', async () => {
+    it('returns @odata annotations in data (stripping happens at output)', async () => {
       globalThis.fetch = vi.fn(async () => {
         return new Response(JSON.stringify({
           '@odata.context': 'https://graph.microsoft.com/...',
@@ -297,12 +295,10 @@ describe('GraphClient', () => {
 
       const client = new GraphClient(mockAuth);
       const response = await client.request('/me/messages');
-      const data = response.data as any;
-      expect(data['@odata.context']).toBeUndefined();
-      expect(data.id).toBe('1');
-      expect(data.value[0]['@odata.type']).toBeUndefined();
-      expect(data.value[0].id).toBe('m1');
-      // nextLink extracted before stripping
+      expect(response.data).toMatchObject({
+        '@odata.context': 'https://graph.microsoft.com/...',
+        value: [{ '@odata.type': '#message', id: 'm1' }],
+      });
       expect(response.nextLink).toBe('https://graph.microsoft.com/...?skiptoken=abc');
     });
 

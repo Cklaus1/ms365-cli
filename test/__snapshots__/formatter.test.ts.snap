@@ -1,0 +1,115 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`GRAPH-4 rendered output (fixture snapshot, byte-identical across the move) > csv output of the message fixture is unchanged 1`] = `
+"id,subject,isRead,importance,size,categories,from.emailAddress.name,from.emailAddress.address,toRecipients,flag.flagStatus,bodyPreview,parentFolderId
+AAMk1,Quarterly report,false,normal,1024,"Red, Blue",Alice,alice@example.com,"bob@example.com, carol@example.com",notFlagged,See attached,
+AAMk2,Lunch?,true,,12,,Bob,bob@example.com,,,,"
+`;
+
+exports[`GRAPH-4 rendered output (fixture snapshot, byte-identical across the move) > json output of the message fixture is unchanged 1`] = `
+"{
+  "value": [
+    {
+      "id": "AAMk1",
+      "subject": "Quarterly report",
+      "isRead": false,
+      "importance": "normal",
+      "size": 1024,
+      "categories": [
+        "Red",
+        "Blue"
+      ],
+      "from": {
+        "emailAddress": {
+          "name": "Alice",
+          "address": "alice@example.com"
+        }
+      },
+      "toRecipients": [
+        {
+          "emailAddress": {
+            "address": "bob@example.com"
+          }
+        },
+        {
+          "emailAddress": {
+            "address": "carol@example.com"
+          }
+        }
+      ],
+      "flag": {
+        "flagStatus": "notFlagged"
+      },
+      "bodyPreview": "See attached",
+      "parentFolderId": null
+    },
+    {
+      "id": "AAMk2",
+      "subject": "Lunch?",
+      "isRead": true,
+      "size": 12,
+      "categories": [],
+      "from": {
+        "emailAddress": {
+          "name": "Bob",
+          "address": "bob@example.com"
+        }
+      }
+    }
+  ]
+}"
+`;
+
+exports[`GRAPH-4 rendered output (fixture snapshot, byte-identical across the move) > table output of the message fixture is unchanged 1`] = `
+"id     subject           isRead  importance  size  categories  from.emailAddress.name  from.emailAddress.address  toRecipients                        flag.flagStatus  bodyPreview   parentFolderId
+-----  ----------------  ------  ----------  ----  ----------  ----------------------  -------------------------  ----------------------------------  ---------------  ------------  --------------
+AAMk1  Quarterly report  false   normal      1024  Red, Blue   Alice                   alice@example.com          bob@example.com, carol@example.com  notFlagged       See attached                
+AAMk2  Lunch?            true                12                Bob                     bob@example.com                                                                                             "
+`;
+
+exports[`GRAPH-4 rendered output (fixture snapshot, byte-identical across the move) > text output of the message fixture is unchanged 1`] = `
+"[1]
+  id: AAMk1
+  subject: Quarterly report
+  isRead: false
+  importance: normal
+  size: 1024
+  categories: Red, Blue
+  from.emailAddress.name: Alice
+  from.emailAddress.address: alice@example.com
+  toRecipients: bob@example.com, carol@example.com
+  flag.flagStatus: notFlagged
+  bodyPreview: See attached
+  parentFolderId: 
+
+[2]
+  id: AAMk2
+  subject: Lunch?
+  isRead: true
+  size: 12
+  categories: 
+  from.emailAddress.name: Bob
+  from.emailAddress.address: bob@example.com"
+`;
+
+exports[`GRAPH-4 rendered output (fixture snapshot, byte-identical across the move) > yaml output of the message fixture is unchanged 1`] = `
+"value:
+  - id: AAMk1
+    subject: Quarterly report
+    isRead: false
+    importance: normal
+    size: 1024
+    categories: ["Red","Blue"]
+    from: {"emailAddress":{"name":"Alice","address":"alice@example.com"}}
+    toRecipients: [{"emailAddress":{"address":"bob@example.com"}},{"emailAddress":{"address":"carol@example.com"}}]
+    flag: {"flagStatus":"notFlagged"}
+    bodyPreview: See attached
+    parentFolderId: null
+  - id: AAMk2
+    subject: Lunch?
+    isRead: true
+    size: 12
+    categories: []
+    from: {"emailAddress":{"name":"Bob","address":"bob@example.com"}}
+"
+`;
