@@ -2,8 +2,8 @@ import { Command, InvalidArgumentError, Option } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
-import { parseDate, outputOption, info } from '../utils.js';
-import { preferTimezone } from '../graph-helpers.js';
+import { outputOption, info } from '../utils.js';
+import { calendarDate, preferTimezone } from '../graph-helpers.js';
 
 type Item = Record<string, unknown>;
 
@@ -63,6 +63,18 @@ function eventStartDay(ev: Item): Date {
 /** `YYYY-MM-DD` of `d` in the local zone. */
 function localDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * The local `YYYY-MM-DD` of a To Do `dueDateTime`. Graph stores a due date as midnight in the zone it
+ * was set in (Outlook in Berlin: `2026-10-06T22:00:00` UTC for Oct 7; `todo --due`: `T00:00:00` UTC),
+ * or returns local midnight when the Prefer zone is honoured. The instant is rounded to the nearest
+ * local midnight, which is that day whenever the setting zone is within 12 hours of the local one.
+ */
+function dueDay(value: unknown): string | undefined {
+  if (typeof (value as DateTimeTimeZone | undefined)?.dateTime !== 'string') return undefined;
+  const ms = eventInstant(value).getTime();
+  return Number.isNaN(ms) ? undefined : localDate(new Date(ms + 12 * 60 * 60 * 1000));
 }
 
 /** Local midnight of `now`'s day plus `days`. */
@@ -242,7 +254,7 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
     .addOption(new Option('--importance <level>', 'Importance').choices(['low', 'normal', 'high']).default('normal'))
     .addOption(outputOption())
     .action(handleErrors(async (messageId: string, opts: { list?: string; due?: string; importance: string; output: string }) => {
-      const due = opts.due ? parseDate(opts.due) : undefined;
+      const due = opts.due ? calendarDate(opts.due) : undefined;
       const client = getClient();
 
       const msgRes = await client.request(`/me/messages/${encodeURIComponent(messageId)}`, {
@@ -301,7 +313,7 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
         client.requestAllPages('/me/todo/lists', { queryParams: { '$select': 'id,displayName' } }),
       ]);
 
-      // To Do due dates are dates (midnight in their zone): compare the date part with local dates.
+      // To Do due dates are dates stored as midnight in the zone they were set in (see dueDay).
       const today = localDate(now);
       const weekEnd = localDate(sunday);
       let tasksDueThisWeek = 0;
@@ -313,11 +325,11 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
             '$select': 'title,dueDateTime,status',
             '$top': '100',
           },
+          headers: preferTimezone(),
         });
         for (const t of values(tasksRes.data)) {
-          const dueAt = (t.dueDateTime as DateTimeTimeZone | undefined)?.dateTime;
-          if (typeof dueAt !== 'string') continue;
-          const due = dueAt.slice(0, 10);
+          const due = dueDay(t.dueDateTime);
+          if (!due) continue;
           if (due < today) overdueTasks.push({ title: t.title as string, due });
           else if (due <= weekEnd) tasksDueThisWeek++;
         }

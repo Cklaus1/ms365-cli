@@ -142,6 +142,40 @@ describe('workflow digest (WF-1, WF-2, WF-3)', () => {
     expect(out.overdueTasks).toEqual([{ title: 'Old', due: laDay(-10) }]);
     expect(out.tasksDueThisWeek).toBe(1);
   });
+
+  it('reads To Do due dates in the local zone (TZ=Europe/Berlin): UTC-shaped and zone-shaped payloads', async () => {
+    const BERLIN = 'Europe/Berlin';
+    const berlinDay = (days = 0) => {
+      const d = new Date(`${new Intl.DateTimeFormat('en-CA', { timeZone: BERLIN }).format(new Date())}T12:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + days);
+      return d.toISOString().slice(0, 10);
+    };
+    // How Graph stores a To Do due date set in Berlin: Berlin midnight as UTC (22:00/23:00 the day before).
+    const utcMidnight = (day: string) => ({
+      dateTime: `${eventInstant({ dateTime: `${day}T00:00:00`, timeZone: BERLIN }).toISOString().slice(0, 19)}.0000000`,
+      timeZone: 'UTC',
+    });
+    const r = await runCli(['workflow', 'digest', '-o', 'json'], {
+      env: { ...ENV, TZ: BERLIN },
+      routes: [
+        { match: '/me/calendarView', method: 'GET', body: { value: [] } },
+        unread(0),
+        lists,
+        { match: '/me/todo/lists/L1/tasks', method: 'GET', body: { value: [
+          { title: 'Today (UTC)', dueDateTime: utcMidnight(berlinDay()) },
+          { title: 'Today (Berlin)', dueDateTime: { dateTime: `${berlinDay()}T00:00:00.0000000`, timeZone: BERLIN } },
+          { title: 'Yesterday (UTC)', dueDateTime: utcMidnight(berlinDay(-1)) },
+        ] } },
+      ],
+    });
+    expect(r.stderr).toBe('');
+    expect(r.code).toBe(0);
+    const out = JSON.parse(r.stdout);
+    expect(out.overdueTasks).toEqual([{ title: 'Yesterday (UTC)', due: berlinDay(-1) }]);
+    expect(out.tasksDueThisWeek).toBe(2);
+    const tasksReq = r.requests.find((q) => q.url.includes('/me/todo/lists/L1/tasks'))!;
+    expect(tasksReq.headers.prefer).toBe(`outlook.timezone="${BERLIN}"`);
+  });
 });
 
 describe('workflow meeting-prep (WF-3, CORE-4)', () => {
@@ -191,6 +225,13 @@ describe('workflow email-to-task (MISC-1, WF-3)', () => {
     const r = await runCli(['workflow', 'email-to-task', 'M1', '--importance', 'urgent'], { env: ENV, routes: [] });
     expect(r.code).toBe(1);
     expect(r.requests).toHaveLength(0);
+  });
+
+  it('rejects an impossible --due calendar date before any request', async () => {
+    const r = await runCli(['workflow', 'email-to-task', 'M1', '--due', '2026-02-30'], { env: ENV, routes: [] });
+    expect(r.code).toBe(1);
+    expect(r.requests).toHaveLength(0);
+    expect(r.stderr).toContain('Invalid date: "2026-02-30". Use YYYY-MM-DD format.');
   });
 });
 

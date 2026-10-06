@@ -92,6 +92,18 @@ describe('PLANNER-2', () => {
     expect(JSON.parse(r.stdout).body.dueDateTime).toBe('2026-10-07T04:00:00.000Z');
   });
 
+  it.each([
+    ['create-task', '--plan', 'P1', '--title', 't'],
+    ['update-task', 'T1', '--etag', 'W/"e"'],
+  ])('--due rejects an impossible calendar date (planner %s) with no request', async (...args) => {
+    for (const due of ['2026-02-30', '2026-04-31', '2026-13-01']) {
+      const r = await runCli(['planner', ...args, '--due', due], { env: { ...ENV, TZ: 'America/New_York' }, routes: [] });
+      expect(r.code).toBe(1);
+      expect(r.requests).toHaveLength(0);
+      expect(r.stderr).toContain(`Invalid date: "${due}". Use YYYY-MM-DD format.`);
+    }
+  });
+
   it('--categories with invalid JSON fails with a clear message and no request', async () => {
     const r = await runCli(['planner', 'update-plan-details', 'P1', '--etag', 'W/"e"', '--categories', '{bad'], { env: ENV, routes: [] });
     expect(r.code).toBe(1);

@@ -47,6 +47,36 @@ describe('SP-2 delta follows nextLink and surfaces the deltaLink', () => {
     expect(JSON.parse(r.stdout)).toEqual({ value: [], deltaLink: `${BASE}/sites/delta()?token=d2` });
   });
 
+  it.each([
+    ['v1.0 ?token=', `${BASE}/sites/delta?token=d1`, '/v1.0/sites/delta', 'token'],
+    ['v1.0 ?$deltatoken=', `${BASE}/sites/delta?$deltatoken=d1`, '/v1.0/sites/delta', '$deltatoken'],
+    ['beta ?token=', 'https://graph.microsoft.com/beta/sites/delta?token=d1', '/beta/sites/delta', 'token'],
+  ])('--delta-link accepts the documented /sites/delta link without parentheses (%s)', async (_label, link, pathname, param) => {
+    const r = await runCli(['sp', 'delta', '--delta-link', link, '-o', 'json'], {
+      env: ENV,
+      routes: [{ match: 'd1', body: { value: [], '@odata.deltaLink': `${BASE}/sites/delta?token=d2` } }],
+    });
+    expect(r.stderr).toBe('');
+    expect(r.code).toBe(0);
+    expect(r.requests).toHaveLength(1);
+    const url = new URL(r.requests[0].url);
+    expect(url.origin).toBe('https://graph.microsoft.com');
+    expect(url.pathname).toBe(pathname);
+    expect(url.searchParams.get(param)).toBe('d1');
+    expect(JSON.parse(r.stdout)).toEqual({ value: [], deltaLink: `${BASE}/sites/delta?token=d2` });
+  });
+
+  it.each([
+    'http://graph.microsoft.com/v1.0/sites/delta?token=d1',
+    'https://graph.microsoft.com.evil.example/v1.0/sites/delta?token=d1',
+    'https://graph.microsoft.com/v1.0/sites/deltax?token=d1',
+    'https://graph.microsoft.com/v1.0/me/drive/root/delta?token=d1',
+  ])('rejects a non-Graph or non-sites-delta link: %s', async (link) => {
+    const r = await runCli(['sp', 'delta', '--delta-link', link], { env: ENV, routes: [] });
+    expect(r.code).toBe(1);
+    expect(r.requests).toHaveLength(0);
+  });
+
   it('rejects a link that is not a Graph delta URL', async () => {
     const r = await runCli(['sp', 'delta', '--delta-link', 'https://evil.example/sites/delta()'], { env: ENV, routes: [] });
     expect(r.code).toBe(1);

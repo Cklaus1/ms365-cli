@@ -12,7 +12,8 @@ interface DeltaOpts extends ListOptions { deltaLink?: string }
 
 /**
  * Split a `@odata.nextLink`/`@odata.deltaLink` from an earlier `sp delta` run into endpoint, query and
- * API version, so it goes through the normal request path. Only Graph `/sites/delta()` links are accepted.
+ * API version, so it goes through the normal request path. Only Graph `/sites/delta` (or `/sites/delta()`)
+ * links on https://graph.microsoft.com are accepted.
  */
 function parseDeltaLink(link: string): { endpoint: string; request: GraphRequestOptions } {
   let url: URL;
@@ -21,9 +22,9 @@ function parseDeltaLink(link: string): { endpoint: string; request: GraphRequest
   } catch {
     throw new Error(`Invalid --delta-link: ${link}`);
   }
-  const match = /^\/(v1\.0|beta)(\/sites\/delta\(\))$/.exec(url.pathname);
+  const match = /^\/(v1\.0|beta)(\/sites\/delta(?:\(\))?)$/.exec(url.pathname);
   if (url.origin !== 'https://graph.microsoft.com' || !match) {
-    throw new Error('--delta-link must be a https://graph.microsoft.com/<version>/sites/delta() link from a previous run.');
+    throw new Error('--delta-link must be a https://graph.microsoft.com/<version>/sites/delta link from a previous run.');
   }
   return {
     endpoint: match[2],
