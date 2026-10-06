@@ -11,15 +11,11 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
     .action(handleErrors(async () => {
       const authManager = getAuth();
       await authManager.initialize();
+      await authManager.login(); // errors already say "Sign-in failed: <AADSTS detail>"
       try {
-        await authManager.login();
-      } catch (err) {
-        throw new Error(`Login failed: ${(err as Error).message}`);
-      }
-      const result = await authManager.verifyLogin();
-      if (result.success && result.user) {
-        console.log(`Logged in as ${result.user.displayName} (${result.user.email})`);
-      } else {
+        const user = await authManager.whoAmI();
+        console.log(`Logged in as ${user.displayName} (${user.email})`);
+      } catch {
         console.log('Login completed. Run "ms365 auth status" to verify.');
       }
     }));
@@ -40,11 +36,9 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
     .action(handleErrors(async () => {
       const authManager = getAuth();
       await authManager.initialize();
-      const result = await authManager.verifyLogin();
-      if (!result.success || !result.user) {
-        throw new Error('Not logged in. Run: ms365 auth login');
-      }
-      console.log(`Logged in as ${result.user.displayName} (${result.user.email})`);
+      // Throws "Not logged in" for a missing/expired login, a different message when Graph or the network fails.
+      const user = await authManager.whoAmI();
+      console.log(`Logged in as ${user.displayName} (${user.email})`);
     }));
 
   auth
