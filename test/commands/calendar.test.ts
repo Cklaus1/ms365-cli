@@ -111,6 +111,32 @@ describe('calendar reads (WF-1, PAGE-1)', () => {
     expect(get.requests[0].headers.prefer).toBe(`outlook.timezone="${LA}"`);
   });
 
+  it.each([['JST-9'], ['UTC+3'], ['']])('TZ=%j without an IANA name falls back to UTC (events, decline, workflow)', async (tz) => {
+    const env = { ...ENV, TZ: tz };
+    const list = await runCli(['calendar', 'events', '-o', 'json'], { env, routes: [{ match: '/me/events', method: 'GET', body: { value: [] } }] });
+    expect(list.stderr).toBe('');
+    expect(list.code).toBe(0);
+    expect(list.requests[0].headers.prefer).toBe('outlook.timezone="UTC"');
+
+    const decline = await runCli(['calendar', 'decline', 'E1', '--propose-start', '2026-10-07T09:00:00', '--propose-end', '2026-10-07T10:00:00'], {
+      env, routes: [{ match: '/me/events/E1/decline$', method: 'POST', status: 202, body: '' }],
+    });
+    expect(decline.code).toBe(0);
+    expect(JSON.parse(decline.requests[0].body!).proposedNewTime.start).toEqual({ dateTime: '2026-10-07T09:00:00', timeZone: 'UTC' });
+
+    const digest = await runCli(['workflow', 'digest', '-o', 'json'], {
+      env,
+      routes: [
+        { match: '/me/calendarView', method: 'GET', body: { value: [] } },
+        { match: '/me/mailFolders/inbox\\?', method: 'GET', body: { unreadItemCount: 0 } },
+        { match: '/me/todo/lists(\\?|$)', method: 'GET', body: { value: [] } },
+      ],
+    });
+    expect(digest.stderr).toBe('');
+    expect(digest.code).toBe(0);
+    expect(digest.requests[0].headers.prefer).toBe('outlook.timezone="UTC"');
+  });
+
   it('rejects a non-integer --top before any request', async () => {
     const r = await runCli(['calendar', 'view', '--start', 'a', '--end', 'b', '--top', 'x'], { env: ENV, routes: [] });
     expect(r.code).toBe(1);

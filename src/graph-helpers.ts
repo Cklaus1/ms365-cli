@@ -54,9 +54,20 @@ export function calendarDate(input: string): string {
   return input;
 }
 
-/** The local IANA time zone (e.g. `Europe/Berlin`). */
+/**
+ * The local IANA time zone (e.g. `Europe/Berlin`), or `UTC` when the runtime cannot name one: a POSIX
+ * `TZ` such as `JST-9` resolves to `undefined`, and `TZ=` to `Etc/Unknown`, neither of which Graph or
+ * `Intl` accepts.
+ */
 export function localTimeZone(): string {
-  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (typeof zone !== 'string' || zone === '' || zone === 'Etc/Unknown') return 'UTC';
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: zone });
+    return zone;
+  } catch {
+    return 'UTC';
+  }
 }
 
 /**
