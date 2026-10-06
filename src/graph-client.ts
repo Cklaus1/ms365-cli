@@ -544,25 +544,6 @@ function parseJsonOr(text: string): unknown {
 }
 
 async function parseResponse(response: Response): Promise<GraphResponse> {
-  // Handle binary content
-  const contentType = response.headers.get('content-type') || '';
-  if (
-    contentType.startsWith('audio/') ||
-    contentType.startsWith('video/') ||
-    contentType.startsWith('image/') ||
-    contentType === 'application/octet-stream'
-  ) {
-    const buffer = await response.arrayBuffer();
-    return {
-      data: {
-        contentBytes: Buffer.from(buffer).toString('base64'),
-        contentType,
-        size: buffer.byteLength,
-      },
-      status: response.status,
-    };
-  }
-
   const text = await response.text();
   if (!text) {
     return { data: { message: 'OK' }, status: response.status };

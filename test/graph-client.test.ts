@@ -252,23 +252,6 @@ describe('GraphClient', () => {
       await expect(client.request('/me/teams')).rejects.toThrow('--org-mode');
     });
 
-    it('handles binary content responses', async () => {
-      const binaryData = new Uint8Array([0x89, 0x50, 0x4e, 0x47]); // PNG header
-      globalThis.fetch = vi.fn(async () => {
-        return new Response(binaryData, {
-          status: 200,
-          headers: { 'content-type': 'image/png' },
-        });
-      }) as any;
-
-      const client = new GraphClient(mockAuth);
-      const response = await client.request('/me/photo/$value');
-      const data = response.data as any;
-      expect(data.contentBytes).toBeDefined();
-      expect(data.contentType).toBe('image/png');
-      expect(data.size).toBe(4);
-    });
-
     it('handles empty response body', async () => {
       globalThis.fetch = vi.fn(async () => {
         return new Response(null, { status: 200 });
