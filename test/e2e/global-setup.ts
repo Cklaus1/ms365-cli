@@ -1,8 +1,11 @@
 import { build } from 'tsup';
 import path from 'node:path';
 
-/** Build the CLI once per test run into node_modules/.cache so imports resolve against the repo's node_modules. */
-export const E2E_OUT_DIR = path.resolve(__dirname, '../../node_modules/.cache/ms365-e2e');
+/**
+ * Build the CLI once per test run into this checkout's .e2e-build/ (not node_modules, which worktrees share
+ * via symlink). Package imports resolve upward through the checkout's node_modules.
+ */
+export const E2E_OUT_DIR = path.resolve(__dirname, '../../.e2e-build');
 
 export default async function setup(): Promise<void> {
   await build({
