@@ -111,7 +111,7 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
     .command('delete <listId> <taskId>')
     .description('Delete a task')
     .action(handleErrors(async (listId: string, taskId: string) => {
-      if (!await confirm(`Delete task ${taskId.substring(0, 16)}...?`)) return;
+      await confirm(`Delete task ${taskId.substring(0, 16)}...?`);
       const client = getClient();
       await client.request(
         `/me/todo/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(taskId)}`,

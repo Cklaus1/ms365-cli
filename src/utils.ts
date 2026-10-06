@@ -1,5 +1,6 @@
 import { Option } from 'commander';
 import readline from 'readline';
+import { CancelledError } from './errors.js';
 
 const OUTPUT_FORMATS = ['json', 'table', 'csv', 'text', 'yaml'] as const;
 
@@ -23,22 +24,18 @@ export function info(msg: string): void {
 }
 
 /**
- * Prompt user for confirmation on destructive operations.
- * Always prompts — no --yes override — so AI agents can't bypass.
- * Non-TTY stdin auto-rejects to prevent accidental deletions in scripts.
+ * Require confirmation for a destructive operation; throws CancelledError (exit 1) unless the user answers y.
+ * Always prompts - no --yes override - so AI agents can't bypass.
+ * Non-TTY stdin is refused to prevent accidental deletions in scripts.
  */
-export async function confirm(message: string): Promise<boolean> {
+export async function confirm(message: string): Promise<void> {
   if (!process.stdin.isTTY) {
-    console.error('Destructive operation requires interactive confirmation. Run in a terminal.');
-    return false;
+    throw new CancelledError('Destructive operation requires interactive confirmation. Run in a terminal. Nothing changed.');
   }
   const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-  return new Promise((resolve) => {
-    rl.question(`${message} [y/N] `, (answer) => {
-      rl.close();
-      resolve(answer.trim().toLowerCase() === 'y');
-    });
-  });
+  const answer = await new Promise<string>((resolve) => rl.question(`${message} [y/N] `, resolve));
+  rl.close();
+  if (answer.trim().toLowerCase() !== 'y') throw new CancelledError();
 }
 
 /** Validate and return a YYYY-MM-DD date string. */

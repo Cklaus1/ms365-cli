@@ -116,7 +116,7 @@ export function registerContactsCommands(program: Command, getClient: () => Grap
     .command('delete <contactId>')
     .description('Delete a contact')
     .action(handleErrors(async (contactId: string) => {
-      if (!await confirm(`Delete contact ${contactId.substring(0, 16)}...?`)) return;
+      await confirm(`Delete contact ${contactId.substring(0, 16)}...?`);
       const client = getClient();
       await client.request(`/me/contacts/${encodeURIComponent(contactId)}`, { method: 'DELETE' });
       info('Contact deleted.');

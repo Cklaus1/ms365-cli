@@ -310,7 +310,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .command('delete <messageId>')
     .description('Delete a message')
     .action(handleErrors(async (messageId: string) => {
-      if (!await confirm(`Delete message ${messageId.substring(0, 16)}...?`)) return;
+      await confirm(`Delete message ${messageId.substring(0, 16)}...?`);
       const client = getClient();
       await client.request(`/me/messages/${encodeURIComponent(messageId)}`, { method: 'DELETE' });
       info('Message deleted.');

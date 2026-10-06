@@ -233,7 +233,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
     .description('Delete a planner task')
     .option('--etag <etag>', 'ETag for concurrency (auto-fetched if omitted)')
     .action(handleErrors(async (taskId: string, opts) => {
-      if (!await confirm(`Delete planner task ${taskId.substring(0, 16)}...?`)) return;
+      await confirm(`Delete planner task ${taskId.substring(0, 16)}...?`);
       const client = getClient();
       const etag = opts.etag || await autoFetchETag(client, `/planner/tasks/${encodeURIComponent(taskId)}`);
       await client.request(`/planner/tasks/${encodeURIComponent(taskId)}`, {
@@ -248,7 +248,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
     .description('Delete a planner plan')
     .option('--etag <etag>', 'ETag for concurrency (auto-fetched if omitted)')
     .action(handleErrors(async (planId: string, opts) => {
-      if (!await confirm(`Delete planner plan ${planId.substring(0, 16)}...?`)) return;
+      await confirm(`Delete planner plan ${planId.substring(0, 16)}...?`);
       const client = getClient();
       const etag = opts.etag || await autoFetchETag(client, `/planner/plans/${encodeURIComponent(planId)}`);
       await client.request(`/planner/plans/${encodeURIComponent(planId)}`, {
@@ -263,7 +263,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
     .description('Delete a planner bucket')
     .option('--etag <etag>', 'ETag for concurrency (auto-fetched if omitted)')
     .action(handleErrors(async (bucketId: string, opts) => {
-      if (!await confirm(`Delete planner bucket ${bucketId.substring(0, 16)}...?`)) return;
+      await confirm(`Delete planner bucket ${bucketId.substring(0, 16)}...?`);
       const client = getClient();
       const etag = opts.etag || await autoFetchETag(client, `/planner/buckets/${encodeURIComponent(bucketId)}`);
       await client.request(`/planner/buckets/${encodeURIComponent(bucketId)}`, {

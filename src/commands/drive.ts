@@ -108,7 +108,7 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
     .command('delete <driveId> <itemId>')
     .description('Delete a drive item')
     .action(handleErrors(async (driveId: string, itemId: string) => {
-      if (!await confirm(`Delete drive item ${itemId.substring(0, 16)}...?`)) return;
+      await confirm(`Delete drive item ${itemId.substring(0, 16)}...?`);
       const client = getClient();
       await client.request(`/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}`, {
         method: 'DELETE',

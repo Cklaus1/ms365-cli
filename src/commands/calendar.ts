@@ -150,7 +150,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     .description('Delete a calendar event')
     .option('--calendar <calendarId>', 'Specific calendar ID')
     .action(handleErrors(async (eventId: string, opts) => {
-      if (!await confirm(`Delete event ${eventId.substring(0, 16)}...?`)) return;
+      await confirm(`Delete event ${eventId.substring(0, 16)}...?`);
       const client = getClient();
       const endpoint = opts.calendar
         ? `/me/calendars/${encodeURIComponent(opts.calendar)}/events/${encodeURIComponent(eventId)}`
