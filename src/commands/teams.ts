@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
-import { outputOption } from '../utils.js';
+import { outputOption, info } from '../utils.js';
 import { handleErrors } from '../errors.js';
 
 export function registerTeamsCommands(program: Command, getClient: () => GraphClient): void {
