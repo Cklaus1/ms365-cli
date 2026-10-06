@@ -17,10 +17,20 @@ export interface GraphRequestOptions {
   queryParams?: Record<string, string>;
 }
 
+/**
+ * `data` is the raw Graph payload, `@odata.*` annotations included (`@odata.etag`, `@odata.type`, …);
+ * rendering strips them (formatter). The paging/delta/count annotations are also lifted out here.
+ */
 export interface GraphResponse {
   data: unknown;
+  /** HTTP status; 0 for a dry-run preview. */
   status: number;
+  /** `@odata.nextLink`: absolute URL of the next page (for requestAllPages: the first page not fetched). */
   nextLink?: string;
+  /** `@odata.deltaLink`: absolute URL to resume a delta query (last page). */
+  deltaLink?: string;
+  /** `@odata.count` (requires `$count=true`). */
+  count?: number;
 }
 
 /** A non-2xx answer from Graph after the retry policy gave up. */
@@ -80,14 +90,15 @@ export class GraphClient {
     }
 
     if (this.dryRun) {
-      console.log(`[dry-run] ${method} ${url}`);
-      if (options.body) {
-        console.log(`[dry-run] Body: ${options.body}`);
-      }
+      // stderr unconditionally: --quiet must not hide what would be sent, and stdout stays data-only.
+      process.stderr.write(`[dry-run] ${method} ${url}\n`);
+      if (options.body) process.stderr.write(`[dry-run] Body: ${options.body}\n`);
       if (options.headers && Object.keys(options.headers).length > 0) {
-        console.log(`[dry-run] Headers: ${JSON.stringify(options.headers)}`);
+        process.stderr.write(`[dry-run] Headers: ${JSON.stringify(options.headers)}\n`);
       }
-      return { data: { dryRun: true, method, url }, status: 0 };
+      const data: Record<string, unknown> = { dryRun: true, method, url };
+      if (options.body) data.body = parseJsonOr(options.body);
+      return { data, status: 0 };
     }
 
     const response = await this.send(url, {
@@ -226,7 +237,6 @@ export class GraphClient {
       const text = await response.text();
       try {
         const json = JSON.parse(text);
-        removeODataProps(json);
         return { data: json, status: response.status };
       } catch {
         return { data: { message: 'Upload complete', size: fileSize }, status: response.status };
@@ -299,10 +309,6 @@ export class GraphClient {
       closeSync(fd);
     }
 
-    if (lastResult) {
-      removeODataProps(lastResult as Record<string, unknown>);
-    }
-
     return {
       data: lastResult || { message: 'Upload complete', size: fileSize },
       status: 200,
@@ -310,8 +316,39 @@ export class GraphClient {
   }
 
   /**
+   * Yields one GraphResponse per page: the first via `request()`, then each `@odata.nextLink`
+   * through the same core with the caller's headers, up to `pageLimit` pages (default 100).
+   */
+  private async *pageResponses(
+    endpoint: string,
+    options: GraphRequestOptions,
+    pageLimit?: number,
+    pageDelayMs?: number,
+  ): AsyncGenerator<GraphResponse, void, undefined> {
+    const maxPages = pageLimit || MAX_PAGES;
+    const delayMs = pageDelayMs || 0;
+
+    let page = await this.request(endpoint, options);
+    yield page;
+    let pageCount = 1;
+
+    while (page.nextLink && pageCount < maxPages) {
+      if (delayMs > 0) await sleep(delayMs);
+      page = await this.requestNext(page.nextLink, options);
+      yield page;
+      pageCount++;
+    }
+
+    if (page.nextLink) {
+      console.error(`Warning: Reached page limit (${maxPages}). Results may be incomplete.`);
+    }
+    logger.info(`Paginated across ${pageCount} pages`);
+  }
+
+  /**
    * Async generator that yields items page-by-page for streaming output.
    * Use this for large result sets to avoid buffering everything in memory.
+   * A non-collection payload is yielded once as a single-item page.
    */
   async *requestPagesStreaming(
     endpoint: string,
@@ -319,40 +356,20 @@ export class GraphClient {
     pageLimit?: number,
     pageDelayMs?: number,
   ): AsyncGenerator<unknown[], void, undefined> {
-    const maxPages = pageLimit || MAX_PAGES;
-    const delayMs = pageDelayMs || 0;
-
-    const first = await this.request(endpoint, options);
-    const data = first.data as Record<string, unknown>;
-
-    if (!data.value || !Array.isArray(data.value)) {
-      yield [first.data];
-      return;
-    }
-
-    yield data.value;
-    let nextLink = first.nextLink;
-    let pageCount = 1;
-
-    while (nextLink && pageCount < maxPages) {
-      if (delayMs > 0) await sleep(delayMs);
-      const nextResponse = await this.requestNext(nextLink, options);
-      const nextData = nextResponse.data as Record<string, unknown>;
-
-      if (nextData.value && Array.isArray(nextData.value)) {
-        yield nextData.value;
+    for await (const page of this.pageResponses(endpoint, options, pageLimit, pageDelayMs)) {
+      const items = collectionItems(page.data);
+      if (!items) {
+        yield [page.data];
+        return;
       }
-      nextLink = nextResponse.nextLink;
-      pageCount++;
+      yield items;
     }
-
-    if (pageCount >= maxPages && nextLink) {
-      console.error(`Warning: Reached page limit (${maxPages}). Results may be incomplete.`);
-    }
-
-    logger.info(`Paginated across ${pageCount} pages (streamed)`);
   }
 
+  /**
+   * Fetch every page into `{ value: [...] }`. `count` comes from the first page, `deltaLink` from the
+   * last; `nextLink` is set only when `pageLimit` stopped paging early (resume point).
+   */
   async requestAllPages(
     endpoint: string,
     options: GraphRequestOptions = {},
@@ -360,10 +377,38 @@ export class GraphClient {
     pageDelayMs?: number,
   ): Promise<GraphResponse> {
     const allItems: unknown[] = [];
-    for await (const page of this.requestPagesStreaming(endpoint, options, pageLimit, pageDelayMs)) {
-      allItems.push(...page);
+    let first: GraphResponse | undefined;
+    let last: GraphResponse | undefined;
+    for await (const page of this.pageResponses(endpoint, options, pageLimit, pageDelayMs)) {
+      first ??= page;
+      last = page;
+      const items = collectionItems(page.data);
+      if (!items) {
+        allItems.push(page.data);
+        break;
+      }
+      allItems.push(...items);
     }
-    return { data: { value: allItems }, status: 200 };
+    return {
+      data: { value: allItems },
+      status: last?.status ?? 200,
+      nextLink: last?.nextLink,
+      deltaLink: last?.deltaLink,
+      count: first?.count,
+    };
+  }
+}
+
+function collectionItems(data: unknown): unknown[] | undefined {
+  if (typeof data === 'object' && data !== null && 'value' in data && Array.isArray(data.value)) return data.value;
+  return undefined;
+}
+
+function parseJsonOr(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
   }
 }
 
@@ -392,14 +437,19 @@ async function parseResponse(response: Response): Promise<GraphResponse> {
     return { data: { message: 'OK' }, status: response.status };
   }
 
+  let json: unknown;
   try {
-    const json = JSON.parse(text);
-    const nextLink = json['@odata.nextLink'] || undefined;
-    removeODataProps(json);
-    return { data: json, status: response.status, nextLink };
+    json = JSON.parse(text);
   } catch {
     return { data: { rawResponse: text }, status: response.status };
   }
+  const result: GraphResponse = { data: json, status: response.status };
+  if (typeof json === 'object' && json !== null) {
+    if ('@odata.nextLink' in json && typeof json['@odata.nextLink'] === 'string') result.nextLink = json['@odata.nextLink'];
+    if ('@odata.deltaLink' in json && typeof json['@odata.deltaLink'] === 'string') result.deltaLink = json['@odata.deltaLink'];
+    if ('@odata.count' in json && typeof json['@odata.count'] === 'number') result.count = json['@odata.count'];
+  }
+  return result;
 }
 
 /** Map a final non-2xx response to a user-facing GraphError. */
@@ -431,21 +481,6 @@ async function toGraphError(response: Response, method: string, idempotent: bool
   if (status >= 500 && !idempotent) suffix = ` — the ${method} request may have been applied; not retried.`;
   else if (attempts > 1) suffix = ` (after ${attempts} attempts)`;
   return new GraphError(`Graph API error (${status}): ${message}${suffix}`, status, code);
-}
-
-function removeODataProps(obj: unknown): void {
-  if (typeof obj !== 'object' || obj === null) return;
-  if (Array.isArray(obj)) {
-    obj.forEach(removeODataProps);
-    return;
-  }
-  for (const key of Object.keys(obj as Record<string, unknown>)) {
-    if (key.startsWith('@odata.')) {
-      delete (obj as Record<string, unknown>)[key];
-    } else {
-      removeODataProps((obj as Record<string, unknown>)[key]);
-    }
-  }
 }
 
 function parseRetryAfter(header: string | null, fallbackMs: number): number {

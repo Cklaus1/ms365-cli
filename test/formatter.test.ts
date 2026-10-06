@@ -259,3 +259,84 @@ describe('streamPages', () => {
     expect(parsed).toEqual(['hello', 'world', 42]);
   });
 });
+
+const MESSAGES = {
+  value: [
+    {
+      id: 'AAMk1',
+      subject: 'Quarterly report',
+      isRead: false,
+      importance: 'normal',
+      size: 1024,
+      categories: ['Red', 'Blue'],
+      from: { emailAddress: { name: 'Alice', address: 'alice@example.com' } },
+      toRecipients: [{ emailAddress: { address: 'bob@example.com' } }, { emailAddress: { address: 'carol@example.com' } }],
+      flag: { flagStatus: 'notFlagged' },
+      bodyPreview: 'See attached',
+      parentFolderId: null,
+    },
+    { id: 'AAMk2', subject: 'Lunch?', isRead: true, size: 12, categories: [], from: { emailAddress: { name: 'Bob', address: 'bob@example.com' } } },
+  ],
+};
+
+/** The same payload as Graph returns it: annotations at the top level and on items. */
+function withAnnotations<T>(data: T): T {
+  const copy = JSON.parse(JSON.stringify(data));
+  copy['@odata.context'] = 'https://graph.microsoft.com/v1.0/$metadata#users/messages';
+  copy['@odata.nextLink'] = 'https://graph.microsoft.com/v1.0/me/messages?$skip=2';
+  for (const item of copy.value) {
+    item['@odata.etag'] = 'W/"CQAAABYAAAA"';
+    item['@odata.type'] = '#microsoft.graph.message';
+    if (item.from) item.from['@odata.type'] = '#microsoft.graph.recipient';
+  }
+  return copy;
+}
+
+const ALL_FORMATS: OutputFormat[] = ['json', 'table', 'csv', 'text', 'yaml'];
+
+describe('GRAPH-4 rendered output (fixture snapshot, byte-identical across the move)', () => {
+  it.each(ALL_FORMATS)('%s output of the message fixture is unchanged', (format) => {
+    expect(formatOutput(MESSAGES, format)).toMatchSnapshot();
+  });
+});
+
+describe('GRAPH-4 @odata annotations are stripped at output time', () => {
+  it.each(ALL_FORMATS)('%s: annotated payload renders exactly like the clean one', (format) => {
+    expect(formatOutput(withAnnotations(MESSAGES), format)).toBe(formatOutput(MESSAGES, format));
+  });
+
+  it('does not mutate the caller data (annotations stay usable after printing)', () => {
+    const data = withAnnotations(MESSAGES);
+    formatOutput(data, 'json');
+    expect(data.value[0]).toHaveProperty(['@odata.etag'], 'W/"CQAAABYAAAA"');
+  });
+
+  it.each(['json', 'csv', 'table'] as OutputFormat[])('streamPages %s strips item annotations', async (format) => {
+    async function* pages(): AsyncGenerator<unknown[], void, undefined> {
+      yield withAnnotations(MESSAGES).value;
+    }
+    const chunks: string[] = [];
+    await streamPages(pages(), format, (s) => chunks.push(s));
+    expect(chunks.join('')).not.toContain('@odata');
+  });
+});
+
+describe('CORE-4 streamPages JSON brackets', () => {
+  it('writes nothing to stdout when the first page fails', async () => {
+    async function* failing(): AsyncGenerator<unknown[], void, undefined> {
+      throw new Error('network down');
+    }
+    const chunks: string[] = [];
+    await expect(streamPages(failing(), 'json', (s) => chunks.push(s))).rejects.toThrow('network down');
+    expect(chunks.join('')).toBe('');
+  });
+
+  it('emits [] for a result with only empty pages', async () => {
+    async function* empty(): AsyncGenerator<unknown[], void, undefined> {
+      yield [];
+    }
+    const chunks: string[] = [];
+    await streamPages(empty(), 'json', (s) => chunks.push(s));
+    expect(chunks.join('')).toBe('[]\n');
+  });
+});

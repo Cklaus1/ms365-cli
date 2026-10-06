@@ -2,8 +2,9 @@ export type OutputFormat = 'json' | 'table' | 'csv' | 'text' | 'yaml';
 
 /**
  * Stream formatted output page-by-page from an async generator.
- * JSON streams as a valid array; CSV streams rows after a single header;
- * other formats fall back to buffering all items.
+ * JSON streams as a valid array (`[` only once the first item arrived; `[]` when empty);
+ * CSV streams rows after a single header; other formats fall back to buffering all items.
+ * `@odata.*` annotations are stripped from every item.
  */
 export async function streamPages(
   pages: AsyncGenerator<unknown[], void, undefined>,
@@ -12,15 +13,14 @@ export async function streamPages(
 ): Promise<void> {
   if (format === 'json') {
     let first = true;
-    write('[\n');
     for await (const page of pages) {
       for (const item of page) {
-        if (!first) write(',\n');
-        write(JSON.stringify(item, null, 2));
+        write(first ? '[\n' : ',\n');
+        write(JSON.stringify(stripODataAnnotations(item), null, 2));
         first = false;
       }
     }
-    write('\n]\n');
+    write(first ? '[]\n' : '\n]\n');
     return;
   }
 
@@ -29,7 +29,8 @@ export async function streamPages(
     const columnSet = new Set<string>();
     let columns: string[] = [];
     for await (const page of pages) {
-      const flatItems = page.map((item) => {
+      const flatItems = page.map((raw) => {
+        const item = stripODataAnnotations(raw);
         if (typeof item !== 'object' || item === null) return { value: String(item) };
         return flattenObject(item as Record<string, unknown>);
       });
@@ -66,21 +67,37 @@ export async function streamPages(
   write(formatOutput({ value: allItems }, format) + '\n');
 }
 
+/** Render data for stdout. `@odata.*` annotations are dropped from the rendering (the input is not modified). */
 export function formatOutput(data: unknown, format: OutputFormat): string {
+  const clean = stripODataAnnotations(data);
   switch (format) {
     case 'json':
-      return JSON.stringify(data, null, 2);
+      return JSON.stringify(clean, null, 2);
     case 'table':
-      return formatTable(data);
+      return formatTable(clean);
     case 'csv':
-      return formatCsv(data);
+      return formatCsv(clean);
     case 'text':
-      return formatText(data);
+      return formatText(clean);
     case 'yaml':
-      return formatYaml(data);
+      return formatYaml(clean);
     default:
-      return JSON.stringify(data, null, 2);
+      return JSON.stringify(clean, null, 2);
   }
+}
+
+/**
+ * Deep copy of `data` without `@odata.*` keys (context, etag, type, nextLink, count, …).
+ * Graph responses keep them (GraphClient returns raw payloads); only rendered output drops them.
+ */
+export function stripODataAnnotations(data: unknown): unknown {
+  if (Array.isArray(data)) return data.map(stripODataAnnotations);
+  if (typeof data !== 'object' || data === null) return data;
+  const out: Record<string, unknown> = {};
+  for (const [key, val] of Object.entries(data)) {
+    if (!key.startsWith('@odata.')) out[key] = stripODataAnnotations(val);
+  }
+  return out;
 }
 
 /**
