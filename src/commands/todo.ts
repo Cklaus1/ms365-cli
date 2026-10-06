@@ -1,45 +1,53 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
 import { parseDate, outputOption, confirm, info } from '../utils.js';
+import { paginationOptions, listRequest, type ListOptions } from '../list.js';
+
+const IMPORTANCE = ['low', 'normal', 'high'];
+const STATUS = ['notStarted', 'inProgress', 'completed', 'waitingOnOthers', 'deferred'];
+
+interface TasksOptions extends ListOptions {
+  filter?: string;
+  orderby?: string;
+}
+
+interface UpdateOptions {
+  title?: string;
+  body?: string;
+  status?: string;
+  importance?: string;
+  due?: string;
+  output: string;
+}
 
 export function registerTodoCommands(program: Command, getClient: () => GraphClient): void {
   const todo = program.command('todo').description('Microsoft To Do tasks');
 
-  todo
-    .command('lists')
-    .description('List task lists')
+  paginationOptions(
+    todo
+      .command('lists')
+      .description('List task lists'),
+  )
     .addOption(outputOption())
-    .action(handleErrors(async (opts) => {
-      const client = getClient();
-      const response = await client.request('/me/todo/lists');
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+    .action(handleErrors(async (opts: ListOptions) => {
+      await listRequest(getClient(), '/me/todo/lists', {}, opts);
     }));
 
-  todo
-    .command('tasks <listId>')
-    .description('List tasks in a list')
-    .option('--top <n>', 'Number of tasks')
-    .option('--filter <filter>', 'OData filter')
-    .option('--orderby <field>', 'Order results by field')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+  paginationOptions(
+    todo
+      .command('tasks <listId>')
+      .description('List tasks in a list')
+      .option('--filter <filter>', 'OData filter')
+      .option('--orderby <field>', 'Order results by field'),
+  )
     .addOption(outputOption())
-    .action(handleErrors(async (listId: string, opts) => {
-      const client = getClient();
+    .action(handleErrors(async (listId: string, opts: TasksOptions) => {
       const queryParams: Record<string, string> = {};
-      if (opts.top) queryParams['$top'] = opts.top;
       if (opts.filter) queryParams['$filter'] = opts.filter;
       if (opts.orderby) queryParams['$orderby'] = opts.orderby;
-
-      const endpoint = `/me/todo/lists/${encodeURIComponent(listId)}/tasks`;
-      const response = opts.all
-        ? await client.requestAllPages(endpoint, { queryParams }, opts.pageLimit ? parseInt(opts.pageLimit) : undefined, opts.pageDelay ? parseInt(opts.pageDelay) : undefined)
-        : await client.request(endpoint, { queryParams });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await listRequest(getClient(), `/me/todo/lists/${encodeURIComponent(listId)}/tasks`, { queryParams }, opts);
     }));
 
   todo
@@ -60,7 +68,7 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
     .requiredOption('--title <title>', 'Task title')
     .option('--body <body>', 'Task body/notes')
     .option('--due <date>', 'Due date (YYYY-MM-DD)')
-    .option('--importance <level>', 'Importance: low, normal, high', 'normal')
+    .addOption(new Option('--importance <level>', 'Importance').choices(IMPORTANCE).default('normal'))
     .addOption(outputOption())
     .action(handleErrors(async (listId: string, opts) => {
       const client = getClient();
@@ -87,20 +95,22 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
     .description('Update a task')
     .option('--title <title>', 'Task title')
     .option('--body <body>', 'Task body')
-    .option('--status <status>', 'Status: notStarted, inProgress, completed, waitingOnOthers, deferred')
-    .option('--importance <level>', 'Importance: low, normal, high')
+    .addOption(new Option('--status <status>', 'Status').choices(STATUS))
+    .addOption(new Option('--importance <level>', 'Importance').choices(IMPORTANCE))
     .option('--due <date>', 'Due date (YYYY-MM-DD)')
     .addOption(outputOption())
-    .action(handleErrors(async (listId: string, taskId: string, opts) => {
-      const client = getClient();
+    .action(handleErrors(async (listId: string, taskId: string, opts: UpdateOptions) => {
       const patch: Record<string, unknown> = {};
       if (opts.title) patch.title = opts.title;
       if (opts.status) patch.status = opts.status;
       if (opts.importance) patch.importance = opts.importance;
       if (opts.body) patch.body = { contentType: 'text', content: opts.body };
       if (opts.due) patch.dueDateTime = { dateTime: parseDate(opts.due) + 'T00:00:00', timeZone: 'UTC' };
+      if (Object.keys(patch).length === 0) {
+        throw new Error('Nothing to update: give at least one of --title, --body, --status, --importance, --due.');
+      }
 
-      const response = await client.request(
+      const response = await getClient().request(
         `/me/todo/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(taskId)}`,
         { method: 'PATCH', body: JSON.stringify(patch) }
       );

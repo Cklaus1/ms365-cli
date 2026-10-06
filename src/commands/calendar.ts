@@ -1,38 +1,70 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
-import { outputOption, confirm, info } from '../utils.js';
+import { outputOption, confirm, info, parseRecipients, validateEmail } from '../utils.js';
 import { handleErrors } from '../errors.js';
+import { paginationOptions, listRequest, type ListOptions } from '../list.js';
+import { localTimeZone, preferTimezone } from '../graph-helpers.js';
+
+interface EventsOptions extends ListOptions {
+  filter?: string;
+  select?: string;
+  orderby?: string;
+  calendar?: string;
+}
+
+interface ViewOptions extends ListOptions {
+  start: string;
+  end: string;
+  select?: string;
+}
+
+interface UpdateOptions {
+  subject?: string;
+  start?: string;
+  end?: string;
+  timezone?: string;
+  body?: string;
+  location?: string;
+  calendar?: string;
+  output: string;
+}
+
+interface DeclineOptions {
+  comment?: string;
+  notify: boolean;
+  proposeStart?: string;
+  proposeEnd?: string;
+  timezone?: string;
+}
 
 export function registerCalendarCommands(program: Command, getClient: () => GraphClient): void {
   const cal = program.command('calendar').alias('cal').description('Calendar operations');
 
-  cal
-    .command('list')
-    .description('List calendars')
+  paginationOptions(
+    cal
+      .command('list')
+      .description('List calendars'),
+  )
     .addOption(outputOption())
-    .action(handleErrors(async (opts) => {
-      const client = getClient();
-      const response = await client.request('/me/calendars');
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+    .action(handleErrors(async (opts: ListOptions) => {
+      await listRequest(getClient(), '/me/calendars', {}, opts);
     }));
 
-  cal
-    .command('events')
-    .description('List calendar events')
-    .option('--top <n>', 'Number of events', '10')
-    .option('--filter <filter>', 'OData filter')
-    .option('--select <fields>', 'Fields to return')
-    .option('--orderby <field>', 'Order by field')
-    .option('--calendar <calendarId>', 'Specific calendar ID')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+  // Event reads ask Graph for times in the local zone (`Prefer: outlook.timezone`) instead of UTC.
+  paginationOptions(
+    cal
+      .command('events')
+      .description('List calendar events (times in the local time zone)')
+      .option('--filter <filter>', 'OData filter')
+      .option('--select <fields>', 'Fields to return')
+      .option('--orderby <field>', 'Order by field')
+      .option('--calendar <calendarId>', 'Specific calendar ID'),
+    10,
+  )
     .addOption(outputOption())
-    .action(handleErrors(async (opts) => {
-      const client = getClient();
+    .action(handleErrors(async (opts: EventsOptions) => {
       const queryParams: Record<string, string> = {};
-      if (opts.top) queryParams['$top'] = opts.top;
       if (opts.filter) queryParams['$filter'] = opts.filter;
       if (opts.select) queryParams['$select'] = opts.select;
       if (opts.orderby) queryParams['$orderby'] = opts.orderby;
@@ -41,16 +73,12 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
         ? `/me/calendars/${encodeURIComponent(opts.calendar)}/events`
         : '/me/events';
 
-      const response = opts.all
-        ? await client.requestAllPages(endpoint, { queryParams }, opts.pageLimit ? parseInt(opts.pageLimit) : undefined, opts.pageDelay ? parseInt(opts.pageDelay) : undefined)
-        : await client.request(endpoint, { queryParams });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await listRequest(getClient(), endpoint, { queryParams, headers: preferTimezone() }, opts);
     }));
 
   cal
     .command('get <eventId>')
-    .description('Get a specific event')
+    .description('Get a specific event (times in the local time zone)')
     .option('--calendar <calendarId>', 'Specific calendar ID')
     .option('--select <fields>', 'Fields to return')
     .addOption(outputOption())
@@ -63,7 +91,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
         ? `/me/calendars/${encodeURIComponent(opts.calendar)}/events/${encodeURIComponent(eventId)}`
         : `/me/events/${encodeURIComponent(eventId)}`;
 
-      const response = await client.request(endpoint, { queryParams });
+      const response = await client.request(endpoint, { queryParams, headers: preferTimezone() });
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
@@ -81,7 +109,6 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     .option('--html', 'Body is HTML')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
-      const client = getClient();
       const event: Record<string, unknown> = {
         subject: opts.subject,
         start: { dateTime: opts.start, timeZone: opts.timezone },
@@ -95,18 +122,16 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
         event.location = { displayName: opts.location };
       }
       if (opts.attendees) {
-        event.attendees = opts.attendees.split(',').map((e: string) => ({
-          emailAddress: { address: e.trim() },
-          type: 'required',
-        }));
+        event.attendees = parseRecipients(opts.attendees).map((r) => ({ ...r, type: 'required' }));
       }
 
       const endpoint = opts.calendar
         ? `/me/calendars/${encodeURIComponent(opts.calendar)}/events`
         : '/me/events';
 
-      const response = await client.request(endpoint, {
+      const response = await getClient().request(endpoint, {
         method: 'POST',
+        headers: preferTimezone(),
         body: JSON.stringify(event),
       });
 
@@ -119,26 +144,32 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     .option('--subject <subject>', 'Event subject')
     .option('--start <datetime>', 'Start datetime')
     .option('--end <datetime>', 'End datetime')
-    .option('--timezone <tz>', 'Timezone')
+    .option('--timezone <tz>', 'Timezone of --start/--end (default UTC)')
     .option('--body <body>', 'Event body')
     .option('--location <location>', 'Event location')
     .option('--calendar <calendarId>', 'Specific calendar ID')
     .addOption(outputOption())
-    .action(handleErrors(async (eventId: string, opts) => {
-      const client = getClient();
+    .action(handleErrors(async (eventId: string, opts: UpdateOptions) => {
+      if (opts.timezone && !opts.start && !opts.end) {
+        throw new Error('--timezone applies to --start/--end; give at least one of them.');
+      }
       const patch: Record<string, unknown> = {};
       if (opts.subject) patch.subject = opts.subject;
       if (opts.start) patch.start = { dateTime: opts.start, timeZone: opts.timezone || 'UTC' };
       if (opts.end) patch.end = { dateTime: opts.end, timeZone: opts.timezone || 'UTC' };
       if (opts.body) patch.body = { contentType: 'Text', content: opts.body };
       if (opts.location) patch.location = { displayName: opts.location };
+      if (Object.keys(patch).length === 0) {
+        throw new Error('Nothing to update: give at least one of --subject, --start, --end, --body, --location.');
+      }
 
       const endpoint = opts.calendar
         ? `/me/calendars/${encodeURIComponent(opts.calendar)}/events/${encodeURIComponent(eventId)}`
         : `/me/events/${encodeURIComponent(eventId)}`;
 
-      const response = await client.request(endpoint, {
+      const response = await getClient().request(endpoint, {
         method: 'PATCH',
+        headers: preferTimezone(),
         body: JSON.stringify(patch),
       });
 
@@ -160,29 +191,22 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
       info('Event deleted.');
     }));
 
-  cal
-    .command('view')
-    .description('Get calendar view (time range)')
-    .requiredOption('--start <datetime>', 'Start datetime (ISO 8601)')
-    .requiredOption('--end <datetime>', 'End datetime (ISO 8601)')
-    .option('--select <fields>', 'Fields to return')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+  paginationOptions(
+    cal
+      .command('view')
+      .description('Get calendar view (time range; times in the local time zone)')
+      .requiredOption('--start <datetime>', 'Start datetime (ISO 8601)')
+      .requiredOption('--end <datetime>', 'End datetime (ISO 8601)')
+      .option('--select <fields>', 'Fields to return'),
+  )
     .addOption(outputOption())
-    .action(handleErrors(async (opts) => {
-      const client = getClient();
+    .action(handleErrors(async (opts: ViewOptions) => {
       const queryParams: Record<string, string> = {
         startDateTime: opts.start,
         endDateTime: opts.end,
       };
       if (opts.select) queryParams['$select'] = opts.select;
-
-      const response = opts.all
-        ? await client.requestAllPages('/me/calendarView', { queryParams })
-        : await client.request('/me/calendarView', { queryParams });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await listRequest(getClient(), '/me/calendarView', { queryParams, headers: preferTimezone() }, opts);
     }));
 
   // ── Respond to event (accept/decline/tentative) ─────────────
@@ -207,37 +231,34 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     .command('decline <eventId>')
     .description('Decline a meeting invite')
     .option('--comment <text>', 'Response comment')
-    .option('--no-notify', 'Don\'t send response to organizer')
-    .option('--propose-start <datetime>', 'Propose new start time (ISO 8601)')
-    .option('--propose-end <datetime>', 'Propose new end time (ISO 8601)')
-    .action(handleErrors(async (eventId: string, opts) => {
-      const client = getClient();
-      if (opts.proposeStart) {
-        if (!opts.proposeEnd) {
-          throw new Error('--propose-end is required when using --propose-start');
+    .option('--no-notify', 'Don\'t send response to organizer (not with --propose-start)')
+    .option('--propose-start <datetime>', 'Propose new start time (ISO 8601, without offset)')
+    .option('--propose-end <datetime>', 'Propose new end time (ISO 8601, without offset)')
+    .option('--timezone <tz>', 'Time zone of the proposed times (default: local time zone)')
+    .action(handleErrors(async (eventId: string, opts: DeclineOptions) => {
+      const body: Record<string, unknown> = {
+        comment: opts.comment || '',
+        sendResponse: opts.notify !== false,
+      };
+      if (opts.proposeStart || opts.proposeEnd) {
+        if (!opts.proposeStart || !opts.proposeEnd) {
+          throw new Error('--propose-start and --propose-end must be given together.');
         }
-        await client.request(`/me/events/${encodeURIComponent(eventId)}/decline`, {
-          method: 'POST',
-          body: JSON.stringify({
-            comment: opts.comment || '',
-            sendResponse: opts.notify !== false,
-            proposedNewTime: {
-              start: { dateTime: opts.proposeStart, timeZone: 'UTC' },
-              end: { dateTime: opts.proposeEnd, timeZone: 'UTC' },
-            },
-          }),
-        });
-        info('Event declined with proposed new time.');
-      } else {
-        await client.request(`/me/events/${encodeURIComponent(eventId)}/decline`, {
-          method: 'POST',
-          body: JSON.stringify({
-            comment: opts.comment || '',
-            sendResponse: opts.notify !== false,
-          }),
-        });
-        info('Event declined.');
+        // Graph only delivers a proposed time inside the response to the organizer.
+        if (opts.notify === false) {
+          throw new Error('--propose-start cannot be combined with --no-notify: a proposed time is sent with the response.');
+        }
+        const timeZone = opts.timezone ?? localTimeZone();
+        body.proposedNewTime = {
+          start: { dateTime: opts.proposeStart, timeZone },
+          end: { dateTime: opts.proposeEnd, timeZone },
+        };
       }
+      await getClient().request(`/me/events/${encodeURIComponent(eventId)}/decline`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      info(body.proposedNewTime ? 'Event declined with proposed new time.' : 'Event declined.');
     }));
 
   cal
@@ -268,10 +289,9 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     .option('--interval <min>', 'Time slot interval in minutes', '30')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
-      const client = getClient();
-      const schedules = opts.emails.split(',').map((e: string) => e.trim());
+      const schedules = opts.emails.split(',').map(validateEmail);
 
-      const response = await client.request('/me/calendar/getSchedule', {
+      const response = await getClient().request('/me/calendar/getSchedule', {
         method: 'POST',
         body: JSON.stringify({
           schedules,
@@ -284,24 +304,22 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  // ── Room finder ─────────────────────────────────────────────
+  // ── Room finder (beta-only endpoints; work/school accounts) ─
   cal
     .command('rooms')
-    .description('List available meeting rooms (requires --org-mode)')
+    .description('List meeting rooms in your organization (Graph beta endpoint)')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
-      const client = getClient();
-      const response = await client.request('/me/findRooms');
+      const response = await getClient().request('/me/findRooms', { apiVersion: 'beta' });
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
   cal
     .command('room-lists')
-    .description('List room lists / buildings (requires --org-mode)')
+    .description('List room lists / buildings in your organization (Graph beta endpoint)')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
-      const client = getClient();
-      const response = await client.request('/me/findRoomLists');
+      const response = await getClient().request('/me/findRoomLists', { apiVersion: 'beta' });
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
@@ -331,12 +349,14 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     .option('--color <color>', 'Color')
     .addOption(outputOption())
     .action(handleErrors(async (calendarId: string, opts) => {
-      const client = getClient();
       const patch: Record<string, unknown> = {};
       if (opts.name) patch.name = opts.name;
       if (opts.color) patch.color = opts.color;
+      if (Object.keys(patch).length === 0) {
+        throw new Error('Nothing to update: give at least one of --name, --color.');
+      }
 
-      const response = await client.request(`/me/calendars/${encodeURIComponent(calendarId)}`, {
+      const response = await getClient().request(`/me/calendars/${encodeURIComponent(calendarId)}`, {
         method: 'PATCH',
         body: JSON.stringify(patch),
       });
