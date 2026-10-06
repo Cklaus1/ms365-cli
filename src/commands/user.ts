@@ -27,7 +27,7 @@ const PHOTO_EXTENSIONS: Record<string, string> = {
   'image/webp': '.webp',
 };
 
-function photoExtension(contentType: string): string {
+export function photoExtension(contentType: string): string {
   return PHOTO_EXTENSIONS[contentType.split(';')[0].trim().toLowerCase()] ?? '.bin';
 }
 
