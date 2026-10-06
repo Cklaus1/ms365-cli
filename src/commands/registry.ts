@@ -19,6 +19,7 @@ import { registerGroupsCommands } from './groups.js';
 import { registerSchemaCommands } from './schema.js';
 import { registerGenerateSkillsCommand } from './generate-skills.js';
 import { registerSetupCommand } from './setup.js';
+import { registerServeCommand } from './serve.js';
 
 /** The one registration list: the CLI, generate-skills, and remote introspection all use it. */
 export function registerAllCommands(program: Command, getAuth: () => AuthManager, getClient: () => GraphClient): void {
@@ -40,6 +41,7 @@ export function registerAllCommands(program: Command, getAuth: () => AuthManager
   registerSchemaCommands(program);
   registerGenerateSkillsCommand(program);
   registerSetupCommand(program, getAuth);
+  registerServeCommand(program);
 }
 
 /** A program with every command registered, for introspection only: its getters throw if an action ever runs. */

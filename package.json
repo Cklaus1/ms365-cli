@@ -5,7 +5,8 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "ms365": "dist/index.js"
+    "ms365": "dist/index.js",
+    "ms365-remote": "dist/remote.js"
   },
   "scripts": {
     "build": "tsc --noEmit && tsup",
