@@ -2,8 +2,8 @@ import { Command, InvalidArgumentError, Option } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
-import { parseDate, outputOption, info } from '../utils.js';
-import { preferTimezone } from '../graph-helpers.js';
+import { outputOption, info } from '../utils.js';
+import { calendarDate, preferTimezone } from '../graph-helpers.js';
 
 type Item = Record<string, unknown>;
 
@@ -242,7 +242,7 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
     .addOption(new Option('--importance <level>', 'Importance').choices(['low', 'normal', 'high']).default('normal'))
     .addOption(outputOption())
     .action(handleErrors(async (messageId: string, opts: { list?: string; due?: string; importance: string; output: string }) => {
-      const due = opts.due ? parseDate(opts.due) : undefined;
+      const due = opts.due ? calendarDate(opts.due) : undefined;
       const client = getClient();
 
       const msgRes = await client.request(`/me/messages/${encodeURIComponent(messageId)}`, {

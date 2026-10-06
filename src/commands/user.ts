@@ -5,6 +5,7 @@ import { handleErrors } from '../errors.js';
 import { outputOption, info } from '../utils.js';
 import { saveOrStream } from '../files.js';
 import { listRequest, paginationOptions, type ListOptions } from '../list.js';
+import { isCalendarDate } from '../graph-helpers.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -35,10 +36,13 @@ const ISO_DATE_TIME = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d
 
 /**
  * An ISO 8601 schedule bound as a Graph dateTimeTimeZone in UTC. Values with `Z`/offset keep their
- * instant; values without one are local wall time (a bare date is local midnight).
+ * instant; values without one are local wall time (a bare date is local midnight). Impossible days
+ * (`2026-02-30`) are rejected rather than rolled over.
  */
 function scheduleTime(value: string, flag: string): { dateTime: string; timeZone: 'UTC'; ms: number } {
-  const d = ISO_DATE_TIME.test(value) ? new Date(value.includes('T') ? value : `${value}T00:00`) : new Date(NaN);
+  const d = ISO_DATE_TIME.test(value) && isCalendarDate(value)
+    ? new Date(value.includes('T') ? value : `${value}T00:00`)
+    : new Date(NaN);
   if (Number.isNaN(d.getTime())) {
     throw new Error(`Invalid ${flag} "${value}". Use ISO 8601: 2026-10-07T09:00 (local time) or 2026-10-07T09:00:00Z.`);
   }

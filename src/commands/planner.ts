@@ -2,7 +2,8 @@ import { Command, Option } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
-import { parseDate, outputOption, confirm, info } from '../utils.js';
+import { outputOption, confirm, info } from '../utils.js';
+import { calendarDate } from '../graph-helpers.js';
 
 interface OutputOpts { output: string }
 interface EtagOpts { etag?: string }
@@ -47,7 +48,7 @@ async function remove(client: GraphClient, endpoint: string, prompt: string, opt
 
 /** A due date (YYYY-MM-DD) as the start of that day in the local time zone, so Planner shows that day. */
 function dueDateTime(date: string): string {
-  const [year, month, day] = parseDate(date).split('-').map(Number);
+  const [year, month, day] = calendarDate(date).split('-').map(Number);
   return new Date(year, month - 1, day).toISOString();
 }
 

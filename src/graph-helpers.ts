@@ -34,6 +34,26 @@ export function drivePath(root: string, userPath: string, suffix = ''): string {
   return suffix ? `${root}:/${encoded}:${suffix}` : `${root}:/${encoded}`;
 }
 
+/**
+ * Whether `value` starts with a `YYYY-MM-DD` that names a real calendar day. `Date` silently rolls
+ * impossible days over (`2026-02-30` -> March 2), so the parts are round-tripped through `Date.UTC`.
+ */
+export function isCalendarDate(value: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!m) return false;
+  const [year, month, day] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const d = new Date(Date.UTC(year, month - 1, day));
+  return d.getUTCFullYear() === year && d.getUTCMonth() === month - 1 && d.getUTCDate() === day;
+}
+
+/** Validate and return a `YYYY-MM-DD` date that exists on the calendar (`2026-02-30` is rejected). */
+export function calendarDate(input: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input) || !isCalendarDate(input)) {
+    throw new Error(`Invalid date: "${input}". Use YYYY-MM-DD format.`);
+  }
+  return input;
+}
+
 /** The local IANA time zone (e.g. `Europe/Berlin`). */
 export function localTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone;

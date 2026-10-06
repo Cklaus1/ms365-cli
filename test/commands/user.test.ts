@@ -50,6 +50,24 @@ describe('USER-1 set-ooo', () => {
     expect(r.requests).toHaveLength(0);
   });
 
+  it.each([
+    ['--start', '2026-02-30', '2026-03-05'],
+    ['--start', '2026-02-30T09:00', '2026-03-05'],
+    ['--start', '2026-02-29T09:00:00Z', '2026-03-05'],
+    ['--end', '2026-03-01', '2026-04-31T09:00:00+02:00'],
+  ])('rejects an impossible calendar date in %s (%s / %s) with no request', async (flag, start, end) => {
+    const r = await runCli(['user', 'set-ooo', '--status', 'scheduled', '--start', start, '--end', end], { env: { ...ENV, TZ: 'Europe/Berlin' }, routes });
+    expect(r.code).toBe(1);
+    expect(r.requests).toHaveLength(0);
+    expect(r.stderr).toContain(`Invalid ${flag} "${flag === '--start' ? start : end}". Use ISO 8601`);
+  });
+
+  it('accepts Feb 29 in a leap year', async () => {
+    const r = await runCli(['user', 'set-ooo', '--status', 'scheduled', '--start', '2028-02-29T00:00:00Z', '--end', '2028-03-01T00:00:00Z', '-o', 'json'], { env: ENV, routes });
+    expect(r.code).toBe(0);
+    expect(patchBody(r).scheduledStartDateTime).toEqual({ dateTime: '2028-02-29T00:00:00', timeZone: 'UTC' });
+  });
+
   it('converts scheduled dates with an offset to UTC', async () => {
     const r = await runCli([
       'user', 'set-ooo', '--status', 'scheduled',

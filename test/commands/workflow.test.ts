@@ -192,6 +192,13 @@ describe('workflow email-to-task (MISC-1, WF-3)', () => {
     expect(r.code).toBe(1);
     expect(r.requests).toHaveLength(0);
   });
+
+  it('rejects an impossible --due calendar date before any request', async () => {
+    const r = await runCli(['workflow', 'email-to-task', 'M1', '--due', '2026-02-30'], { env: ENV, routes: [] });
+    expect(r.code).toBe(1);
+    expect(r.requests).toHaveLength(0);
+    expect(r.stderr).toContain('Invalid date: "2026-02-30". Use YYYY-MM-DD format.');
+  });
 });
 
 describe('workflow focus-time (MISC-1)', () => {
