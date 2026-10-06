@@ -24,3 +24,6 @@
 | 20 | Free-text option values (`calendar --color`, `drive share --type/--scope`, `user set-ooo --status`, `search --entity`) lack `.choices()`; REMOTE-1 validation and generated skills would then enforce/document them | P3 | MetaSlice |
 | 21 | In `--dry-run`, `mail send/reply` and others still print success messages ("Email sent successfully."); only teams and `user set-presence` check `status !== 0` | P2 | DocsTrack |
 | 22 | Only 35 of 175 commands have a `schema` ENDPOINTS entry; generate the catalog or annotate per command to stop drift | P3 | DocsTrack |
+| 23 | `/v1/execute` buffers downloads as base64 in memory (25 MB → ~34 MB JSON); stream instead | P3 | RemoteTrack (same as #3) |
+| 24 | `ms365 -q serve` also hides the "listening on" line (goes through `info()`) | P3 | RemoteTrack |
+| 25 | `serve` concurrency (4), stdout cap (50 MB) and file cap (25 MB) are constants, not flags | P3 | RemoteTrack |

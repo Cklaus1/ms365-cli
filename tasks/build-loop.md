@@ -83,7 +83,7 @@ Edges: AUTH and GRAPH are disjoint (GRAPH-7: auth side owned by AUTH via the exi
 1. `node dist/index.js --dry-run calendar list -o json` → exit 0, stdout `JSON.parse`s. (fails at baseline: 143 + mixed stdout)
 2. `node dist/index.js mail list -o json` (no login) → exit 1, stderr names `ms365 auth login`.
 3. `node dist/index.js schema mail.list -o json` (no client ID) → exit 0, JSON. (from tier 0)
-4. (tier 3+) `ms365 serve --socket $tmp/s.sock` in background; `curl --unix-socket` `GET /v1/health` → 200; `POST /v1/execute {"command":"mail.list","args":{"dryRun":true}}` without caps header → 403; with caps `mail.read` → 200 `ok:true`; `ms365-remote` (TCP fallback mode) `--dry-run calendar list -o json` → exit 0. Kill server, socket file removed.
+4. (tier 3+) `ms365 serve --socket $tmp/s.sock --app-cap example.com/cap/ms365` in background; `curl --unix-socket` `GET /v1/health` → 200; `POST /v1/execute {"command":"mail.list","args":{"dryRun":true}}` without caps header → 403; with caps `mail.read` → 200 `ok:true`; `ms365-remote` (TCP fallback: `serve --port` behind a small node proxy that adds the `Tailscale-App-Capabilities` header, standing in for `tailscale serve`) `--dry-run calendar list -o json` → exit 0, stdout JSON. SIGTERM serve directly → exit 0, socket file removed.
 Afterwards `git status --short --ignored` shows nothing new beyond `dist/`, `node_modules/`.
 
 **Re-plan loop.** Trigger: a node's attempt fails or reveals spec divergence. Step: diagnose, update the spec item with `[REVISED: …]`, adjust DAG; retry. Poison ceiling: attempt 3 fails → BLOCKED, dependents BLOCKED; critical-path BLOCKED → stop run and report.

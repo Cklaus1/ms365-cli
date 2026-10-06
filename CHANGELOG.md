@@ -72,6 +72,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - `schema [endpoint]` with `-o`; unknown endpoints suggest close matches. [SCHEMA-1]
 - `generate-skills` derives its skills from the registered commands, covering every group (including `auth`, `user`, `groups`, `chat`). [SKILLS-1]
 - `workflow file-announce -o`. [WF-3]
+- `ms365 serve` and `ms365-remote`: agents on other tailnet machines share one Microsoft 365 login. `ms365 serve --app-cap <name>` listens on a 0600 Unix socket (loopback TCP fallback with `--port`) behind `tailscale serve --accept-app-caps`. Each request is checked against the `Tailscale-App-Capabilities` grant (per-command capabilities such as `mail.read`, `mail.send`), runs the CLI in an isolated child process, and is written to a JSON-lines audit log. `ms365-remote` (`MS365_REMOTE_URL`) takes the same commands, uploads local input files and saves downloads locally; `MS365_REMOTE_SSH=<host>` runs commands over Tailscale SSH instead. See README "Remote Access (Tailscale)". [REMOTE-0, REMOTE-1]
 
 ### Security
 

@@ -47,6 +47,7 @@ ms365 --org-mode teams list -o table
 - [Dry Run](#dry-run)
 - [Read-only Mode](#read-only-mode)
 - [Error Handling and Exit Codes](#error-handling-and-exit-codes)
+- [Remote Access (Tailscale)](#remote-access-tailscale)
 - [Environment Variables](#environment-variables)
 - [MCP Server Compatibility](#mcp-server-compatibility)
 - [Architecture](#architecture)
@@ -880,6 +881,87 @@ Deletes (`mail delete`, `mail delete-attachment`, `drive delete`, `todo delete`,
 
 ---
 
+## Remote Access (Tailscale)
+
+Agents on other machines in your tailnet can use one Microsoft 365 login without installing a token anywhere else. One host runs `ms365 serve`. Agents run `ms365-remote`, which accepts the same commands as `ms365`.
+
+```
+Agent machine                             ms365 host
+ms365-remote mail list ──HTTPS──► tailscale serve ──unix socket──► ms365 serve ──► ms365 mail list ──► Microsoft Graph
+                                  (adds Tailscale-App-Capabilities)
+```
+
+Microsoft login, refresh tokens and the app registration exist only on the host. Agents authenticate to the service with their Tailscale identity, and the tailnet policy decides which commands each agent may run.
+
+### On the host
+
+```bash
+ms365 auth login                                   # once, on the host
+ms365 serve --app-cap example.com/cap/ms365        # foreground; run it under systemd/launchd
+tailscale serve --bg --accept-app-caps example.com/cap/ms365 unix:$HOME/.config/ms365-cli/serve.sock
+```
+
+`ms365 [--org-mode] [--read-only] [--api-version <v>] serve --app-cap <name> [--socket <path>] [--port <n> [--host <loopback>]] [--audit-log <path>] [--timeout <seconds>]`
+
+- `--app-cap` is required and must equal the `--accept-app-caps` value. Use a capability name under a domain you control.
+- The default socket is `~/.config/ms365-cli/serve.sock`, mode 0600 in a 0700 directory, so other Unix users cannot connect. A stale socket is replaced; a socket that is still served is refused (exit 1).
+- `--org-mode`, `--read-only` and `--api-version` given before `serve` apply to every request.
+- On SIGTERM/SIGINT the server stops accepting, finishes running requests, removes the socket and exits 0.
+- Serving a `unix:` target needs a Tailscale version that supports it. Fallback for older versions: `ms365 serve --app-cap example.com/cap/ms365 --port 8365` with `tailscale serve --bg --accept-app-caps example.com/cap/ms365 http://127.0.0.1:8365`. In TCP mode every local process on the host can connect and forge the capability header, and serve prints a warning. Non-loopback `--host` values are refused.
+
+Serve does not use Tailscale identity headers (`Tailscale-User-Login`, …): Tailscale does not set them for tagged devices. Access comes only from the `Tailscale-App-Capabilities` header, which `tailscale serve` sets and strips from incoming requests.
+
+### Grants
+
+In the tailnet policy, grant each agent tag the capabilities it needs:
+
+```json
+{
+  "grants": [
+    {
+      "src": ["tag:agent-chief"],
+      "dst": ["tag:ms365-host"],
+      "ip":  ["tcp:443"],
+      "app": { "example.com/cap/ms365": [{ "agent": "chief", "allow": ["mail.read", "mail.draft", "calendar.read", "todo.write"] }] }
+    }
+  ]
+}
+```
+
+The `allow` lists of all grants that match a caller are combined. `agent` is the name written to the audit log. This grant syntax follows Tailscale's app-capability docs and has not been tested against a real tailnet.
+
+Capabilities: `mail.read`, `mail.draft`, `mail.send`, `mail.manage`, `calendar.read`, `calendar.write`, `drive.read`, `drive.write`, `sharepoint.read`, `teams.read`, `teams.send` (teams and chat), `planner.read`, `planner.write`, `todo.read`, `todo.write`, `contacts.read`, `contacts.write`, `excel.read`, `excel.write`, `onenote.read`, `onenote.write`, `user.read`, `user.write`, `groups.read`, `search.read`, `meta` (schema). A workflow needs every capability it uses. For example, `workflow digest` needs `calendar.read`, `mail.read` and `todo.read`. `auth *`, `setup`, `serve` and `generate-skills` never run remotely. Deletes do not work remotely: they need an interactive confirmation, so they exit 1 and change nothing.
+
+### On agent machines
+
+```bash
+export MS365_REMOTE_URL=https://ms365-host.<tailnet>.ts.net
+ms365-remote mail list --top 5
+ms365-remote --dry-run mail send --to a@b.com --subject Hi --body Hello
+ms365-remote drive upload <driveId> <folderId> ./report.pdf     # the local file is uploaded
+ms365-remote drive download <driveId> <itemId> <childId> --out ./copy.pdf  # saved locally
+```
+
+- Commands, help, usage errors and `-o` (TTY → table, pipe → json) behave as with `ms365`. Output is formatted locally.
+- Local input files are uploaded. Downloads go to the local `--out`, or stream to stdout when `--out` is omitted. Existing files are not overwritten unless you pass `--force`.
+- The only global flags are `--dry-run` and `-q`. Org mode, read-only mode and the API version come from the host.
+- Errors print a message on stderr and exit 1. If neither transport variable is set, the CLI exits 1.
+- No client ID or login is needed on the agent machine. `ms365-remote` reads real environment variables only and does not load `.env`.
+- Interim mode without a server: `MS365_REMOTE_SSH=<host>` runs `tailscale ssh <host> -- ms365 <args>` with every argument quoted. Exit codes pass through, but file paths then refer to the host's disk.
+
+### HTTP API
+
+- `GET /v1/health` → `{ok: true, request_id}`
+- `GET /v1/capabilities` → `{ok, request_id, agent, capabilities[], commands[]}` (the commands the caller may run)
+- `POST /v1/execute` with JSON `{"command": "mail.list", "positionals": [], "args": {"top": 5, "dryRun": true}}`. `args` keys are option names in camelCase, and `dryRun` is the only global flag allowed per request. Send input files as `multipart/form-data`: a `request` JSON part, plus file parts referenced as `{"$file": "<part>"}` in `positionals`.
+- Success: `{ok: true, request_id, data, files?, stderr?}`. `data` is the parsed JSON output, the raw string if the output is not JSON, or `null` when there is no output. `files` is `[{name, contentType, size, base64}]` for downloads.
+- Errors: `{ok: false, request_id, error: {code, message}}`. Statuses: 400 `invalid_args`, 403 `capability_missing` (missing or bad header, capability not granted, command not remote), 404 `not_found`, 413 `invalid_args` (uploads over 25 MB), 502 `command_failed` (the CLI exited non-zero; the message is its stderr), 504 `timeout`, 500 `command_failed` (server error).
+- Limits: 4 commands run at once and further requests queue; 120 s per command (`--timeout`); 50 MB stdout; 25 MB of uploaded files and 25 MB of returned files per request.
+
+Each request runs the CLI as a child process in an empty temporary directory, which is deleted afterwards. The child receives only `PATH`, `HOME`, `TZ`, the log, org-mode and read-only variables, and the client/tenant ID. `MS365_CLI_TOKEN` is never passed on, so children use the host's token cache. The audit log (`~/.config/ms365-cli/serve-audit.jsonl`, 0600) has one line per request: `{ts, request_id, agent, src, method, path, command, args, status, duration_ms, error?}`. `args` lists option names only. Bodies and values are never logged.
+
+---
+
 ## Environment Variables
 
 | Variable                  | Description                                          | Default |
@@ -892,6 +974,8 @@ Deletes (`mail delete`, `mail delete-attachment`, `drive delete`, `todo delete`,
 | `MS365_CLI_API_VERSION`  | Default for `--api-version` (`v1.0` or `beta`)       | `v1.0` |
 | `MS365_CLI_LOG_LEVEL`    | Log level: `debug`, `info`, `warn`, `error`, `none`  | `none` |
 | `MS365_CLI_LOG_FILE`     | JSON log file path (a date is appended: daily rotation) | — |
+| `MS365_REMOTE_URL`       | `ms365-remote`: URL of the `ms365 serve` endpoint     | — |
+| `MS365_REMOTE_SSH`       | `ms365-remote`: Tailscale SSH host (interim mode)     | — |
 
 The token cache lives under `$HOME/.config/ms365-cli/`.
 
@@ -935,6 +1019,8 @@ ms365-cli/
 │   ├── errors.ts               Error reporting and the single process exit
 │   ├── logger.ts               Structured JSON logging with daily rotation
 │   ├── mime.ts                 MIME type detection (70+ extensions)
+│   ├── remote.ts               ms365-remote: same commands, run on the ms365 serve host
+│   ├── serve/                  ms365 serve: HTTP server, capability table, app-caps header, executor, audit log
 │   ├── utils.ts                Output option, --quiet, confirmation prompt
 │   └── commands/
 │       ├── registry.ts         The one list of command registrations
@@ -955,6 +1041,7 @@ ms365-cli/
 │       ├── workflow.ts         standup, meeting-prep, digest, focus-time (6)
 │       ├── schema.ts           API endpoint introspection
 │       ├── generate-skills.ts  SKILL.md generation for AI agents
+│       ├── serve.ts            ms365 serve command (remote access over Tailscale)
 │       └── setup.ts            Interactive auth setup wizard
 ├── test/                       Vitest unit, command and built-binary (e2e) tests
 ├── dist/                       Compiled output (ESM)

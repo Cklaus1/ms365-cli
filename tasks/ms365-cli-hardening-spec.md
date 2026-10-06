@@ -282,6 +282,7 @@ CFO node ───────┘                                   ▼
 - [REVISED: transport, Q14] `ms365 serve --socket <path>` (default `~/.config/ms365-cli/serve.sock`, created 0600 in the 0700 config dir) exposed with `tailscale serve --bg --accept-app-caps <your-domain>/cap/ms365 unix:<path>`. Reason: Serve only strips `Tailscale-App-Capabilities` and the `Tailscale-User-*` identity headers, and a loopback TCP port can be reached by **every local process**, which could forge the capability header (Tailscale docs: localhost binding "limits tampering to only other services running on the Serve device"). A 0600 socket limits that to the service user and root (tailscaled). Fallback for Tailscale versions without `unix:` targets: `--port <n>` binds **127.0.0.1 only** and prints a warning that local processes are trusted. Any non-loopback `--host` is refused.
 - Exposed with Tailscale ≥ 1.92 (`--accept-app-caps`).
 - Long-lived process: does not use `handleErrors` (which exits after each command); graceful shutdown on SIGTERM/SIGINT (stop accepting, wait for children, unlink socket); `--org-mode` / `--read-only` are server start flags, never per-request (CORE-6 makes argv values unable to flip them).
+- [REVISED: implementation, REMOTE-1a] Added `serve --timeout <seconds>` (default 120) and `--audit-log <path>`. `--api-version` given at server start is forwarded to children along with `--org-mode`/`--read-only`. `--port` binds loopback only, warns on stderr, and refuses a non-loopback `--host`.
 
 ### REMOTE-1b Authorization: Grants with app capabilities (Q10)
 - **Identity headers (`Tailscale-User-Login`) are not used.** Per Tailscale docs they are "not populated for traffic originating from tagged devices", and agents are tagged. Serve forwards the **`Tailscale-App-Capabilities`** header for users *and* tagged nodes ([docs](https://tailscale.com/docs/features/tailscale-serve)).
@@ -299,6 +300,7 @@ CFO node ───────┘                                   ▼
   ```
 - Backend: decode the header (JSON object: capability name → array of values). [REVISED: strict parsing] Read only `Tailscale-App-Capabilities`; RFC 2047 encoded values (`=?` prefix) are rejected (403) rather than half-decoded. Missing header, `{}`, missing `…/cap/ms365`, malformed JSON, or empty `allow` → 403 and no process spawned. Effective rights = union of all `allow` entries (Serve concatenates values from multiple grants). Default deny. `agent` labels the caller for audit; the audit line also records `X-Forwarded-For` (Serve overwrites it with the real tailnet source address).
 - Policy lives in the tailnet policy file. ms365-cli has no local policy file.
+- [REVISED: implementation, REMOTE-1b] The capability key is a REQUIRED `ms365 serve --app-cap <name>` (the `--accept-app-caps` value), not a hardcoded domain: the key belongs to the tailnet owner's domain. The header is parsed strictly. A missing, empty, repeated, RFC 2047-encoded or malformed header, a missing key, or an empty allow list → 403 with no child started. Allow lists of matching grants are unioned.
 
 ### REMOTE-1c API
 - `GET /v1/health` → no Graph call.
@@ -311,10 +313,12 @@ CFO node ───────┘                                   ▼
 - Destructive commands: `confirm()` refuses without a TTY, so remote deletes fail with a clear `command_failed`. This is intentional (Non-goals: no `--yes`). A later approval flow (REMOTE-3) is the only way to allow them.
 - Files: commands with file inputs (`drive upload`, `drive cp`, `mail add-attachment`, `user upload-photo`) and outputs (`drive download`, `download-shared`, `cat --out`, `mail download-attachment`, `user download-photo`). The request is `multipart/form-data` with a `request` JSON part plus file parts referenced as `{"$file": "<part>"}`; the server writes them into a per-request temp dir (0700) and substitutes paths. Output files come back as `files: [{name, contentType, size, base64}]`, capped at 25 MB per request (streaming later). The temp dir is deleted in `finally`.
 - Audit: one JSON line per request with `ts`, `request_id`, `agent`, `src` (X-Forwarded-For), `command`, arg **keys only** (bodies and recipients are sensitive), status, and duration. Written to `--audit-log <path>` (default `~/.config/ms365-cli/serve-audit.jsonl`, 0600).
+- [REVISED: implementation, REMOTE-1c] Extra statuses beyond the four codes: 404 `not_found` (unknown route), 413 `invalid_args` (request files > 25 MB), 500 `command_failed` (unexpected server error); 400 invalid_args, 403 capability_missing, 502 command_failed, 504 timeout. File transport: input positionals must be `{"$file":"<part>"}` parts of a multipart request (a plain path → 400), so the server never reads caller-chosen paths. For output commands the caller's `--out`/`--force` are replaced by a server temp path, and the bytes return as base64 `files[]`. Remote deletes return 502 "Nothing changed": the child has no TTY, so `confirm()` refuses (verified).
 
 ### REMOTE-1d Agent shim: `ms365-remote`
 - Same name as REMOTE-0. Shipped in the ms365-cli package as a second bin. Parses argv with the same Commander tree, builds the `/v1/execute` request, uploads referenced local files, writes returned files to the local `--out` path, renders `data` with the local formatter (`-o table|csv|yaml` keep working), and exits 1 when `ok: false`.
 - Config: `MS365_REMOTE_URL=https://ms365-host.<tailnet>.ts.net` (or the Service name). Constructs no `AuthManager` and needs no Microsoft client ID.
+- [REVISED: implementation, REMOTE-1d] Only `--dry-run` and `-q` are accepted as globals; org mode, read-only and API version come from the host. `ms365-remote` does not load `.env`.
 
 ### REMOTE-2 later: Tailscale Service
 Move to `tailscale serve --service=svc:ms365 …` so agents call `https://ms365.<tailnet>.ts.net` and the host can change without reconfiguring agents. [REVISED: gated] Blocked on a live test showing `Tailscale-App-Capabilities` arrives for a `svc:` grant: `serve.go` computes caps with `PeerCaps(src)` against the node's own addresses, so a grant whose `dst` is the Service may yield no header (→ 403 under default deny). Service hosts also need tag identity and admin approval or `autoApprovers`.
@@ -332,6 +336,7 @@ Per-capability approval (e.g. `mail.send` and deletes queue for human approval) 
 - 20 concurrent requests → all complete, at most 4 children alive, token cache file still parses.
 - Audit log contains `agent` and `command` and no arg values.
 - [REVISED: added] Header `{}` or RFC 2047-encoded → 403. `mail.send` with caps `mail.send` against mocked Graph → 200 `ok`, `data: null`. A server started with a custom client ID → the child's MSAL config uses that ID. A local request to the socket from another Unix user → connection refused (mode 0600).
+- [REVISED: acceptance, implementation] "Another Unix user → connection refused" is verified as socket mode 0600 inside a 0700 config dir (the test runs as one user). The smoke test runs `ms365-remote` in TCP fallback mode behind a small proxy that adds the capability header, standing in for `tailscale serve`; against a bare `serve --port` the shim correctly gets 403.
 
 Depends on: CORE-1, CORE-2, CORE-4, CORE-5, CORE-6, CORE-7, AUTH-1, AUTH-2, SKILLS-1 (command-tree introspection). REMOTE-0 depends only on CORE-1 and the REMOTE-1d shim's argv handling.
 
