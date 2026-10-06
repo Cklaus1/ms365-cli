@@ -5,9 +5,9 @@ import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
 import { saveOrStream } from '../files.js';
-import { odataQuote, searchQuote } from '../graph-helpers.js';
+import { calendarDate, odataQuote, searchQuote } from '../graph-helpers.js';
 import { listRequest, paginationOptions } from '../list.js';
-import { parseDate, truncate, parseRecipients, formatSize, outputOption, confirm, info } from '../utils.js';
+import { truncate, parseRecipients, formatSize, outputOption, confirm, info } from '../utils.js';
 
 // Well-known folder names that Graph API supports directly
 const WELL_KNOWN_FOLDERS = [
@@ -610,10 +610,10 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .action(handleErrors(async (messageId: string, opts) => {
       const client = getClient();
       const flag: Record<string, unknown> = { flagStatus: 'flagged' };
-      const due = opts.due ? parseDate(opts.due) : undefined;
+      const due = opts.due ? calendarDate(opts.due) : undefined;
       // Graph rejects a dueDateTime without a startDateTime (400).
       const today = new Date().toISOString().slice(0, 10);
-      const start = opts.start ? parseDate(opts.start) : due && (due < today ? due : today);
+      const start = opts.start ? calendarDate(opts.start) : due && (due < today ? due : today);
       if (start) flag.startDateTime = { dateTime: `${start}T00:00:00`, timeZone: 'UTC' };
       if (due) flag.dueDateTime = { dateTime: `${due}T00:00:00`, timeZone: 'UTC' };
       await client.request(`/me/messages/${encodeURIComponent(messageId)}`, {

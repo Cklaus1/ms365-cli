@@ -1,24 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseDate, truncate, validateEmail, parseRecipients, formatSize, buildODataParams } from '../src/utils.js';
-
-describe('parseDate', () => {
-  it('accepts valid YYYY-MM-DD dates', () => {
-    expect(parseDate('2024-12-25')).toBe('2024-12-25');
-    expect(parseDate('2025-01-01')).toBe('2025-01-01');
-  });
-
-  it('rejects invalid date strings', () => {
-    expect(() => parseDate('not-a-date')).toThrow('Invalid date');
-    expect(() => parseDate('2024-13-01')).toThrow('Invalid date');
-    expect(() => parseDate('')).toThrow('Invalid date');
-  });
-
-  it('accepts partial dates that JS Date parses', () => {
-    // JS Date accepts these, so parseDate allows them
-    expect(() => parseDate('2024')).not.toThrow();
-    expect(() => parseDate('2024-12')).not.toThrow();
-  });
-});
+import { truncate, validateEmail, parseRecipients, formatSize, buildODataParams } from '../src/utils.js';
 
 describe('truncate', () => {
   it('returns short strings unchanged', () => {

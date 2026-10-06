@@ -38,15 +38,6 @@ export async function confirm(message: string): Promise<void> {
   if (answer.trim().toLowerCase() !== 'y') throw new CancelledError();
 }
 
-/** Validate and return a YYYY-MM-DD date string. */
-export function parseDate(input: string): string {
-  const d = new Date(input + 'T00:00:00Z');
-  if (isNaN(d.getTime())) {
-    throw new Error(`Invalid date: "${input}". Use YYYY-MM-DD format.`);
-  }
-  return input;
-}
-
 /** Truncate a string with an ellipsis if it exceeds max length. */
 export function truncate(str: string, max: number): string {
   return str.length > max ? str.substring(0, max - 1) + '…' : str;

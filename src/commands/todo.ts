@@ -2,7 +2,8 @@ import { Command, Option } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
-import { parseDate, outputOption, confirm, info } from '../utils.js';
+import { outputOption, confirm, info } from '../utils.js';
+import { calendarDate } from '../graph-helpers.js';
 import { paginationOptions, listRequest, type ListOptions } from '../list.js';
 
 const IMPORTANCE = ['low', 'normal', 'high'];
@@ -80,7 +81,7 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
         task.body = { contentType: 'text', content: opts.body };
       }
       if (opts.due) {
-        task.dueDateTime = { dateTime: parseDate(opts.due) + 'T00:00:00', timeZone: 'UTC' };
+        task.dueDateTime = { dateTime: calendarDate(opts.due) + 'T00:00:00', timeZone: 'UTC' };
       }
 
       const response = await client.request(
@@ -105,7 +106,7 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
       if (opts.status) patch.status = opts.status;
       if (opts.importance) patch.importance = opts.importance;
       if (opts.body) patch.body = { contentType: 'text', content: opts.body };
-      if (opts.due) patch.dueDateTime = { dateTime: parseDate(opts.due) + 'T00:00:00', timeZone: 'UTC' };
+      if (opts.due) patch.dueDateTime = { dateTime: calendarDate(opts.due) + 'T00:00:00', timeZone: 'UTC' };
       if (Object.keys(patch).length === 0) {
         throw new Error('Nothing to update: give at least one of --title, --body, --status, --importance, --due.');
       }

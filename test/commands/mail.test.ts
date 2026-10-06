@@ -194,6 +194,16 @@ describe('MAIL-4 flag --due', () => {
     expect(r.code).toBe(0);
     expect(bodyOf(r, 'PATCH').flag.startDateTime).toEqual({ dateTime: '2000-01-02T00:00:00', timeZone: 'UTC' });
   });
+
+  it.each([
+    ['--due', '2026-02-30'],
+    ['--due', '2026-12-01', '--start', '2026-11'],
+  ])('rejects a date that is not a real YYYY-MM-DD day, before any request: %s %s', async (...args) => {
+    const r = await mail(['flag', 'msg-1', ...args], []);
+    expect(r.code).toBe(1);
+    expect(r.requests).toHaveLength(0);
+    expect(r.stderr).toContain('Use YYYY-MM-DD format');
+  });
 });
 
 describe('MAIL-5/6 triage', () => {

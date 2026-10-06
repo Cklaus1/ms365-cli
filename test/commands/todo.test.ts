@@ -33,6 +33,17 @@ describe('todo option validation (TODO-1)', () => {
     expect(r.code).toBe(0);
     expect(JSON.parse(r.requests[0].body!)).toEqual({ status: 'completed', importance: 'high' });
   });
+
+  it.each([
+    ['create', 'L1', '--title', 't', '--due', '2026-02-30'],
+    ['update', 'L1', 'T1', '--due', '2026-04-31'],
+    ['update', 'L1', 'T1', '--due', '2026-12'],
+  ])('rejects a --due that is not a real YYYY-MM-DD day, before any request: %s', async (...args) => {
+    const r = await runCli(['todo', ...args], { env: ENV, routes: [] });
+    expect(r.code).toBe(1);
+    expect(r.requests).toHaveLength(0);
+    expect(r.stderr).toContain('Use YYYY-MM-DD format');
+  });
 });
 
 describe('todo lists (PAGE-1, CORE-4)', () => {
