@@ -1,8 +1,14 @@
-import { AuthManager } from './auth.js';
+import type { AuthManager } from './auth.js';
 import logger from './logger.js';
+import { info } from './utils.js';
 
-const MAX_RETRIES = 3;
+/** Attempts per request (first try + retries) for retryable failures. */
+const MAX_ATTEMPTS = 3;
 const MAX_PAGES = 100;
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+/** Methods that are safe to repeat after a timeout or 5xx. POST/PATCH are retried only on 429. */
+const IDEMPOTENT_METHODS: Record<string, true> = { GET: true, HEAD: true, PUT: true, DELETE: true };
 
 export interface GraphRequestOptions {
   method?: string;
@@ -15,6 +21,21 @@ export interface GraphResponse {
   data: unknown;
   status: number;
   nextLink?: string;
+}
+
+/** A non-2xx answer from Graph after the retry policy gave up. */
+export class GraphError extends Error {
+  constructor(message: string, readonly status: number, readonly code?: string) {
+    super(message);
+    this.name = 'GraphError';
+  }
+}
+
+interface SendInit {
+  method: string;
+  headers: Record<string, string>;
+  body?: string | Uint8Array<ArrayBuffer>;
+  timeoutMs?: number;
 }
 
 export class GraphClient {
@@ -50,7 +71,7 @@ export class GraphClient {
 
   async request(endpoint: string, options: GraphRequestOptions = {}): Promise<GraphResponse> {
     const url = this.buildUrl(endpoint, options.queryParams);
-    const method = options.method || 'GET';
+    const method = (options.method || 'GET').toUpperCase();
 
     logger.debug(`${method} ${url}`, options.body ? { bodyLength: options.body.length } : undefined);
 
@@ -69,195 +90,88 @@ export class GraphClient {
       return { data: { dryRun: true, method, url }, status: 0 };
     }
 
-    const token = await this.auth.getToken();
-
-    const headers: Record<string, string> = {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      ...options.headers,
-    };
-
-    let lastError: Error | null = null;
-    let retriedWith401 = false;
-
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30_000);
-
-      let response: Response;
-      try {
-        response = await fetch(url, {
-          method,
-          headers,
-          body: options.body,
-          signal: controller.signal,
-        });
-      } catch (err: unknown) {
-        clearTimeout(timeout);
-        if (err instanceof Error && err.name === 'AbortError') {
-          lastError = new Error(`Request timed out after 30s: ${method} ${url}`);
-          if (attempt < MAX_RETRIES - 1) {
-            logger.warn(`Request timed out. Retrying...`);
-            continue;
-          }
-          break;
-        }
-        throw err;
-      }
-      clearTimeout(timeout);
-
-      logger.debug(`Response: ${response.status} ${response.statusText}`, { attempt });
-
-      // Rate limited — retry with backoff
-      if (response.status === 429) {
-        const waitMs = parseRetryAfter(response.headers.get('Retry-After'), Math.pow(2, attempt) * 1000);
-        lastError = new Error(`Rate limited (429) after ${attempt + 1} attempts`);
-        if (attempt < MAX_RETRIES - 1) {
-          logger.warn(`Rate limited. Retrying in ${waitMs / 1000}s...`);
-          console.error(`Rate limited. Retrying in ${waitMs / 1000}s...`);
-          await sleep(waitMs);
-          continue;
-        }
-      }
-
-      // Server error — retry with backoff
-      if (response.status >= 500) {
-        lastError = new Error(`Server error (${response.status}) after ${attempt + 1} attempts`);
-        if (attempt < MAX_RETRIES - 1) {
-          const waitMs = Math.pow(2, attempt) * 1000;
-          logger.warn(`Server error (${response.status}). Retrying in ${waitMs / 1000}s...`);
-          console.error(`Server error (${response.status}). Retrying in ${waitMs / 1000}s...`);
-          await sleep(waitMs);
-          continue;
-        }
-      }
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        let errorMessage: string;
-        try {
-          const errorJson = JSON.parse(errorText);
-          errorMessage = errorJson.error?.message || errorText;
-        } catch {
-          errorMessage = errorText;
-        }
-
-        logger.error(`API error ${response.status}: ${errorMessage}`);
-
-        // Retry once with a fresh token on 401
-        if (response.status === 401 && !retriedWith401) {
-          retriedWith401 = true;
-          try {
-            const freshToken = await this.auth.getToken(true);
-            headers['Authorization'] = `Bearer ${freshToken}`;
-            logger.info('Token refreshed, retrying request...');
-            continue;
-          } catch {
-            throw new Error(`Authentication failed. Run: ms365 auth login`);
-          }
-        }
-        if (response.status === 401) {
-          throw new Error(`Authentication failed. Run: ms365 auth login`);
-        }
-        if (response.status === 403) {
-          const hint = errorMessage.includes('scope') || errorMessage.includes('permission')
-            ? ' Try running with --org-mode.'
-            : '';
-          throw new Error(`Permission denied (403): ${errorMessage}${hint}`);
-        }
-        throw new Error(`Graph API error (${response.status}): ${errorMessage}`);
-      }
-
-      // Handle binary content
-      const contentType = response.headers.get('content-type') || '';
-      if (
-        contentType.startsWith('audio/') ||
-        contentType.startsWith('video/') ||
-        contentType.startsWith('image/') ||
-        contentType === 'application/octet-stream'
-      ) {
-        const buffer = await response.arrayBuffer();
-        return {
-          data: {
-            contentBytes: Buffer.from(buffer).toString('base64'),
-            contentType,
-            size: buffer.byteLength,
-          },
-          status: response.status,
-        };
-      }
-
-      const text = await response.text();
-      if (!text) {
-        return { data: { message: 'OK' }, status: response.status };
-      }
-
-      try {
-        const json = JSON.parse(text);
-        const nextLink = json['@odata.nextLink'] || undefined;
-        removeODataProps(json);
-        return { data: json, status: response.status, nextLink };
-      } catch {
-        return { data: { rawResponse: text }, status: response.status };
-      }
-    }
-
-    throw lastError || new Error('Request failed after retries');
+    const response = await this.send(url, {
+      method,
+      headers: { 'Content-Type': 'application/json', ...options.headers },
+      body: options.body,
+    });
+    return parseResponse(response);
   }
 
-  /** Fetch a full URL directly (used for pagination nextLinks). Retries on 429/5xx. */
-  private async requestDirect(fullUrl: string): Promise<GraphResponse> {
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      const token = await this.auth.getToken();
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30_000);
+  /**
+   * The single request core: auth header, timeout, retry policy, 401 refresh, error mapping.
+   * Resolves only with a 2xx response (body unread); throws GraphError otherwise.
+   * `auth: false` sends no Authorization header (pre-authenticated upload URLs).
+   */
+  private async send(url: string, init: SendInit, auth = true): Promise<Response> {
+    const method = init.method.toUpperCase();
+    const idempotent = IDEMPOTENT_METHODS[method] === true;
+    const timeoutMs = init.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const headers = { ...init.headers };
+    if (auth) headers.Authorization = `Bearer ${await this.auth.getToken()}`;
+    let refreshed = false;
 
+    for (let attempt = 1; ; attempt++) {
       let response: Response;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        response = await fetch(fullUrl, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          signal: controller.signal,
-        });
+        response = await fetch(url, { method, headers, body: init.body, signal: controller.signal });
       } catch (err: unknown) {
-        clearTimeout(timeout);
-        if (err instanceof Error && err.name === 'AbortError') {
-          if (attempt < MAX_RETRIES - 1) continue;
-          throw new Error(`Pagination request timed out: ${fullUrl}`);
+        if (!(err instanceof Error && err.name === 'AbortError')) throw err;
+        const what = `Request timed out after ${timeoutMs / 1000}s: ${method} ${url}`;
+        if (!idempotent) {
+          throw new Error(`${what}. The request may have been applied; not retried — check before re-running.`);
         }
-        throw err;
+        if (attempt >= MAX_ATTEMPTS) throw new Error(`${what} (${attempt} attempts)`);
+        logger.warn(`${what}. Retrying...`);
+        info(`Request timed out. Retrying (${attempt + 1}/${MAX_ATTEMPTS})...`);
+        continue;
+      } finally {
+        clearTimeout(timer);
       }
-      clearTimeout(timeout);
 
-      if (response.status === 429 || response.status >= 500) {
-        if (attempt < MAX_RETRIES - 1) {
-          const waitMs = parseRetryAfter(response.headers.get('Retry-After'), Math.pow(2, attempt) * 1000);
-          await sleep(waitMs);
-          continue;
+      logger.debug(`Response: ${response.status} ${response.statusText}`, { attempt });
+      if (response.ok) return response;
+
+      if (response.status === 401 && auth && !refreshed) {
+        refreshed = true;
+        await response.body?.cancel();
+        let fresh: string;
+        try {
+          fresh = await this.auth.getToken(true);
+        } catch {
+          throw new GraphError('Authentication failed. Run: ms365 auth login', 401);
         }
+        headers.Authorization = `Bearer ${fresh}`;
+        logger.info('Token refreshed, retrying request...');
+        attempt--; // the refresh retry does not consume an attempt
+        continue;
       }
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Graph API error (${response.status}): ${errorText}`);
+      const retryable = response.status === 429 || (response.status >= 500 && idempotent);
+      if (retryable && attempt < MAX_ATTEMPTS) {
+        const waitMs = parseRetryAfter(response.headers.get('Retry-After'), Math.pow(2, attempt - 1) * 1000);
+        await response.body?.cancel();
+        const reason = response.status === 429 ? 'Rate limited (429)' : `Server error (${response.status})`;
+        logger.warn(`${reason}. Retrying in ${waitMs / 1000}s...`);
+        info(`${reason}. Retrying in ${waitMs / 1000}s...`);
+        await sleep(waitMs);
+        continue;
       }
 
-      const text = await response.text();
-      if (!text) return { data: { message: 'OK' }, status: response.status };
-
-      try {
-        const json = JSON.parse(text);
-        const nextLink = json['@odata.nextLink'] || undefined;
-        removeODataProps(json);
-        return { data: json, status: response.status, nextLink };
-      } catch {
-        return { data: { rawResponse: text }, status: response.status };
-      }
+      throw await toGraphError(response, method, idempotent, attempt);
     }
+  }
 
-    throw new Error(`Pagination request failed after ${MAX_RETRIES} retries: ${fullUrl}`);
+  /** GET an absolute nextLink URL through the same core, with the caller's headers. */
+  private async requestNext(nextLink: string, options: GraphRequestOptions): Promise<GraphResponse> {
+    logger.debug(`GET ${nextLink}`);
+    const response = await this.send(nextLink, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json', ...options.headers },
+    });
+    return parseResponse(response);
   }
 
   /**
@@ -422,7 +336,7 @@ export class GraphClient {
 
     while (nextLink && pageCount < maxPages) {
       if (delayMs > 0) await sleep(delayMs);
-      const nextResponse = await this.requestDirect(nextLink);
+      const nextResponse = await this.requestNext(nextLink, options);
       const nextData = nextResponse.data as Record<string, unknown>;
 
       if (nextData.value && Array.isArray(nextData.value)) {
@@ -451,6 +365,72 @@ export class GraphClient {
     }
     return { data: { value: allItems }, status: 200 };
   }
+}
+
+async function parseResponse(response: Response): Promise<GraphResponse> {
+  // Handle binary content
+  const contentType = response.headers.get('content-type') || '';
+  if (
+    contentType.startsWith('audio/') ||
+    contentType.startsWith('video/') ||
+    contentType.startsWith('image/') ||
+    contentType === 'application/octet-stream'
+  ) {
+    const buffer = await response.arrayBuffer();
+    return {
+      data: {
+        contentBytes: Buffer.from(buffer).toString('base64'),
+        contentType,
+        size: buffer.byteLength,
+      },
+      status: response.status,
+    };
+  }
+
+  const text = await response.text();
+  if (!text) {
+    return { data: { message: 'OK' }, status: response.status };
+  }
+
+  try {
+    const json = JSON.parse(text);
+    const nextLink = json['@odata.nextLink'] || undefined;
+    removeODataProps(json);
+    return { data: json, status: response.status, nextLink };
+  } catch {
+    return { data: { rawResponse: text }, status: response.status };
+  }
+}
+
+/** Map a final non-2xx response to a user-facing GraphError. */
+async function toGraphError(response: Response, method: string, idempotent: boolean, attempts: number): Promise<GraphError> {
+  const status = response.status;
+  const text = await response.text().catch(() => '');
+  let message = text || response.statusText;
+  let code: string | undefined;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (typeof parsed === 'object' && parsed !== null && 'error' in parsed) {
+      const error = parsed.error;
+      if (typeof error === 'object' && error !== null) {
+        if ('message' in error && typeof error.message === 'string' && error.message) message = error.message;
+        if ('code' in error && typeof error.code === 'string') code = error.code;
+      }
+    }
+  } catch {
+    // not JSON: keep the raw text
+  }
+  logger.error(`API error ${status}: ${message}`);
+
+  if (status === 401) return new GraphError('Authentication failed. Run: ms365 auth login', status, code);
+  if (status === 403) {
+    const hint = message.includes('scope') || message.includes('permission') ? ' Try running with --org-mode.' : '';
+    return new GraphError(`Permission denied (403): ${message}${hint}`, status, code);
+  }
+  let suffix = '';
+  if (status >= 500 && !idempotent) suffix = ` — the ${method} request may have been applied; not retried.`;
+  else if (attempts > 1) suffix = ` (after ${attempts} attempts)`;
+  return new GraphError(`Graph API error (${status}): ${message}${suffix}`, status, code);
 }
 
 function removeODataProps(obj: unknown): void {
