@@ -208,6 +208,21 @@ describe('REMOTE-1b/1c authorization and execution', () => {
     expect(lines[1]).toMatchObject({ agent: 'cfo', command: 'mail.send', args: ['to'], status: 403, error: 'capability_missing' });
   });
 
+  it('bounds caller-chosen audit fields: an unknown command and its arg keys are truncated', async () => {
+    const server = await startServer({ home, routes: [MESSAGES] });
+    const args = Object.fromEntries(Array.from({ length: 1000 }, (_, i) => [`${i}-${'k'.repeat(500)}`, 1]));
+    const res = await call(server, { caps: capsHeader(['mail.read']), body: { command: 'x'.repeat(100_000), args } });
+    expect(res.status).toBe(400);
+    await server.stop();
+    const text = fs.readFileSync(server.auditLog, 'utf8');
+    expect(text.length).toBeLessThan(4096);
+    const entry = JSON.parse(text) as { command: string; args: string[] };
+    expect(entry.command.length).toBeLessThanOrEqual(128);
+    expect(entry.command.startsWith('xxx')).toBe(true);
+    expect(entry.args).toHaveLength(32);
+    expect(entry.args.every(k => k.length <= 64)).toBe(true);
+  });
+
   it('forwards --read-only from server start to every child', async () => {
     const server = await startServer({ home, globals: ['--read-only'], routes: [{ match: '/me/sendMail', method: 'POST', status: 202 }] });
     const res = await call(server, {

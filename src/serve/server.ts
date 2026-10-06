@@ -20,6 +20,16 @@ const MAX_BODY_BYTES = MAX_FILE_BYTES + 1024 * 1024;
 
 const LOOPBACK_HOSTS = ['127.0.0.1', 'localhost', '::1'];
 
+/** Bounds for caller-chosen text in audit lines, so a caller cannot grow the log by what it sends. */
+const AUDIT_TEXT_MAX = 128;
+const AUDIT_ARGS_MAX = 32;
+const AUDIT_ARG_KEY_MAX = 64;
+
+/** `text` cut to at most `max` characters, ending in "…" when cut. */
+function clip(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
 export type ErrorCode = 'capability_missing' | 'invalid_args' | 'command_failed' | 'timeout' | 'not_found';
 
 /** Error response: `{ ok: false, request_id, error: { code, message } }` with an HTTP status. */
@@ -181,9 +191,9 @@ class RemoteServer {
       ts: new Date().toISOString(),
       request_id: requestId,
       agent: null,
-      src: (Array.isArray(forwarded) ? forwarded.join(', ') : forwarded) ?? null,
+      src: forwarded === undefined ? null : clip(Array.isArray(forwarded) ? forwarded.join(', ') : forwarded, AUDIT_TEXT_MAX),
       method: req.method ?? '',
-      path: pathname,
+      path: clip(pathname, AUDIT_TEXT_MAX),
       command: null,
       args: [],
       status: 500,
@@ -238,8 +248,9 @@ class RemoteServer {
 
   private async execute(caller: Caller, request: ExecuteRequest, files: Map<string, File>, entry: AuditEntry): Promise<Record<string, unknown>> {
     const node = findCommand(this.options.tree, request.command);
-    entry.command = node?.path ?? request.command;
-    entry.args = Object.keys(request.args);
+    // Caller-chosen text is bounded in the audit log: an unknown command and arbitrary keys are clipped.
+    entry.command = node?.path ?? clip(request.command, AUDIT_TEXT_MAX);
+    entry.args = Object.keys(request.args).slice(0, AUDIT_ARGS_MAX).map(key => clip(key, AUDIT_ARG_KEY_MAX));
     if (!node) throw new ApiError(400, 'invalid_args', `Unknown command: ${request.command}`);
 
     const policy = remotePolicy(node.path);
