@@ -197,7 +197,7 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
       }
 
       // Upload raw binary directly — photo endpoint doesn't support upload sessions
-      const response = await client.uploadFile('/me/photo/$value', resolvedPath, contentType);
+      const response = await client.putBinary('/me/photo/$value', resolvedPath, contentType);
       if (response.status >= 400) {
         throw new Error(`Photo upload failed (${response.status})`);
       }

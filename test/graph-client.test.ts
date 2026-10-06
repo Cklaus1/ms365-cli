@@ -89,7 +89,7 @@ describe('GraphClient', () => {
     it('blocks file uploads before touching filesystem', async () => {
       const client = new GraphClient(mockAuth, false, 'v1.0', true);
       await expect(
-        client.uploadFile('/me/drive/root:/test.txt:/content', '/nonexistent/path', 'text/plain')
+        client.uploadDriveItem('/me/drive/root:/test.txt', '/nonexistent/path', { conflict: 'fail' })
       ).rejects.toThrow('Read-only mode');
     });
   });

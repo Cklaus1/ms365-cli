@@ -98,8 +98,8 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
       console.error(`Uploading ${fileName} (${formatSize(stat.size)}, ${contentType})`);
 
       // Use colon-based path syntax — colons are delimiters, not encoded
-      const endpoint = `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(parentId)}:/${fileName}:/content`;
-      const response = await client.uploadFile(endpoint, resolvedPath, contentType);
+      const itemPath = `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(parentId)}:/${fileName}`;
+      const response = await client.uploadDriveItem(itemPath, resolvedPath, { conflict: 'replace', contentType });
 
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
@@ -322,8 +322,8 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
       const client = getClient();
       const contentType = opts.contentType || detectMimeType(path.basename(resolvedPath));
       const cleanPath = remotePath.replace(/^\//, '');
-      const endpoint = `/me/drive/root:/${cleanPath}:/content`;
-      const response = await client.uploadFile(endpoint, resolvedPath, contentType);
+      const itemPath = `/me/drive/root:/${cleanPath}`;
+      const response = await client.uploadDriveItem(itemPath, resolvedPath, { conflict: 'replace', contentType });
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 }

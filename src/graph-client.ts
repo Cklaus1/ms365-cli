@@ -1,11 +1,19 @@
+import { closeSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
+import path from 'node:path';
 import type { AuthManager } from './auth.js';
 import logger from './logger.js';
-import { info } from './utils.js';
+import { detectMimeType } from './mime.js';
+import { formatSize, info } from './utils.js';
 
 /** Attempts per request (first try + retries) for retryable failures. */
 const MAX_ATTEMPTS = 3;
 const MAX_PAGES = 100;
 const DEFAULT_TIMEOUT_MS = 30_000;
+/** Largest file sent as one PUT; Graph rejects simple uploads above 4 MiB. */
+const SIMPLE_UPLOAD_MAX = 4 * 1024 * 1024;
+/** Upload-session chunk size: must be a multiple of 320 KiB. */
+const UPLOAD_CHUNK_SIZE = 32 * 320 * 1024;
+const UPLOAD_TIMEOUT_MS = 120_000;
 
 /** Methods that are safe to repeat after a timeout or 5xx. POST/PATCH are retried only on 429. */
 const IDEMPOTENT_METHODS: Record<string, true> = { GET: true, HEAD: true, PUT: true, DELETE: true };
@@ -74,6 +82,21 @@ interface SendInit {
   headers: Record<string, string>;
   body?: string | Uint8Array<ArrayBuffer>;
   timeoutMs?: number;
+  /** Overrides the per-method default: may a timeout/5xx be retried? */
+  idempotent?: boolean;
+}
+
+export type ConflictBehavior = 'rename' | 'replace' | 'fail';
+
+export interface UploadOptions {
+  /** `@microsoft.graph.conflictBehavior` when the target name exists. */
+  conflict: ConflictBehavior;
+  /** Defaults to the MIME type detected from the local file name. */
+  contentType?: string;
+  /** Files up to this size use one PUT (default 4 MiB); larger ones an upload session. */
+  maxSimpleSize?: number;
+  /** Upload-session chunk size (default 10 MiB; Graph requires multiples of 320 KiB). */
+  chunkSize?: number;
 }
 
 export class GraphClient {
@@ -113,9 +136,7 @@ export class GraphClient {
 
     logger.debug(`${method} ${url}`, options.body ? { bodyLength: options.body.length } : undefined);
 
-    if (this.readOnly && !isReadOnlyAllowed(method, endpoint)) {
-      throw new Error(`Read-only mode: ${method} requests are blocked. Remove --read-only to proceed.`);
-    }
+    this.assertAllowed(method, endpoint);
 
     if (this.dryRun) {
       const data: Record<string, unknown> = { dryRun: true, method, url };
@@ -142,9 +163,7 @@ export class GraphClient {
     const method = (options.method || 'GET').toUpperCase();
     logger.debug(`${method} ${url} (binary)`);
 
-    if (this.readOnly && !isReadOnlyAllowed(method, endpoint)) {
-      throw new Error(`Read-only mode: ${method} requests are blocked. Remove --read-only to proceed.`);
-    }
+    this.assertAllowed(method, endpoint);
     if (this.dryRun) {
       this.preview(method, url, options);
       return { body: null, status: 0, contentType: '' };
@@ -177,7 +196,7 @@ export class GraphClient {
    */
   private async send(url: string, init: SendInit, auth = true): Promise<Response> {
     const method = init.method.toUpperCase();
-    const idempotent = IDEMPOTENT_METHODS[method] === true;
+    const idempotent = init.idempotent ?? IDEMPOTENT_METHODS[method] === true;
     const timeoutMs = init.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const headers = { ...init.headers };
     if (auth) headers.Authorization = `Bearer ${await this.auth.getToken()}`;
@@ -247,133 +266,151 @@ export class GraphClient {
   }
 
   /**
-   * Stream a file upload using chunked reads instead of loading into memory.
-   * For files <= 4MB, uses simple PUT. For larger files, uses upload session.
+   * Upload `localPath` to the drive item addressed by `itemPath`: a colon path WITHOUT the trailing
+   * colon whose segments are already encoded (`/me/drive/root:/Docs/a.pdf`, `/drives/{d}/items/{p}:/a.pdf`).
+   * Files <= `maxSimpleSize` go as one PUT to `{itemPath}:/content?@microsoft.graph.conflictBehavior=<c>`;
+   * larger ones via `{itemPath}:/createUploadSession` (`item['@microsoft.graph.conflictBehavior']`) in
+   * chunks that resume from the server's `nextExpectedRanges` after a failure; a session that cannot
+   * finish is cancelled (DELETE). `data` is the stored driveItem; an `info()` line names the stored file
+   * and flags a rename. With conflict `rename` a timed-out/5xx simple PUT is not retried (a retry could
+   * store a second copy). Read-only blocks it; dry-run previews the first request on stderr.
    */
-  async uploadFile(
-    endpoint: string,
-    filePath: string,
-    contentType: string,
-    options?: { maxSimpleSize?: number },
-  ): Promise<GraphResponse> {
-    if (this.readOnly) {
-      throw new Error('Read-only mode: file uploads are blocked. Remove --read-only to proceed.');
-    }
+  async uploadDriveItem(itemPath: string, localPath: string, opts: UploadOptions): Promise<GraphResponse> {
+    this.assertAllowed('PUT', itemPath);
+    const fileSize = statSync(localPath).size;
+    const contentType = opts.contentType ?? detectMimeType(path.basename(localPath));
+    const fileNote = `File: ${localPath} (${fileSize} bytes, ${contentType})`;
 
-    const { createReadStream, statSync } = await import('fs');
-    const stat = statSync(filePath);
-    const fileSize = stat.size;
-
-    logger.info(`Uploading ${filePath} (${fileSize} bytes, ${contentType})`);
-
-    if (this.dryRun) {
-      console.log(`[dry-run] PUT ${this.baseUrl}${endpoint}`);
-      console.log(`[dry-run] File: ${filePath} (${fileSize} bytes, ${contentType})`);
-      return { data: { dryRun: true, method: 'PUT', fileSize, contentType }, status: 0 };
-    }
-
-    const token = await this.auth.getToken();
-
-    const simpleLimit = options?.maxSimpleSize ?? 4 * 1024 * 1024;
-    if (fileSize <= simpleLimit) {
-      // Simple upload for files <= 4MB
-      const { readFileSync } = await import('fs');
-      const content = readFileSync(filePath);
-
-      const response = await fetch(`${this.baseUrl}${endpoint}`, {
+    let result: GraphResponse;
+    if (fileSize <= (opts.maxSimpleSize ?? SIMPLE_UPLOAD_MAX)) {
+      const url = `${this.buildUrl(`${itemPath}:/content`)}?@microsoft.graph.conflictBehavior=${opts.conflict}`;
+      if (this.dryRun) {
+        this.preview('PUT', url, {}, fileNote);
+        return { data: { dryRun: true, method: 'PUT', url, fileSize, contentType, conflict: opts.conflict }, status: 0 };
+      }
+      const response = await this.send(url, {
         method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': contentType,
-          'Content-Length': String(fileSize),
-        },
-        body: content,
+        headers: { 'Content-Type': contentType },
+        body: readFileSync(localPath),
+        timeoutMs: UPLOAD_TIMEOUT_MS,
+        idempotent: opts.conflict !== 'rename',
       });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Upload failed (${response.status}): ${errorText}`);
+      result = await parseResponse(response);
+    } else {
+      const url = this.buildUrl(`${itemPath}:/createUploadSession`);
+      const body = JSON.stringify({ item: { '@microsoft.graph.conflictBehavior': opts.conflict } });
+      if (this.dryRun) {
+        this.preview('POST', url, { body }, fileNote);
+        return { data: { dryRun: true, method: 'POST', url, fileSize, contentType, conflict: opts.conflict }, status: 0 };
       }
-
-      const text = await response.text();
-      try {
-        const json = JSON.parse(text);
-        return { data: json, status: response.status };
-      } catch {
-        return { data: { message: 'Upload complete', size: fileSize }, status: response.status };
-      }
-    }
-
-    // Large file upload session for > 4MB
-    const sessionResponse = await fetch(
-      `${this.baseUrl}${endpoint}/createUploadSession`,
-      {
+      const session = await parseResponse(await this.send(url, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          item: { '@microsoft.graph.conflictBehavior': 'replace' },
-        }),
-      }
-    );
-
-    if (!sessionResponse.ok) {
-      const errorText = await sessionResponse.text();
-      throw new Error(`Failed to create upload session (${sessionResponse.status}): ${errorText}`);
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      }));
+      const uploadUrl = stringField(session.data, 'uploadUrl');
+      if (!uploadUrl) throw new Error('Upload session response has no uploadUrl.');
+      result = await this.uploadChunks(uploadUrl, localPath, fileSize, opts.chunkSize ?? UPLOAD_CHUNK_SIZE);
     }
 
-    const session = await sessionResponse.json() as { uploadUrl: string };
-    const chunkSize = 10 * 1024 * 1024; // 10MB chunks
+    const requested = decodeSegment(itemPath.slice(itemPath.lastIndexOf('/') + 1));
+    const stored = stringField(result.data, 'name') ?? requested;
+    info(stored === requested
+      ? `Uploaded "${stored}" (${formatSize(fileSize)}).`
+      : `Uploaded as "${stored}" (requested "${requested}"; conflict behavior ${opts.conflict}).`);
+    return result;
+  }
+
+  /** Session chunk loop; resumes from `nextExpectedRanges` after a failed chunk, cancels the session on giving up. */
+  private async uploadChunks(uploadUrl: string, localPath: string, fileSize: number, chunkSize: number): Promise<GraphResponse> {
+    const fd = openSync(localPath, 'r');
     let offset = 0;
-    let lastResult: unknown = null;
-
-    const { openSync, readSync, closeSync } = await import('fs');
-    const fd = openSync(filePath, 'r');
-
+    let failures = 0;
     try {
-      while (offset < fileSize) {
+      for (;;) {
         const length = Math.min(chunkSize, fileSize - offset);
-        const buffer = Buffer.alloc(length);
-        readSync(fd, buffer, 0, length, offset);
+        const chunk = Buffer.alloc(length);
+        readSync(fd, chunk, 0, length, offset);
+        const end = offset + length - 1;
+        logger.debug(`Uploading bytes ${offset}-${end}/${fileSize}`);
 
-        const rangeEnd = offset + length - 1;
-        logger.debug(`Uploading bytes ${offset}-${rangeEnd}/${fileSize}`);
-
-        const chunkResponse = await fetch(session.uploadUrl, {
-          method: 'PUT',
-          headers: {
-            'Content-Length': String(length),
-            'Content-Range': `bytes ${offset}-${rangeEnd}/${fileSize}`,
-          },
-          body: buffer,
-        });
-
-        if (!chunkResponse.ok && chunkResponse.status !== 202) {
-          const errorText = await chunkResponse.text();
-          throw new Error(`Chunk upload failed at byte ${offset} (${chunkResponse.status}): ${errorText}`);
+        let response: Response;
+        try {
+          // The uploadUrl is pre-authenticated: never send it the bearer token.
+          response = await this.send(uploadUrl, {
+            method: 'PUT',
+            headers: { 'Content-Range': `bytes ${offset}-${end}/${fileSize}` },
+            body: chunk,
+            timeoutMs: UPLOAD_TIMEOUT_MS,
+          }, false);
+        } catch (err: unknown) {
+          if (++failures >= MAX_ATTEMPTS) throw err;
+          const resumeAt = await this.sessionOffset(uploadUrl);
+          if (resumeAt === undefined) throw err;
+          offset = resumeAt;
+          info(`Chunk upload failed (${err instanceof Error ? err.message : String(err)}). Resuming at byte ${offset}...`);
+          continue;
         }
 
-        if (chunkResponse.status === 200 || chunkResponse.status === 201) {
-          lastResult = await chunkResponse.json();
-        } else {
-          // Drain the response body to prevent connection leaks on 202
-          await chunkResponse.text();
-        }
-
-        offset += length;
-        const pct = Math.round((offset / fileSize) * 100);
-        console.error(`Uploading... ${pct}%`);
+        if (response.status === 200 || response.status === 201) return await parseResponse(response);
+        failures = 0;
+        offset = nextExpectedOffset((await parseResponse(response)).data) ?? offset + length;
+        info(`Uploading... ${Math.round((offset / fileSize) * 100)}%`);
       }
+    } catch (err: unknown) {
+      await this.cancelSession(uploadUrl);
+      throw err;
     } finally {
       closeSync(fd);
     }
+  }
 
-    return {
-      data: lastResult || { message: 'Upload complete', size: fileSize },
-      status: 200,
-    };
+  /** The first byte the session still expects, from GET uploadUrl; undefined if the session is unusable. */
+  private async sessionOffset(uploadUrl: string): Promise<number | undefined> {
+    try {
+      const status = await this.send(uploadUrl, { method: 'GET', headers: {} }, false);
+      return nextExpectedOffset((await parseResponse(status)).data);
+    } catch (err: unknown) {
+      logger.warn(`Upload session status failed: ${err instanceof Error ? err.message : String(err)}`);
+      return undefined;
+    }
+  }
+
+  private async cancelSession(uploadUrl: string): Promise<void> {
+    try {
+      const response = await this.send(uploadUrl, { method: 'DELETE', headers: {} }, false);
+      await response.body?.cancel();
+    } catch (err: unknown) {
+      logger.warn(`Cancelling upload session failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /**
+   * Plain PUT of a local file's bytes to `endpoint` (e.g. `/me/photo/$value`, URL used exactly as given).
+   * Same core as `request()` (retry, 401 refresh, GraphError on non-2xx); read-only blocks it; dry-run
+   * previews on stderr and returns status 0. Callers enforce size limits.
+   */
+  async putBinary(endpoint: string, localPath: string, contentType: string): Promise<GraphResponse> {
+    this.assertAllowed('PUT', endpoint);
+    const url = this.buildUrl(endpoint);
+    const fileSize = statSync(localPath).size;
+    if (this.dryRun) {
+      this.preview('PUT', url, {}, `File: ${localPath} (${fileSize} bytes, ${contentType})`);
+      return { data: { dryRun: true, method: 'PUT', url, fileSize, contentType }, status: 0 };
+    }
+    const response = await this.send(url, {
+      method: 'PUT',
+      headers: { 'Content-Type': contentType },
+      body: readFileSync(localPath),
+      timeoutMs: UPLOAD_TIMEOUT_MS,
+    });
+    return parseResponse(response);
+  }
+
+  private assertAllowed(method: string, endpoint: string): void {
+    if (this.readOnly && !isReadOnlyAllowed(method, endpoint)) {
+      throw new Error(`Read-only mode: ${method} requests are blocked. Remove --read-only to proceed.`);
+    }
   }
 
   /**
@@ -463,6 +500,29 @@ export class GraphClient {
 function collectionItems(data: unknown): unknown[] | undefined {
   if (typeof data === 'object' && data !== null && 'value' in data && Array.isArray(data.value)) return data.value;
   return undefined;
+}
+
+function stringField(data: unknown, key: string): string | undefined {
+  if (typeof data !== 'object' || data === null || !(key in data)) return undefined;
+  const value: unknown = (data as Record<string, unknown>)[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+/** Start of the first `nextExpectedRanges` entry (`"26-"` or `"26-49"` -> 26) of an upload-session payload. */
+function nextExpectedOffset(data: unknown): number | undefined {
+  if (typeof data !== 'object' || data === null || !('nextExpectedRanges' in data)) return undefined;
+  const ranges = data.nextExpectedRanges;
+  if (!Array.isArray(ranges) || typeof ranges[0] !== 'string') return undefined;
+  const start = Number.parseInt(ranges[0], 10);
+  return Number.isNaN(start) ? undefined : start;
+}
+
+function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
 }
 
 function parseJsonOr(text: string): unknown {
