@@ -10,7 +10,7 @@ export const E2E_OUT_DIR = path.resolve(__dirname, '../../.e2e-build');
 export default async function setup(): Promise<void> {
   await build({
     config: false,
-    entry: ['src/index.ts'],
+    entry: ['src/index.ts', 'src/remote.ts'],
     format: ['esm'],
     target: 'node24',
     outDir: E2E_OUT_DIR,

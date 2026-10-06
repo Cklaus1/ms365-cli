@@ -3,11 +3,23 @@
 //   MS365_FAKE_GRAPH      path to JSON: [{ match, method?, status?, headers?, body?, bodyBase64?, delayMs? }]
 //                         `match` is a regex tested against the full request URL; first match wins.
 //   MS365_FAKE_GRAPH_LOG  optional path; one JSON line per request { method, url, headers, body }.
+// The same settings can come from the import URL instead (`fake-fetch.mjs?routes=…&log=…&procs=…`), which
+// survives into children that inherit `process.execArgv` but not the environment (ms365 serve).
+//   procs                 optional path; one JSON line per process start and exit { event, pid, t }.
 import fs from 'node:fs';
 
-const routesPath = process.env.MS365_FAKE_GRAPH;
-const logPath = process.env.MS365_FAKE_GRAPH_LOG;
+const params = new URL(import.meta.url).searchParams;
+const routesPath = params.get('routes') ?? process.env.MS365_FAKE_GRAPH;
+const logPath = params.get('log') ?? process.env.MS365_FAKE_GRAPH_LOG;
+const procsPath = params.get('procs');
 const routes = routesPath ? JSON.parse(fs.readFileSync(routesPath, 'utf8')) : [];
+
+if (procsPath) {
+  const record = (event) =>
+    fs.appendFileSync(procsPath, JSON.stringify({ event, pid: process.pid, t: performance.timeOrigin + performance.now() }) + '\n');
+  record('start');
+  process.on('exit', () => record('exit'));
+}
 
 function bodyToString(body) {
   if (body == null) return null;

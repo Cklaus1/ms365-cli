@@ -5,7 +5,8 @@ import path from 'node:path';
 import { E2E_OUT_DIR } from './global-setup.js';
 
 export const CLI_ENTRY = path.join(E2E_OUT_DIR, 'index.js');
-const FAKE_FETCH = path.resolve(__dirname, 'fake-fetch.mjs');
+export const REMOTE_ENTRY = path.join(E2E_OUT_DIR, 'remote.js');
+export const FAKE_FETCH = path.resolve(__dirname, 'fake-fetch.mjs');
 
 export interface FakeRoute {
   match: string;
@@ -27,12 +28,16 @@ export interface RunOptions {
   home?: string;
   stdin?: string;
   timeoutMs?: number;
+  /** Script to run; defaults to the `ms365` entry. */
+  entry?: string;
 }
 
 export interface RunResult {
   code: number | null;
   signal: NodeJS.Signals | null;
   stdout: string;
+  /** stdout exactly as written (binary-safe). */
+  stdoutBytes: Buffer;
   stderr: string;
   /** Requests seen by the fake fetch (only when routes were given). */
   requests: Array<{ method: string; url: string; headers: Record<string, string>; body: string | null }>;
@@ -64,10 +69,10 @@ export async function runCli(args: string[], opts: RunOptions = {}): Promise<Run
     env.MS365_FAKE_GRAPH_LOG = logPath;
     nodeArgs.push('--import', FAKE_FETCH);
   }
-  const child = spawn(process.execPath, [...nodeArgs, CLI_ENTRY, ...args], { cwd, env, stdio: 'pipe' });
-  let stdout = '';
+  const child = spawn(process.execPath, [...nodeArgs, opts.entry ?? CLI_ENTRY, ...args], { cwd, env, stdio: 'pipe' });
+  const stdoutChunks: Buffer[] = [];
   let stderr = '';
-  child.stdout.setEncoding('utf8').on('data', (d) => { stdout += d; });
+  child.stdout.on('data', (d: Buffer) => { stdoutChunks.push(d); });
   child.stderr.setEncoding('utf8').on('data', (d) => { stderr += d; });
   child.stdin.end(opts.stdin ?? '');
   const timeout = setTimeout(() => child.kill('SIGKILL'), opts.timeoutMs ?? 20_000);
@@ -78,5 +83,6 @@ export async function runCli(args: string[], opts: RunOptions = {}): Promise<Run
   const requests = logPath && fs.existsSync(logPath)
     ? fs.readFileSync(logPath, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l))
     : [];
-  return { code, signal, stdout, stderr, requests, home, cwd };
+  const stdoutBytes = Buffer.concat(stdoutChunks);
+  return { code, signal, stdout: stdoutBytes.toString('utf8'), stdoutBytes, stderr, requests, home, cwd };
 }

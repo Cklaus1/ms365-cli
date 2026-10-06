@@ -28,7 +28,7 @@ interface GlobalOptions {
 }
 
 /** Commands that run without a client ID or token cache. */
-const NO_AUTH_COMMANDS: Record<string, true> = { auth: true, schema: true, 'generate-skills': true };
+const NO_AUTH_COMMANDS: Record<string, true> = { auth: true, schema: true, 'generate-skills': true, serve: true };
 
 const program = new Command();
 
