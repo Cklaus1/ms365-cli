@@ -85,11 +85,12 @@ class Logger {
     this.write('error', message, data);
   }
 
-  close(): void {
-    if (this.stream) {
-      this.stream.end();
-      this.stream = null;
-    }
+  /** Flush and close the log file. Resolves once buffered lines are on disk. */
+  close(): Promise<void> {
+    const stream = this.stream;
+    this.stream = null;
+    if (!stream) return Promise.resolve();
+    return new Promise((resolve) => stream.end(resolve));
   }
 }
 

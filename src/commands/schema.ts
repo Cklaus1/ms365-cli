@@ -230,12 +230,8 @@ export function registerSchemaCommands(program: Command): void {
         const suggestions = Object.keys(ENDPOINTS)
           .filter(k => k.startsWith(endpoint.split('.')[0]))
           .join(', ');
-        console.error(`Unknown endpoint: ${endpoint}`);
-        if (suggestions) {
-          console.error(`Did you mean: ${suggestions}`);
-        }
-        console.error(`\nRun: ms365 schema --list`);
-        process.exit(1);
+        const hint = suggestions ? `\nDid you mean: ${suggestions}` : '';
+        throw new Error(`Unknown endpoint: ${endpoint}${hint}\nRun: ms365 schema --list`);
       }
 
       const output: Record<string, unknown> = {

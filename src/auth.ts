@@ -9,11 +9,14 @@ import os from 'os';
 // Skip keytar entirely in this case — use file-based fallback instead.
 const isHeadless = process.platform === 'linux' && !process.env.DISPLAY && !process.env.DBUS_SESSION_BUS_ADDRESS;
 
-/** Wrap keytar calls with a timeout — keytar hangs on headless Linux without a keyring */
-function withTimeout<T>(promise: Promise<T>, ms: number = 2000): Promise<T | null> {
+/**
+ * Run a keytar call with a timeout. Resolves null when headless (keytar is never invoked),
+ * on timeout, or on failure — a late rejection can never go unhandled.
+ */
+function withTimeout<T>(start: () => Promise<T>, ms: number = 2000): Promise<T | null> {
   if (isHeadless) return Promise.resolve(null);
   return Promise.race([
-    promise,
+    start().catch(() => null),
     new Promise<null>((resolve) => {
       const timer = setTimeout(() => resolve(null), ms);
       // Don't let this timer keep the event loop alive
@@ -142,12 +145,8 @@ export class AuthManager {
 
       // Only try keytar if no file cache exists
       if (!cacheData) {
-        try {
-          const data = await withTimeout(keytar.getPassword(SERVICE_NAME, TOKEN_CACHE_ACCOUNT));
-          if (data) cacheData = data;
-        } catch {
-          // keytar failed
-        }
+        const data = await withTimeout(() => keytar.getPassword(SERVICE_NAME, TOKEN_CACHE_ACCOUNT));
+        if (data) cacheData = data;
       }
 
       if (cacheData) {
@@ -161,9 +160,8 @@ export class AuthManager {
   private async saveTokenCache(): Promise<void> {
     ensureConfigDir();
     const cacheData = this.msalApp.getTokenCache().serialize();
-    try {
-      await withTimeout(keytar.setPassword(SERVICE_NAME, TOKEN_CACHE_ACCOUNT, cacheData));
-    } catch {
+    const stored = await withTimeout(() => keytar.setPassword(SERVICE_NAME, TOKEN_CACHE_ACCOUNT, cacheData).then(() => true));
+    if (!stored) {
       // Atomic write: write to temp file then rename to prevent corruption
       const tmpPath = FALLBACK_TOKEN_PATH + '.tmp';
       fs.writeFileSync(tmpPath, cacheData, { mode: 0o600 });
@@ -182,12 +180,8 @@ export class AuthManager {
 
       // Only try keytar if no file exists
       if (!data) {
-        try {
-          const d = await withTimeout(keytar.getPassword(SERVICE_NAME, SELECTED_ACCOUNT_KEY));
-          if (d) data = d;
-        } catch {
-          // keytar failed
-        }
+        const d = await withTimeout(() => keytar.getPassword(SERVICE_NAME, SELECTED_ACCOUNT_KEY));
+        if (d) data = d;
       }
 
       if (data) {
@@ -201,9 +195,8 @@ export class AuthManager {
   private async saveSelectedAccount(): Promise<void> {
     ensureConfigDir();
     const data = JSON.stringify({ accountId: this.selectedAccountId });
-    try {
-      await withTimeout(keytar.setPassword(SERVICE_NAME, SELECTED_ACCOUNT_KEY, data));
-    } catch {
+    const stored = await withTimeout(() => keytar.setPassword(SERVICE_NAME, SELECTED_ACCOUNT_KEY, data).then(() => true));
+    if (!stored) {
       const tmpPath = SELECTED_ACCOUNT_PATH + '.tmp';
       fs.writeFileSync(tmpPath, data, { mode: 0o600 });
       fs.renameSync(tmpPath, SELECTED_ACCOUNT_PATH);
@@ -295,8 +288,8 @@ export class AuthManager {
     this.selectedAccountId = null;
 
     try {
-      await withTimeout(keytar.deletePassword(SERVICE_NAME, TOKEN_CACHE_ACCOUNT));
-      await withTimeout(keytar.deletePassword(SERVICE_NAME, SELECTED_ACCOUNT_KEY));
+      await withTimeout(() => keytar.deletePassword(SERVICE_NAME, TOKEN_CACHE_ACCOUNT));
+      await withTimeout(() => keytar.deletePassword(SERVICE_NAME, SELECTED_ACCOUNT_KEY));
     } catch {
       // ignore keytar errors
     }

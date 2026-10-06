@@ -1,29 +1,47 @@
 import logger from './logger.js';
 
+/** A destructive action was declined (or could not be confirmed). Exits 1: nothing changed. */
+export class CancelledError extends Error {
+  constructor(message = 'Cancelled; nothing changed.') {
+    super(message);
+    this.name = 'CancelledError';
+  }
+}
+
+/** Print an error for the user and log it. */
+export function reportError(err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err);
+  logger.error(message);
+  console.error(`Error: ${message}`);
+}
+
 /**
- * Wraps an async command action with consistent error handling.
- * Catches errors and prints user-friendly messages instead of stack traces.
- * Forces process exit after completion — MSAL/keytar hold the event loop open.
- *
- * Both tsx and Commander.js override process.exit() with versions that only set
- * exitCode but don't terminate. We use process.kill(SIGTERM) as a reliable
- * termination mechanism that cannot be intercepted by JS-level overrides.
+ * Wraps a command action: errors become a one-line message and exit code 1.
+ * The process itself exits once, in `exitProcess`, after Commander's parseAsync settles.
  */
-export function handleErrors<T extends (...args: never[]) => Promise<void>>(fn: T): T {
-  return (async (...args: Parameters<T>) => {
+export function handleErrors<A extends any[]>(fn: (...args: A) => Promise<void>): (...args: A) => Promise<void> {
+  return async (...args: A) => {
     try {
       await fn(...args);
-      process.exitCode = 0;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`Error: ${message}`);
+      reportError(err);
       process.exitCode = 1;
-    } finally {
-      logger.close();
-      // MSAL and keytar native workers keep the event loop open.
-      // tsx/Commander override process.exit() — use SIGTERM for clean exit.
-      // Small delay lets stdout/stderr flush before termination.
-      setTimeout(() => process.kill(process.pid, 'SIGTERM'), 200);
     }
-  }) as T;
+  };
+}
+
+function drain(stream: NodeJS.WriteStream): Promise<void> {
+  return new Promise((resolve) => {
+    if (stream.destroyed || !stream.writable) return resolve();
+    stream.write('', () => resolve());
+  });
+}
+
+/**
+ * The single process exit. Waits for stdout/stderr to flush and the log file to close,
+ * then exits — MSAL keeps handles open, so the event loop would not end on its own.
+ */
+export async function exitProcess(code: number): Promise<never> {
+  await Promise.all([drain(process.stdout), drain(process.stderr), logger.close()]);
+  process.exit(code);
 }
