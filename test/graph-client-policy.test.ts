@@ -134,3 +134,29 @@ describe('GRAPH-5 one request core for nextLink pages', () => {
     await expect(new GraphClient(fakeAuth()).requestAllPages('/groups')).rejects.toThrow('Graph API error (400): Bad skiptoken');
   });
 });
+
+describe('GRAPH-6 read-only allowlist', () => {
+  it.each([
+    '/search/query',
+    '/me/calendar/getSchedule',
+    '/users/a%40b.com/calendar/getSchedule',
+    '/me/findMeetingTimes',
+    '/users/u1/findMeetingTimes',
+  ])('allows read-only POST %s', async (endpoint) => {
+    const calls = install(sequence(ok));
+    await new GraphClient(fakeAuth(), false, 'v1.0', true).request(endpoint, { method: 'POST', body: '{}' });
+    expect(calls).toHaveLength(1);
+  });
+
+  it.each([
+    ['POST', '/me/sendMail'],
+    ['POST', '/me/calendar/events'],
+    ['PATCH', '/search/query'],
+    ['POST', '/search/query/extra'],
+    ['POST', '/me/findMeetingTimesX'],
+  ])('still blocks %s %s', async (method, endpoint) => {
+    const calls = install(sequence(ok));
+    await expect(new GraphClient(fakeAuth(), false, 'v1.0', true).request(endpoint, { method, body: '{}' })).rejects.toThrow('Read-only mode');
+    expect(calls).toHaveLength(0);
+  });
+});

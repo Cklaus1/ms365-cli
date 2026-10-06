@@ -10,6 +10,24 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 /** Methods that are safe to repeat after a timeout or 5xx. POST/PATCH are retried only on 429. */
 const IDEMPOTENT_METHODS: Record<string, true> = { GET: true, HEAD: true, PUT: true, DELETE: true };
 
+/**
+ * POST actions that only read data; allowed under --read-only. Matched against the endpoint path
+ * (query string ignored): Microsoft Search, free/busy, and meeting-time suggestions.
+ */
+const READ_ONLY_POST_ACTIONS: RegExp[] = [
+  /^\/search\/query$/,
+  /^\/(me|users\/[^/]+)\/calendar\/getSchedule$/,
+  /^\/(me|users\/[^/]+)\/findMeetingTimes$/,
+];
+
+/** Whether `--read-only` permits this request. */
+export function isReadOnlyAllowed(method: string, endpoint: string): boolean {
+  const m = method.toUpperCase();
+  if (m === 'GET' || m === 'HEAD') return true;
+  const path = endpoint.split('?')[0];
+  return m === 'POST' && READ_ONLY_POST_ACTIONS.some((re) => re.test(path));
+}
+
 export interface GraphRequestOptions {
   method?: string;
   headers?: Record<string, string>;
@@ -85,7 +103,7 @@ export class GraphClient {
 
     logger.debug(`${method} ${url}`, options.body ? { bodyLength: options.body.length } : undefined);
 
-    if (this.readOnly && method !== 'GET') {
+    if (this.readOnly && !isReadOnlyAllowed(method, endpoint)) {
       throw new Error(`Read-only mode: ${method} requests are blocked. Remove --read-only to proceed.`);
     }
 
