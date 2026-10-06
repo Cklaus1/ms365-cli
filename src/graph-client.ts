@@ -36,11 +36,15 @@ export function isReadOnlyAllowed(method: string, endpoint: string): boolean {
   return m === 'POST' && READ_ONLY_POST_ACTIONS.some((re) => re.test(path));
 }
 
+export type ApiVersion = 'v1.0' | 'beta';
+
 export interface GraphRequestOptions {
   method?: string;
   headers?: Record<string, string>;
   body?: string;
   queryParams?: Record<string, string>;
+  /** Overrides the client's API version for this request (and its nextLink pages, which are absolute). */
+  apiVersion?: ApiVersion;
 }
 
 /**
@@ -114,8 +118,8 @@ export class GraphClient {
     this.baseUrl = `https://graph.microsoft.com/${this.apiVersion}`;
   }
 
-  buildUrl(endpoint: string, queryParams?: Record<string, string>): string {
-    let url = `${this.baseUrl}${endpoint}`;
+  buildUrl(endpoint: string, queryParams?: Record<string, string>, apiVersion?: ApiVersion): string {
+    let url = apiVersion ? `https://graph.microsoft.com/${apiVersion}${endpoint}` : `${this.baseUrl}${endpoint}`;
 
     if (queryParams && Object.keys(queryParams).length > 0) {
       const qs = Object.entries(queryParams)
@@ -131,7 +135,7 @@ export class GraphClient {
   }
 
   async request(endpoint: string, options: GraphRequestOptions = {}): Promise<GraphResponse> {
-    const url = this.buildUrl(endpoint, options.queryParams);
+    const url = this.buildUrl(endpoint, options.queryParams, options.apiVersion);
     const method = (options.method || 'GET').toUpperCase();
 
     logger.debug(`${method} ${url}`, options.body ? { bodyLength: options.body.length } : undefined);
@@ -159,7 +163,7 @@ export class GraphClient {
    * and read-only/dry-run handling as `request()`; dry-run returns `{ body: null, status: 0 }`.
    */
   async requestBinary(endpoint: string, options: GraphRequestOptions = {}): Promise<BinaryResponse> {
-    const url = this.buildUrl(endpoint, options.queryParams);
+    const url = this.buildUrl(endpoint, options.queryParams, options.apiVersion);
     const method = (options.method || 'GET').toUpperCase();
     logger.debug(`${method} ${url} (binary)`);
 
