@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
-import { outputOption, info } from '../utils.js';
+import { outputOption, done } from '../utils.js';
 import { handleErrors } from '../errors.js';
 import { listRequest, paginationOptions, type ListOptions } from '../list.js';
 
@@ -10,9 +10,8 @@ function messageBody(opts: { body: string; html?: boolean }): { contentType: str
 }
 
 /** POST a message-like body; the success note is skipped in dry-run (status 0), whose preview is on stderr. */
-async function post(client: GraphClient, endpoint: string, body: unknown, done: string): Promise<void> {
-  const res = await client.request(endpoint, { method: 'POST', body: JSON.stringify(body) });
-  if (res.status !== 0) info(done);
+async function post(client: GraphClient, endpoint: string, body: unknown, message: string): Promise<void> {
+  done(await client.request(endpoint, { method: 'POST', body: JSON.stringify(body) }), message);
 }
 
 export function registerTeamsCommands(program: Command, getClient: () => GraphClient): void {
