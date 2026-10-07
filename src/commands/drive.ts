@@ -4,7 +4,7 @@ import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
 import { detectMimeType } from '../mime.js';
 import { saveOrStream } from '../files.js';
-import { drivePath, odataQuote } from '../graph-helpers.js';
+import { drivePath, field, odataQuote } from '../graph-helpers.js';
 import { listRequest, paginationOptions, type ListOptions } from '../list.js';
 import { formatSize, outputOption, confirm, info } from '../utils.js';
 import fs from 'fs';
@@ -48,11 +48,6 @@ function existingFile(filePath: string): string {
   const resolved = path.resolve(filePath);
   if (!fs.existsSync(resolved)) throw new Error(`File not found: ${resolved}`);
   return resolved;
-}
-
-/** `value[key]` when `value` is an object, else undefined (Graph payloads are untyped JSON). */
-function field(value: unknown, key: string): unknown {
-  return typeof value === 'object' && value !== null && key in value ? Reflect.get(value, key) : undefined;
 }
 
 export function registerDriveCommands(program: Command, getClient: () => GraphClient): void {

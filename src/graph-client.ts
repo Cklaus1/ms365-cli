@@ -4,6 +4,7 @@ import type { AuthManager } from './auth.js';
 import logger from './logger.js';
 import { detectMimeType } from './mime.js';
 import { formatSize, info } from './utils.js';
+import { collectionItems, stringField } from './graph-helpers.js';
 
 /** Attempts per request (first try + retries) for retryable failures. */
 const MAX_ATTEMPTS = 3;
@@ -506,17 +507,6 @@ export class GraphClient {
       count: first?.count,
     };
   }
-}
-
-function collectionItems(data: unknown): unknown[] | undefined {
-  if (typeof data === 'object' && data !== null && 'value' in data && Array.isArray(data.value)) return data.value;
-  return undefined;
-}
-
-function stringField(data: unknown, key: string): string | undefined {
-  if (typeof data !== 'object' || data === null || !(key in data)) return undefined;
-  const value: unknown = (data as Record<string, unknown>)[key];
-  return typeof value === 'string' ? value : undefined;
 }
 
 /** Start of the first `nextExpectedRanges` entry (`"26-"` or `"26-49"` -> 26) of an upload-session payload. */

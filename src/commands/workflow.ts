@@ -3,7 +3,7 @@ import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
 import { outputOption, info } from '../utils.js';
-import { calendarDate, preferTimezone } from '../graph-helpers.js';
+import { calendarDate, collectionItems, preferTimezone } from '../graph-helpers.js';
 
 type Item = Record<string, unknown>;
 
@@ -83,8 +83,7 @@ function localMidnight(now: Date, days = 0): Date {
 }
 
 function values(data: unknown): Item[] {
-  const value = (data as Item | undefined)?.value;
-  return Array.isArray(value) ? (value as Item[]) : [];
+  return (collectionItems(data) ?? []) as Item[];
 }
 
 /** Every event overlapping [start, end), with times in the local zone, ordered by start. */

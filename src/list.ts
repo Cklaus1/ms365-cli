@@ -1,6 +1,7 @@
 import { InvalidArgumentError, Option, type Command } from 'commander';
 import type { GraphClient, GraphRequestOptions } from './graph-client.js';
 import { formatOutput, streamPages, type OutputFormat } from './formatter.js';
+import { collectionItems } from './graph-helpers.js';
 
 /** Parsed values of the options `paginationOptions()` adds (plus the command's `-o`). */
 export interface ListOptions {
@@ -11,12 +12,17 @@ export interface ListOptions {
   output: string;
 }
 
-function integer(min: number) {
+/**
+ * Commander argument parser for a decimal integer in [min, max] (max optional).
+ * Rejects signs, decimals and trailing junk; one error wording for every integer option.
+ */
+export function integer(min: number, max?: number): (value: string) => number {
   return (value: string): number => {
-    if (!/^\d+$/.test(value) || Number(value) < min) {
-      throw new InvalidArgumentError(`Expected an integer >= ${min}.`);
+    const n = Number(value);
+    if (!/^\d+$/.test(value) || n < min || (max !== undefined && n > max)) {
+      throw new InvalidArgumentError(max === undefined ? `Expected an integer >= ${min}.` : `Expected an integer from ${min} to ${max}.`);
     }
-    return Number(value);
+    return n;
   };
 }
 
@@ -77,10 +83,8 @@ export async function listRequest(
 }
 
 function filterValue(data: unknown, keep: (item: unknown) => boolean): unknown {
-  if (typeof data === 'object' && data !== null && 'value' in data && Array.isArray(data.value)) {
-    return { ...data, value: data.value.filter(keep) };
-  }
-  return data;
+  const value = collectionItems(data);
+  return value ? { ...(data as object), value: value.filter(keep) } : data;
 }
 
 async function* filterPages(
