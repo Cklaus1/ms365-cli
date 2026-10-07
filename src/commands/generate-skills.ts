@@ -6,6 +6,7 @@ import { defaultFormat, info } from '../utils.js';
 import { buildCommandTree, type CommandNode, type CommandTree, type GroupNode, type OptionNode } from '../command-tree.js';
 import { endpointKeys } from './schema.js';
 import { introspectionProgram } from './registry.js';
+import { VERSION } from '../version.js';
 
 export interface SkillFile {
   /** Path relative to the output directory. */
@@ -67,7 +68,7 @@ function generateGroupSkill(group: GroupNode, leaves: CommandNode[], schemaKeys:
 
   return `---
 name: ms365-${name}
-version: 0.1.0
+version: ${VERSION}
 description: ${JSON.stringify(group.description)}
 metadata:
   category: "productivity"
@@ -102,7 +103,7 @@ function generateSharedSkill(globals: OptionNode[], topLevelLeaves: CommandNode[
   const flagRows = globals.map(o => `| \`${o.flags}\` | ${escapeCell(o.description)} |`).join('\n');
   return `---
 name: ms365-shared
-version: 0.1.0
+version: ${VERSION}
 description: "Shared authentication, global flags, output formats, and security rules for ms365-cli."
 metadata:
   category: "shared"

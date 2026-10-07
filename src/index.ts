@@ -9,6 +9,7 @@ import { exitProcess, reportError } from './errors.js';
 import { registerAllCommands } from './commands/registry.js';
 import logger from './logger.js';
 import { setQuiet } from './utils.js';
+import { VERSION } from './version.js';
 
 // Exit immediately on broken pipe - prevents zombie processes when piped to head/tail/etc.
 for (const stream of [process.stdout, process.stderr]) {
@@ -35,7 +36,7 @@ const program = new Command();
 program
   .name('ms365')
   .description('Microsoft 365 CLI - Interact with Microsoft 365 via the Graph API')
-  .version('0.1.0')
+  .version(VERSION)
   .option('--org-mode', 'Enable organization mode (Teams, SharePoint, shared mailboxes)')
   .option('--read-only', 'Restrict to read-only operations')
   .option('--dry-run', 'Preview the API request without executing it')

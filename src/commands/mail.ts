@@ -6,7 +6,7 @@ import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
 import { saveOrStream } from '../files.js';
 import { calendarDate, odataQuote, searchQuote } from '../graph-helpers.js';
-import { listRequest, paginationOptions } from '../list.js';
+import { integer, listRequest, paginationOptions } from '../list.js';
 import { truncate, parseRecipients, formatSize, outputOption, confirm, info } from '../utils.js';
 
 // Well-known folder names that Graph API supports directly
@@ -757,10 +757,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .option('--mark-read', 'Mark matching messages as read')
     .option('--importance <level>', 'Set importance: low, normal, high')
     .option('--stop-processing', 'Stop processing subsequent rules')
-    .option('--sequence <n>', 'Rule order, lowest runs first (default: after the last existing rule)', (value: string) => {
-      if (!/^\d+$/.test(value)) throw new InvalidArgumentError('Expected a non-negative integer.');
-      return Number(value);
-    })
+    .option('--sequence <n>', 'Rule order, lowest runs first (default: after the last existing rule)', integer(0))
     .option('--enabled', 'Create the rule enabled (default)')
     .option('--no-enabled', 'Create the rule disabled')
     .addOption(outputOption())

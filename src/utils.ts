@@ -24,6 +24,14 @@ export function info(msg: string): void {
 }
 
 /**
+ * Success note for a write: printed (via `info`) only when the request really ran.
+ * Dry-run responses have status 0 and their preview is already on stderr.
+ */
+export function done(res: { status: number }, message: string): void {
+  if (res.status !== 0) info(message);
+}
+
+/**
  * Require confirmation for a destructive operation; throws CancelledError (exit 1) unless the user answers y.
  * Always prompts - no --yes override - so AI agents can't bypass.
  * Non-TTY stdin is refused to prevent accidental deletions in scripts.

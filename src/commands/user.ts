@@ -2,7 +2,7 @@ import { Command, Option } from 'commander';
 import { GraphClient, GraphError } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
-import { outputOption, info } from '../utils.js';
+import { outputOption, done, info } from '../utils.js';
 import { saveOrStream } from '../files.js';
 import { listRequest, paginationOptions, type ListOptions } from '../list.js';
 import { isCalendarDate } from '../graph-helpers.js';
@@ -169,7 +169,7 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
         method: 'POST',
         body: JSON.stringify({ availability: opts.availability, activity, expirationDuration: opts.duration }),
       });
-      if (res.status !== 0) info(`Presence set to ${opts.availability} (${activity}).`);
+      done(res, `Presence set to ${opts.availability} (${activity}).`);
     }));
 
   user
@@ -177,7 +177,7 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
     .description('Clear your preferred presence and revert to automatic')
     .action(handleErrors(async () => {
       const res = await getClient().request('/me/presence/clearUserPreferredPresence', { method: 'POST' });
-      if (res.status !== 0) info('Presence cleared.');
+      done(res, 'Presence cleared.');
     }));
 
   // ── Profile photo ───────────────────────────────────────────
@@ -231,7 +231,7 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
 
       // Upload raw binary directly — photo endpoint doesn't support upload sessions; putBinary throws on failure.
       const response = await getClient().putBinary('/me/photo/$value', resolvedPath, contentType);
-      if (response.status !== 0) info('Profile photo updated.');
+      done(response, 'Profile photo updated.');
     }));
 
   // ── Mailbox settings ────────────────────────────────────────
@@ -253,7 +253,7 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
         method: 'PATCH',
         body: JSON.stringify({ timeZone: timezone }),
       });
-      if (res.status !== 0) info(`Timezone set to ${timezone}.`);
+      done(res, `Timezone set to ${timezone}.`);
     }));
 
   user
@@ -264,7 +264,7 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
         method: 'PATCH',
         body: JSON.stringify({ language: { locale } }),
       });
-      if (res.status !== 0) info(`Language set to ${locale}.`);
+      done(res, `Language set to ${locale}.`);
     }));
 
   user

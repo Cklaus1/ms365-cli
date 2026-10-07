@@ -3,7 +3,7 @@ import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
 import { outputOption, confirm, info } from '../utils.js';
-import { calendarDate } from '../graph-helpers.js';
+import { calendarDate, stringField } from '../graph-helpers.js';
 
 interface OutputOpts { output: string }
 interface EtagOpts { etag?: string }
@@ -26,8 +26,8 @@ async function ifMatch(client: GraphClient, method: string, endpoint: string, et
   if (etag) return etag;
   if (client.isDryRun) return '<dry-run>';
   const { data } = await client.request(endpoint);
-  const value = typeof data === 'object' && data !== null && '@odata.etag' in data ? data['@odata.etag'] : undefined;
-  if (typeof value !== 'string') throw new Error(`No @odata.etag on ${endpoint}. Provide --etag.`);
+  const value = stringField(data, '@odata.etag');
+  if (value === undefined) throw new Error(`No @odata.etag on ${endpoint}. Provide --etag.`);
   return value;
 }
 

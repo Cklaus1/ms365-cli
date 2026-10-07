@@ -88,3 +88,20 @@ export function preferTimezone(headers: Record<string, string> = {}, timeZone: s
   else out[key ?? 'Prefer'] = pref;
   return out;
 }
+
+/** `data[key]` when `data` is an object that has `key`, else undefined (Graph payloads are untyped JSON). */
+export function field(data: unknown, key: string): unknown {
+  return typeof data === 'object' && data !== null && key in data ? Reflect.get(data, key) : undefined;
+}
+
+/** `data[key]` when it is a string, else undefined. */
+export function stringField(data: unknown, key: string): string | undefined {
+  const value = field(data, key);
+  return typeof value === 'string' ? value : undefined;
+}
+
+/** The `value` array of a Graph collection payload, or undefined when `data` is not one. */
+export function collectionItems(data: unknown): unknown[] | undefined {
+  const value = field(data, 'value');
+  return Array.isArray(value) ? value : undefined;
+}
