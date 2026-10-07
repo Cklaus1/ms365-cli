@@ -325,12 +325,12 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     }));
 
   paginationOptions(mail.command('folders').description('List mail folders'), 100)
-    .option('--parent <folderId>', 'List child folders of this folder')
+    .option('--parent <name>', 'List child folders of this folder (name or ID, e.g. "Inbox")')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();
       const endpoint = opts.parent
-        ? `/me/mailFolders/${encodeURIComponent(opts.parent)}/childFolders`
+        ? `/me/mailFolders/${encodeURIComponent(await resolveFolder(client, opts.parent))}/childFolders`
         : '/me/mailFolders';
       await listRequest(client, endpoint, {
         queryParams: { '$select': 'id,displayName,parentFolderId,childFolderCount,totalItemCount,unreadItemCount' },
@@ -352,12 +352,12 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .command('create-folder')
     .description('Create a mail folder')
     .requiredOption('--name <name>', 'Folder display name')
-    .option('--parent <parentFolderId>', 'Parent folder ID (default: root)')
+    .option('--parent <name>', 'Parent folder name or ID (default: root)')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();
       const endpoint = opts.parent
-        ? `/me/mailFolders/${encodeURIComponent(opts.parent)}/childFolders`
+        ? `/me/mailFolders/${encodeURIComponent(await resolveFolder(client, opts.parent))}/childFolders`
         : '/me/mailFolders';
       const response = await client.request(endpoint, {
         method: 'POST',
@@ -754,7 +754,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .requiredOption('--name <name>', 'Rule display name')
     .option('--from <addresses>', 'Comma-separated sender addresses to match (exact addresses)')
     .option('--subject-contains <words>', 'Comma-separated words to match in subject')
-    .option('--move-to <folderId>', 'Move matching messages to folder ID')
+    .option('--move-to <name>', 'Move matching messages to this folder (name or ID, e.g. "Archive")')
     .option('--forward-to <addresses>', 'Comma-separated addresses to forward to')
     .option('--delete', 'Delete matching messages')
     .option('--mark-read', 'Mark matching messages as read')
@@ -799,6 +799,16 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       }
       if (Object.keys(conditions).length === 0) {
         await confirm(`Rule "${opts.name}" has no conditions and applies to every incoming message. Create it?`);
+      }
+      if (opts.moveTo) {
+        // moveToFolder needs a real folder ID; Graph resolves well-known names only in URL paths.
+        const folder = await resolveFolder(client, opts.moveTo);
+        if (WELL_KNOWN_FOLDERS.includes(folder)) {
+          const res = await client.request(`/me/mailFolders/${folder}`, { queryParams: { '$select': 'id' } });
+          actions.moveToFolder = res.status === 0 ? folder : (res.data as MailFolder).id;
+        } else {
+          actions.moveToFolder = folder;
+        }
       }
 
       let sequence: number | undefined = opts.sequence;

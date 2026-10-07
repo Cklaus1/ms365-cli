@@ -84,12 +84,13 @@ describe('MAIL-2 create-rule / update-rule', () => {
   const created: FakeRoute = { match: '/messageRules', method: 'POST', status: 201, body: { id: 'r3' } };
 
   it('sends sequence = max existing + 1 and exact sender addresses', async () => {
-    const r = await mail(['create-rule', '--name', 'Bob', '--from', 'bob@x.com', '--move-to', 'f1', '-o', 'json'], [existing, created]);
+    const folderId = 'AAMkADf1' + 'x'.repeat(40);
+    const r = await mail(['create-rule', '--name', 'Bob', '--from', 'bob@x.com', '--move-to', folderId, '-o', 'json'], [existing, created]);
     expect(r.code).toBe(0);
     const body = bodyOf(r, 'POST');
     expect(body.sequence).toBe(6);
     expect(body.conditions).toEqual({ fromAddresses: [{ emailAddress: { address: 'bob@x.com' } }] });
-    expect(body.actions).toEqual({ moveToFolder: 'f1' });
+    expect(body.actions).toEqual({ moveToFolder: folderId });
     expect(body.isEnabled).toBe(true);
     expect(JSON.parse(r.stdout).id).toBe('r3');
   });
