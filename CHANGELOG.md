@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). IDs in brackets refer to items in `tasks/ms365-cli-hardening-spec.md`.
+All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). IDs in brackets refer to items in `tasks/ms365-cli-hardening-spec.md`; IDs marked `fu:` refer to `tasks/ms365-cli-followup-spec.md`.
 
 ## [Unreleased]
 
@@ -22,6 +22,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - **`schema --list` prints JSON** (`{endpoint, method, path, description}` array) instead of a grouped text listing. [SCHEMA-1]
 - `search query --entity` rejects types that Graph cannot combine (e.g. `driveItem,message`). [SEARCH-1]
 - `planner --due` dates mean that day in the local time zone (were midnight UTC). [PLANNER-2]
+- **`drive download` takes `<driveId> <itemId>`** and fetches `/drives/{driveId}/items/{itemId}/content`; the old 3-argument form exits 1 (`too many arguments`). [fu:DRIVE-3]
+- **Calendar `--timezone` defaults to the local time zone instead of UTC** (`cal create`, `free-busy`, `update`'s fallback, `decline --propose-*`). Wall-clock times in a zone Graph does not document (e.g. `Europe/Amsterdam`, or a POSIX `TZ` like `JST-9`) are converted to the UTC instant; `decline` no longer sends the bare zone name or a UTC-labelled wall-clock time. [fu:CAL-4]
 
 ### Fixed
 
@@ -61,6 +63,10 @@ All notable changes to this project are documented here. The format follows [Kee
 - `user download-photo` uses the real image extension and does not overwrite; `upload-photo` prints no success in dry-run. [USER-3]
 - `groups distribution-lists` excludes Microsoft 365 groups. [GROUPS-1]
 - `ms365 auth setup` re-prompts on unknown menu input and exits 1 when input ends. [AUTH-4, MISC-1]
+- `--dry-run` write commands no longer print success lines (`Email sent successfully.`, `Contact deleted.`, …): mail, calendar accept/decline/tentative/delete, todo delete, contacts delete, `drive delete`, `planner delete-task/delete-plan/delete-bucket` and `workflow file-announce`. `mail batch-read`/`batch-move` print no summary, `drive upload` no `Uploading …` line, and `workflow meeting-prep` no "No upcoming meetings". [fu:DRY-1]
+- `workflow email-to-task --dry-run` without `--list` previews the POST to `/me/todo/lists/<default-list>/tasks` with the title `[Email] <subject>` instead of failing. [fu:DRY-2]
+- `cal free-busy --interval` must be an integer from 5 to 1440 (default 30, sent as a number); `abc` or `15x` used to send `null` or `15`. [fu:CAL-3]
+- `user upload-photo` no longer uploads every file as `image/jpeg`: the type comes from the extension, only `.jpg`/`.jpeg`/`.png`/`.gif` are accepted, and other files exit 1 before the file is read. [fu:USER-4]
 
 ### Added
 
@@ -77,6 +83,20 @@ All notable changes to this project are documented here. The format follows [Kee
 - `generate-skills` derives its skills from the registered commands, covering every group (including `auth`, `user`, `groups`, `chat`). [SKILLS-1]
 - `workflow file-announce -o`. [WF-3]
 - `ms365 serve` and `ms365-remote`: agents on other tailnet machines share one Microsoft 365 login. `ms365 serve --app-cap <name>` listens on a 0600 Unix socket (loopback TCP fallback with `--port`) behind `tailscale serve --accept-app-caps`. Each request is checked against the `Tailscale-App-Capabilities` grant (per-command capabilities such as `mail.read`, `mail.send`), runs the CLI in an isolated child process, and is written to a JSON-lines audit log. `ms365-remote` (`MS365_REMOTE_URL`) takes the same commands, uploads local input files and saves downloads locally; `MS365_REMOTE_SSH=<host>` runs commands over Tailscale SSH instead. See README "Remote Access (Tailscale)". [REMOTE-0, REMOTE-1]
+- `teams send-channel-message`, `teams reply-channel-message`, `chat send` and `chat reply` take `-o` and print the created message on stdout, so callers get its ID; the confirmation stays on stderr. `schema chat.send`/`chat.reply` describe this response. [fu:OUT-1]
+- `teams members` and `groups owners` take `--top`/`--all`/`--page-limit`/`--page-delay` (team-list-members and group-list-owners document `$top` and `@odata.nextLink`). [fu:PAGE-2]
+- `mail folders --parent`, `mail create-folder --parent` and `mail create-rule --move-to` accept folder names (well-known, display name, nested) as well as IDs; well-known `--move-to` names are converted to the real folder ID. [fu:MAIL-10]
+
+### Changed
+
+- `planner plans`, `my-tasks`, `tasks`, `buckets`, `bucket-tasks` (planneruser-list-plans, planneruser-list-tasks, plannerplan-list-tasks, plannerplan-list-buckets, plannerbucket-list-tasks), `excel worksheets` (workbook-list-worksheets), `drive permissions` (driveitem-list-permissions), `teams list` (user-list-joinedteams) and `teams channels` (channel-list) follow every `@odata.nextLink` and print one combined result. [fu:PAGE-2]
+- Options with a documented value set reject other values before any request (`Allowed choices`): `drive share --type view|edit|embed` / `--scope anonymous|organization|users`, `excel create-chart --type` (the 74 ExcelApi 1.1 `Excel.ChartType` values) / `--series-by auto|columns|rows`, `cal create-calendar`/`update-calendar --color` (`calendarColor` values), `mail create-rule --importance low|normal|high`, and each item of `search query --entity` (also checked by `ms365 serve` and `ms365-remote`, and listed in generated skills). [fu:CHOICE-1]
+- `mail flag` start/due and To Do due dates (`todo create/update --due`, `workflow email-to-task --due`) are midnight in the local time zone when Graph documents it (else UTC); the default `mail flag` start is the local date, not the UTC date. [fu:TZ-1]
+- `mail attachments` selects `id,name,contentType,size,isInline,lastModifiedDateTime` and no longer downloads `contentBytes`. [fu:MAIL-9]
+- `sp item` help explains that it addresses one item through the site's non-enumerable `items` relationship. [fu:SP-3]
+- `ms365 schema` is generated from per-command Graph annotations and covers all 168 Graph-calling commands (was 35); the 35 hand-written entries are unchanged. `schema --list` prints one row per Graph request, and multi-request commands show `requests: [...]`. Generated SKILL.md files carry one `Endpoint details: ms365 schema <group>.<command>` line instead of one hint per endpoint. [fu:SCHEMA-2]
+- One shared integer option parser; the error wording changed for `mail create-rule --sequence` (`Expected an integer >= 0.`), `serve --port` (`Expected an integer from 0 to 65535.`) and `serve --timeout` (`Expected an integer >= 1.`). Accepted ranges are unchanged. [fu:CLEAN-1]
+- `ms365 --version`, `ms365-remote --version` and the generated SKILL.md front matter read the version from `package.json` (one `src/version.ts`) instead of hard-coded copies. [fu:META-2]
 
 ### Security
 
