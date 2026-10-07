@@ -9,9 +9,16 @@ function messageBody(opts: { body: string; html?: boolean }): { contentType: str
   return { contentType: opts.html ? 'html' : 'text', content: opts.body };
 }
 
-/** POST a message-like body; the success note is skipped in dry-run (status 0), whose preview is on stderr. */
-async function post(client: GraphClient, endpoint: string, body: unknown, message: string): Promise<void> {
-  done(await client.request(endpoint, { method: 'POST', body: JSON.stringify(body) }), message);
+interface SendOptions { body: string; html?: boolean; output: string }
+
+/**
+ * POST a message-like body and print the created message (the dry-run object under --dry-run) on stdout;
+ * the confirmation goes to stderr and is skipped in dry-run, whose preview is already there.
+ */
+async function post(client: GraphClient, endpoint: string, body: unknown, message: string, output: string): Promise<void> {
+  const res = await client.request(endpoint, { method: 'POST', body: JSON.stringify(body) });
+  console.log(formatOutput(res.data, output as OutputFormat));
+  done(res, message);
 }
 
 export function registerTeamsCommands(program: Command, getClient: () => GraphClient): void {
@@ -85,12 +92,14 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
     .description('Send a message to a channel')
     .requiredOption('--body <body>', 'Message body')
     .option('--html', 'Body is HTML')
-    .action(handleErrors(async (teamId: string, channelId: string, opts: { body: string; html?: boolean }) => {
+    .addOption(outputOption())
+    .action(handleErrors(async (teamId: string, channelId: string, opts: SendOptions) => {
       await post(
         getClient(),
         `/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages`,
         { body: messageBody(opts) },
         'Channel message sent.',
+        opts.output,
       );
     }));
 
@@ -99,12 +108,14 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
     .description('Reply to a channel message (threaded)')
     .requiredOption('--body <body>', 'Reply body')
     .option('--html', 'Body is HTML')
-    .action(handleErrors(async (teamId: string, channelId: string, messageId: string, opts: { body: string; html?: boolean }) => {
+    .addOption(outputOption())
+    .action(handleErrors(async (teamId: string, channelId: string, messageId: string, opts: SendOptions) => {
       await post(
         getClient(),
         `/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}/replies`,
         { body: messageBody(opts) },
         'Reply sent to channel thread.',
+        opts.output,
       );
     }));
 
@@ -146,8 +157,9 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
     .description('Send a chat message')
     .requiredOption('--body <body>', 'Message body')
     .option('--html', 'Body is HTML')
-    .action(handleErrors(async (chatId: string, opts: { body: string; html?: boolean }) => {
-      await post(getClient(), `/chats/${encodeURIComponent(chatId)}/messages`, { body: messageBody(opts) }, 'Message sent.');
+    .addOption(outputOption())
+    .action(handleErrors(async (chatId: string, opts: SendOptions) => {
+      await post(getClient(), `/chats/${encodeURIComponent(chatId)}/messages`, { body: messageBody(opts) }, 'Message sent.', opts.output);
     }));
 
   chat
@@ -155,13 +167,15 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
     .description('Reply to a chat message (posts a new message quoting it)')
     .requiredOption('--body <body>', 'Reply body')
     .option('--html', 'Body is HTML')
-    .action(handleErrors(async (chatId: string, messageId: string, opts: { body: string; html?: boolean }) => {
+    .addOption(outputOption())
+    .action(handleErrors(async (chatId: string, messageId: string, opts: SendOptions) => {
       // Chats have no threaded /replies (channels only); Graph's chat reply is replyWithQuote.
       await post(
         getClient(),
         `/chats/${encodeURIComponent(chatId)}/messages/replyWithQuote`,
         { messageIds: [messageId], replyMessage: { body: messageBody(opts) } },
         'Reply sent.',
+        opts.output,
       );
     }));
 }
