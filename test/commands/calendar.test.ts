@@ -185,3 +185,24 @@ describe('calendar dry-run (DRY-1)', () => {
     expect(r.stderr).toContain('Event accepted.');
   });
 });
+
+describe('calendar free-busy --interval (CAL-3)', () => {
+  const args = ['calendar', 'free-busy', '--emails', 'a@b.cd', '--start', '2026-10-07T09:00:00', '--end', '2026-10-07T10:00:00', '--timezone', 'UTC', '-o', 'json'];
+  const route = { match: '/me/calendar/getSchedule$', method: 'POST', body: { value: [] } };
+
+  it.each([['abc'], ['15x'], ['0'], ['1441']])('--interval %s exits 1 before any request', async (bad) => {
+    const r = await runCli([...args, '--interval', bad], { env: ENV, routes: [route] });
+    expect(r.code).toBe(1);
+    expect(r.requests).toHaveLength(0);
+    expect(r.stderr).toContain('Expected an integer from 5 to 1440.');
+  });
+
+  it('sends --interval as a number, default 30', async () => {
+    const given = await runCli([...args, '--interval', '15'], { env: ENV, routes: [route] });
+    expect(given.code).toBe(0);
+    expect(JSON.parse(given.requests[0].body!).availabilityViewInterval).toBe(15);
+    const dflt = await runCli(args, { env: ENV, routes: [route] });
+    expect(dflt.code).toBe(0);
+    expect(JSON.parse(dflt.requests[0].body!).availabilityViewInterval).toBe(30);
+  });
+});

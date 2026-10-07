@@ -1,9 +1,9 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { outputOption, confirm, done, parseRecipients, validateEmail } from '../utils.js';
 import { handleErrors } from '../errors.js';
-import { paginationOptions, listRequest, type ListOptions } from '../list.js';
+import { integer, paginationOptions, listRequest, type ListOptions } from '../list.js';
 import { localTimeZone, preferTimezone } from '../graph-helpers.js';
 
 interface EventsOptions extends ListOptions {
@@ -286,7 +286,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     .requiredOption('--start <datetime>', 'Start datetime (ISO 8601)')
     .requiredOption('--end <datetime>', 'End datetime (ISO 8601)')
     .option('--timezone <tz>', 'Timezone', 'UTC')
-    .option('--interval <min>', 'Time slot interval in minutes', '30')
+    .addOption(new Option('--interval <min>', 'Time slot interval in minutes (5-1440)').argParser(integer(5, 1440)).default(30))
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const schedules = opts.emails.split(',').map(validateEmail);
@@ -297,7 +297,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
           schedules,
           startTime: { dateTime: opts.start, timeZone: opts.timezone },
           endTime: { dateTime: opts.end, timeZone: opts.timezone },
-          availabilityViewInterval: parseInt(opts.interval),
+          availabilityViewInterval: opts.interval,
         }),
       });
 
