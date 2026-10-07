@@ -2,7 +2,7 @@ import { Command, InvalidArgumentError, Option } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
-import { outputOption, info } from '../utils.js';
+import { outputOption, info, done } from '../utils.js';
 import { calendarDate, collectionItems, preferTimezone } from '../graph-helpers.js';
 
 type Item = Record<string, unknown>;
@@ -192,7 +192,8 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
       }
 
       if (!event) {
-        info('No upcoming meetings in the next 24 hours.');
+        // Under --dry-run the view is only previewed, so "no meeting" would be a guess.
+        if (!client.isDryRun) info('No upcoming meetings in the next 24 hours.');
         if (opts.output !== 'text') console.log(formatOutput(null, opts.output as OutputFormat));
         return;
       }
@@ -424,7 +425,7 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
         }
       );
 
-      info(`Announced "${file.name}" to channel.`);
+      done(postRes, `Announced "${file.name}" to channel.`);
       console.log(formatOutput(postRes.data, opts.output as OutputFormat));
     }));
 

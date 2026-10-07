@@ -283,3 +283,17 @@ describe('workflow file-announce (WF-3, CORE-4)', () => {
     expect(r.stderr).toContain('Announced');
   });
 });
+
+describe('workflow dry-run (DRY-1)', () => {
+  it.each([
+    [['--org-mode', 'workflow', 'file-announce', 'D1', 'I1', '--team', 'T', '--channel', 'C'], 'POST https://graph.microsoft.com/v1.0/teams/T/channels/C/messages', 'Announced'],
+    [['workflow', 'meeting-prep'], 'GET https://graph.microsoft.com/v1.0/me/calendarView', 'No upcoming meetings'],
+    [['workflow', 'meeting-prep', '-o', 'json'], 'GET https://graph.microsoft.com/v1.0/me/calendarView', 'No upcoming meetings'],
+  ])('--dry-run %j prints the preview and no success/empty-state text', async (args, preview, text) => {
+    const r = await runCli(['--dry-run', ...args], { env: ENV, routes: [] });
+    expect(r.code).toBe(0);
+    expect(r.requests).toHaveLength(0);
+    expect(r.stderr).toContain(`[dry-run] ${preview}`);
+    expect(r.stderr).not.toContain(text);
+  });
+});

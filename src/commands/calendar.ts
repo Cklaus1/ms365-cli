@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
-import { outputOption, confirm, info, parseRecipients, validateEmail } from '../utils.js';
+import { outputOption, confirm, done, parseRecipients, validateEmail } from '../utils.js';
 import { handleErrors } from '../errors.js';
 import { paginationOptions, listRequest, type ListOptions } from '../list.js';
 import { localTimeZone, preferTimezone } from '../graph-helpers.js';
@@ -187,8 +187,8 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
         ? `/me/calendars/${encodeURIComponent(opts.calendar)}/events/${encodeURIComponent(eventId)}`
         : `/me/events/${encodeURIComponent(eventId)}`;
 
-      await client.request(endpoint, { method: 'DELETE' });
-      info('Event deleted.');
+      const res = await client.request(endpoint, { method: 'DELETE' });
+      done(res, 'Event deleted.');
     }));
 
   paginationOptions(
@@ -217,14 +217,14 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     .option('--no-notify', 'Don\'t send response to organizer')
     .action(handleErrors(async (eventId: string, opts) => {
       const client = getClient();
-      await client.request(`/me/events/${encodeURIComponent(eventId)}/accept`, {
+      const res = await client.request(`/me/events/${encodeURIComponent(eventId)}/accept`, {
         method: 'POST',
         body: JSON.stringify({
           comment: opts.comment || '',
           sendResponse: opts.notify !== false,
         }),
       });
-      info('Event accepted.');
+      done(res, 'Event accepted.');
     }));
 
   cal
@@ -254,11 +254,11 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
           end: { dateTime: opts.proposeEnd, timeZone },
         };
       }
-      await getClient().request(`/me/events/${encodeURIComponent(eventId)}/decline`, {
+      const res = await getClient().request(`/me/events/${encodeURIComponent(eventId)}/decline`, {
         method: 'POST',
         body: JSON.stringify(body),
       });
-      info(body.proposedNewTime ? 'Event declined with proposed new time.' : 'Event declined.');
+      done(res, body.proposedNewTime ? 'Event declined with proposed new time.' : 'Event declined.');
     }));
 
   cal
@@ -268,14 +268,14 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     .option('--no-notify', 'Don\'t send response to organizer')
     .action(handleErrors(async (eventId: string, opts) => {
       const client = getClient();
-      await client.request(`/me/events/${encodeURIComponent(eventId)}/tentativelyAccept`, {
+      const res = await client.request(`/me/events/${encodeURIComponent(eventId)}/tentativelyAccept`, {
         method: 'POST',
         body: JSON.stringify({
           comment: opts.comment || '',
           sendResponse: opts.notify !== false,
         }),
       });
-      info('Tentatively accepted.');
+      done(res, 'Tentatively accepted.');
     }));
 
   // ── Free/Busy (scheduling) ─────────────────────────────────

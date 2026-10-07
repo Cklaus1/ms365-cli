@@ -2,7 +2,7 @@ import { Command, Option } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
-import { outputOption, confirm, info } from '../utils.js';
+import { outputOption, confirm, done } from '../utils.js';
 import { calendarDate } from '../graph-helpers.js';
 import { paginationOptions, listRequest, type ListOptions } from '../list.js';
 
@@ -124,11 +124,11 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
     .action(handleErrors(async (listId: string, taskId: string) => {
       await confirm(`Delete task ${taskId.substring(0, 16)}...?`);
       const client = getClient();
-      await client.request(
+      const res = await client.request(
         `/me/todo/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(taskId)}`,
         { method: 'DELETE' }
       );
-      info('Task deleted.');
+      done(res, 'Task deleted.');
     }));
 
   // ── List management ─────────────────────────────────────────

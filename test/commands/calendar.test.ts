@@ -170,3 +170,18 @@ describe('calendar addresses (CAL-2)', () => {
     ]);
   });
 });
+
+describe('calendar dry-run (DRY-1)', () => {
+  it.each([['accept', 'Event accepted'], ['decline', 'Event declined'], ['tentative', 'Tentatively accepted']])('--dry-run %s prints only the preview', async (cmd, message) => {
+    const r = await runCli(['--dry-run', 'calendar', cmd, 'E1'], { env: ENV });
+    expect(r.code).toBe(0);
+    expect(r.stderr).toContain('[dry-run] POST https://graph.microsoft.com/v1.0/me/events/E1/');
+    expect(r.stderr).not.toContain(message);
+  });
+
+  it('a real accept still confirms on stderr', async () => {
+    const r = await runCli(['calendar', 'accept', 'E1'], { env: ENV, routes: [{ match: '/me/events/E1/accept$', method: 'POST', status: 202, body: '' }] });
+    expect(r.code).toBe(0);
+    expect(r.stderr).toContain('Event accepted.');
+  });
+});
