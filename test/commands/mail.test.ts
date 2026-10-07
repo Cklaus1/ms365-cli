@@ -5,8 +5,8 @@ import { runCli, tempDir, type FakeRoute, type RunResult } from '../e2e/run-cli.
 
 const ENV = { MS365_CLI_CLIENT_ID: '00000000-0000-0000-0000-000000000000', MS365_CLI_TOKEN: 'fake' };
 
-function mail(args: string[], routes: FakeRoute[], extra: { cwd?: string } = {}): Promise<RunResult> {
-  return runCli(['mail', ...args], { env: ENV, routes, ...extra });
+function mail(args: string[], routes: FakeRoute[], extra: { cwd?: string; env?: Record<string, string> } = {}): Promise<RunResult> {
+  return runCli(['mail', ...args], { ...extra, env: { ...ENV, ...extra.env }, routes });
 }
 
 function param(url: string, name: string): string | null {
@@ -180,8 +180,8 @@ describe('MAIL-3 folder resolution', () => {
 });
 
 describe('MAIL-4 flag --due', () => {
-  it('sends startDateTime together with dueDateTime', async () => {
-    const r = await mail(['flag', 'msg-1', '--due', '2026-12-01', '--start', '2026-11-20'], [{ match: '/me/messages/msg-1', method: 'PATCH', body: {} }]);
+  it('sends startDateTime together with dueDateTime (UTC zone)', async () => {
+    const r = await mail(['flag', 'msg-1', '--due', '2026-12-01', '--start', '2026-11-20'], [{ match: '/me/messages/msg-1', method: 'PATCH', body: {} }], { env: { TZ: 'UTC' } });
     expect(r.code).toBe(0);
     expect(bodyOf(r, 'PATCH').flag).toEqual({
       flagStatus: 'flagged',
@@ -191,7 +191,7 @@ describe('MAIL-4 flag --due', () => {
   });
 
   it('defaults the start to today, or to the due date when that is earlier', async () => {
-    const r = await mail(['flag', 'msg-1', '--due', '2000-01-02'], [{ match: '/me/messages/msg-1', method: 'PATCH', body: {} }]);
+    const r = await mail(['flag', 'msg-1', '--due', '2000-01-02'], [{ match: '/me/messages/msg-1', method: 'PATCH', body: {} }], { env: { TZ: 'UTC' } });
     expect(r.code).toBe(0);
     expect(bodyOf(r, 'PATCH').flag.startDateTime).toEqual({ dateTime: '2000-01-02T00:00:00', timeZone: 'UTC' });
   });

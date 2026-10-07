@@ -5,7 +5,7 @@ import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
 import { saveOrStream } from '../files.js';
-import { calendarDate, odataQuote, searchQuote } from '../graph-helpers.js';
+import { calendarDate, dateOnly, localDate, odataQuote, searchQuote } from '../graph-helpers.js';
 import { integer, listRequest, paginationOptions } from '../list.js';
 import { truncate, parseRecipients, formatSize, outputOption, confirm, done, info } from '../utils.js';
 
@@ -609,16 +609,16 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .command('flag <messageId>')
     .description('Set follow-up flag on a message')
     .option('--due <date>', 'Due date (YYYY-MM-DD)')
-    .option('--start <date>', 'Start date (YYYY-MM-DD; with --due default: today, or the due date if earlier)')
+    .option('--start <date>', 'Start date (YYYY-MM-DD; with --due default: local today, or the due date if earlier)')
     .action(handleErrors(async (messageId: string, opts) => {
       const client = getClient();
       const flag: Record<string, unknown> = { flagStatus: 'flagged' };
       const due = opts.due ? calendarDate(opts.due) : undefined;
       // Graph rejects a dueDateTime without a startDateTime (400).
-      const today = new Date().toISOString().slice(0, 10);
+      const today = localDate();
       const start = opts.start ? calendarDate(opts.start) : due && (due < today ? due : today);
-      if (start) flag.startDateTime = { dateTime: `${start}T00:00:00`, timeZone: 'UTC' };
-      if (due) flag.dueDateTime = { dateTime: `${due}T00:00:00`, timeZone: 'UTC' };
+      if (start) flag.startDateTime = dateOnly(start);
+      if (due) flag.dueDateTime = dateOnly(due);
       const res = await client.request(`/me/messages/${encodeURIComponent(messageId)}`, {
         method: 'PATCH',
         body: JSON.stringify({ flag }),
