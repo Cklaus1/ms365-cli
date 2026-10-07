@@ -75,14 +75,14 @@ export function registerGroupsCommands(program: Command, getClient: () => GraphC
       await listRequest(getClient(), `/groups/${encodeURIComponent(groupId)}/members`, {}, opts);
     }));
 
-  groups
-    .command('owners <groupId>')
-    .description('List group owners')
+  paginationOptions(
+    groups
+      .command('owners <groupId>')
+      .description('List group owners'),
+  )
     .addOption(outputOption())
-    .action(handleErrors(async (groupId: string, opts) => {
-      const client = getClient();
-      const response = await client.request(`/groups/${encodeURIComponent(groupId)}/owners`);
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+    .action(handleErrors(async (groupId: string, opts: ListOptions) => {
+      await listRequest(getClient(), `/groups/${encodeURIComponent(groupId)}/owners`, {}, opts);
     }));
 
   // Distribution lists use the same /groups endpoint with mailEnabled=true; M365 (Unified) groups are dropped client-side.

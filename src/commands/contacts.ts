@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
-import { outputOption, confirm, info } from '../utils.js';
+import { outputOption, confirm, done } from '../utils.js';
 import { paginationOptions, listRequest, type ListOptions } from '../list.js';
 import { searchQuote } from '../graph-helpers.js';
 
@@ -131,9 +131,7 @@ export function registerContactsCommands(program: Command, getClient: () => Grap
     .description('Delete a contact')
     .action(handleErrors(async (contactId: string) => {
       await confirm(`Delete contact ${contactId.substring(0, 16)}...?`);
-      const client = getClient();
-      await client.request(`/me/contacts/${encodeURIComponent(contactId)}`, { method: 'DELETE' });
-      info('Contact deleted.');
+      done(await getClient().request(`/me/contacts/${encodeURIComponent(contactId)}`, { method: 'DELETE' }), 'Contact deleted.');
     }));
 
   // ── Contact folders ─────────────────────────────────────────
