@@ -459,7 +459,10 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
   paginationOptions(mail.command('attachments <messageId>').description('List attachments for a message'))
     .addOption(outputOption())
     .action(handleErrors(async (messageId: string, opts) => {
-      await listRequest(getClient(), `/me/messages/${encodeURIComponent(messageId)}/attachments`, {}, opts);
+      // Metadata only: without $select Graph returns every fileAttachment's contentBytes.
+      await listRequest(getClient(), `/me/messages/${encodeURIComponent(messageId)}/attachments`, {
+        queryParams: { '$select': 'id,name,contentType,size,isInline,lastModifiedDateTime' },
+      }, opts);
     }));
 
   mail
