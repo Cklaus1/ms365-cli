@@ -24,14 +24,13 @@ async function post(client: GraphClient, endpoint: string, body: unknown, messag
 export function registerTeamsCommands(program: Command, getClient: () => GraphClient): void {
   const teams = program.command('teams').description('Microsoft Teams (requires --org-mode)');
 
+  // joinedTeams and channels take no $top; drain every nextLink into one result.
   teams
     .command('list')
     .description('List joined teams')
     .addOption(outputOption())
-    .action(handleErrors(async (opts) => {
-      const client = getClient();
-      const response = await client.request('/me/joinedTeams');
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+    .action(handleErrors(async (opts: { output: string }) => {
+      await listRequest(getClient(), '/me/joinedTeams', {}, { output: opts.output, all: true });
     }));
 
   teams
@@ -44,24 +43,22 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  teams
-    .command('members <teamId>')
-    .description('List team members')
+  paginationOptions(
+    teams
+      .command('members <teamId>')
+      .description('List team members'),
+  )
     .addOption(outputOption())
-    .action(handleErrors(async (teamId: string, opts) => {
-      const client = getClient();
-      const response = await client.request(`/teams/${encodeURIComponent(teamId)}/members`);
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+    .action(handleErrors(async (teamId: string, opts: ListOptions) => {
+      await listRequest(getClient(), `/teams/${encodeURIComponent(teamId)}/members`, {}, opts);
     }));
 
   teams
     .command('channels <teamId>')
     .description('List team channels')
     .addOption(outputOption())
-    .action(handleErrors(async (teamId: string, opts) => {
-      const client = getClient();
-      const response = await client.request(`/teams/${encodeURIComponent(teamId)}/channels`);
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+    .action(handleErrors(async (teamId: string, opts: { output: string }) => {
+      await listRequest(getClient(), `/teams/${encodeURIComponent(teamId)}/channels`, {}, { output: opts.output, all: true });
     }));
 
   teams

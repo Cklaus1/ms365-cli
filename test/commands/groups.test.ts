@@ -71,3 +71,25 @@ describe('PAGE-1 groups lists', () => {
     expect(r.requests).toHaveLength(0);
   });
 });
+
+describe('PAGE-2 groups owners pagination options', () => {
+  const routes = [
+    { match: 'skiptoken=2', body: { value: [{ id: 'o2' }] } },
+    { match: '/groups/G1/owners', body: { value: [{ id: 'o1' }], '@odata.nextLink': `${GRAPH}/groups/G1/owners?$skiptoken=2` } },
+  ];
+
+  it('--top sets $top and fetches one page', async () => {
+    const r = await runCli(['groups', 'owners', 'G1', '--top', '1', '-o', 'json'], { env: ENV, routes });
+    expect(r.code).toBe(0);
+    expect(r.requests).toHaveLength(1);
+    expect(new URL(r.requests[0].url).searchParams.get('$top')).toBe('1');
+    expect(JSON.parse(r.stdout).value).toEqual([{ id: 'o1' }]);
+  });
+
+  it('--all follows nextLink and prints one JSON array', async () => {
+    const r = await runCli(['groups', 'owners', 'G1', '--all', '-o', 'json'], { env: ENV, routes });
+    expect(r.code).toBe(0);
+    expect(r.requests).toHaveLength(2);
+    expect(JSON.parse(r.stdout).map((o: { id: string }) => o.id)).toEqual(['o1', 'o2']);
+  });
+});
