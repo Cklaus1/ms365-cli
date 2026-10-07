@@ -9,8 +9,15 @@ import { buildArgv, findCommand, InvalidInvocationError, type CommandNode, type 
 import { detectMimeType } from '../mime.js';
 import { APP_CAPS_HEADER, CapsHeaderError, parseAppCapabilities, type Caller } from './app-caps.js';
 import { AuditLog, type AuditEntry } from './audit.js';
-import { CAPABILITIES, remotePolicy, type RemoteCommand } from './capabilities.js';
+import { CAPABILITIES, remotePolicy, type Capability, type RemoteCommand } from './capabilities.js';
 import { Executor, type ExecutorOptions } from './executor.js';
+
+/** Lifetime of an unused upload token or file URL. */
+const FILE_TTL_MS = 10 * 60 * 1000;
+/** `/v1/execute` body limit: files travel separately, and a child's argv could not hold more anyway. */
+const MAX_REQUEST_BYTES = 1024 * 1024;
+/** `GET /v1/files/{token}`: 32 random bytes, base64url. */
+const FILE_PATH = /^\/v1\/files\/([A-Za-z0-9_-]{43})$/;
 
 const LOOPBACK_HOSTS = ['127.0.0.1', 'localhost', '::1'];
 
@@ -54,11 +61,70 @@ interface ExecuteRequest {
   args: Record<string, unknown>;
 }
 
+/** Entry of `files` in an execute reply: the bytes are fetched once from `url`. */
 interface OutputFile {
   name: string;
   contentType: string;
   size: number;
-  base64: string;
+  url: string;
+}
+
+/** A file on disk in a temp dir of its own, which is removed with it. */
+interface StoredFile {
+  dir: string;
+  path: string;
+  name: string;
+  size: number;
+}
+
+/** An output file waiting for its one-time `GET /v1/files/{token}`. */
+interface Download extends StoredFile {
+  contentType: string;
+  /** Capabilities of the producing command, required again to fetch it. */
+  caps: readonly Capability[];
+  command: string;
+}
+
+async function removeDir(dir: string): Promise<void> {
+  await fsp.rm(dir, { recursive: true, force: true });
+}
+
+/**
+ * Files behind single-use tokens (256-bit random). A file leaves the store when taken, when its TTL passes
+ * (its dir is then removed) or on `clear()`.
+ */
+class FileTokens<T extends StoredFile> {
+  private readonly entries = new Map<string, { file: T; timer: NodeJS.Timeout }>();
+
+  add(file: T): string {
+    const token = randomBytes(32).toString('base64url');
+    const timer = setTimeout(() => {
+      const expired = this.take(token);
+      if (expired) void removeDir(expired.dir);
+    }, FILE_TTL_MS);
+    timer.unref();
+    this.entries.set(token, { file, timer });
+    return token;
+  }
+
+  get(token: string): T | undefined {
+    return this.entries.get(token)?.file;
+  }
+
+  /** Remove `token` from the store; the caller now owns (and removes) the file. */
+  take(token: string): T | undefined {
+    const entry = this.entries.get(token);
+    if (!entry) return undefined;
+    this.entries.delete(token);
+    clearTimeout(entry.timer);
+    return entry.file;
+  }
+
+  /** Remove every stored file. */
+  async clear(): Promise<void> {
+    const files = [...this.entries.keys()].map(token => this.take(token)!);
+    await Promise.all(files.map(file => removeDir(file.dir)));
+  }
 }
 
 function json(res: http.ServerResponse, status: number, body: unknown): void {
@@ -67,23 +133,39 @@ function json(res: http.ServerResponse, status: number, body: unknown): void {
   res.end(text);
 }
 
-/** Read the whole body, rejecting with 413 past the file cap plus room for the JSON part and multipart framing. */
-async function readBody(req: http.IncomingMessage, maxFileBytes: number): Promise<Buffer<ArrayBuffer>> {
-  const maxBodyBytes = maxFileBytes + 1024 * 1024;
-  const declared = Number(req.headers['content-length']);
-  if (declared > maxBodyBytes) throw tooLarge(maxFileBytes);
+/**
+ * Stream an open file into `res` through one reused buffer, each chunk flushed before the next read, so memory
+ * stays flat however large the file is (piping a read stream leaves every chunk to the garbage collector).
+ */
+async function sendChunks(fh: fsp.FileHandle, res: http.ServerResponse): Promise<void> {
+  const buffer = Buffer.allocUnsafe(256 * 1024);
+  for (;;) {
+    const { bytesRead } = await fh.read(buffer, 0, buffer.length, null);
+    if (bytesRead === 0) break;
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    res.write(buffer.subarray(0, bytesRead), err => (err ? reject(err) : resolve()));
+    await promise;
+  }
+  const { promise, resolve } = Promise.withResolvers<void>();
+  res.end(resolve);
+  await promise;
+}
+
+/** Read the whole JSON body, rejecting with 413 past `MAX_REQUEST_BYTES`. */
+async function readBody(req: http.IncomingMessage): Promise<Buffer<ArrayBuffer>> {
+  const tooLarge = () => new ApiError(413, 'invalid_args', `Request exceeds the ${megabytes(MAX_REQUEST_BYTES)} limit; send files with PUT /v1/uploads`);
+  if (Number(req.headers['content-length']) > MAX_REQUEST_BYTES) throw tooLarge();
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req as AsyncIterable<Buffer>) {
     size += chunk.byteLength;
-    if (size <= maxBodyBytes) chunks.push(chunk);
+    if (size <= MAX_REQUEST_BYTES) chunks.push(chunk);
   }
-  if (size > maxBodyBytes) throw tooLarge(maxFileBytes);
+  if (size > MAX_REQUEST_BYTES) throw tooLarge();
   return Buffer.concat(chunks);
 }
 
 const megabytes = (bytes: number) => `${bytes / 1024 / 1024} MB`;
-const tooLarge = (maxFileBytes: number) => new ApiError(413, 'invalid_args', `Request exceeds the ${megabytes(maxFileBytes)} file limit`);
 
 function parseExecuteRequest(value: unknown): ExecuteRequest {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -100,41 +182,20 @@ function parseExecuteRequest(value: unknown): ExecuteRequest {
   return { command, positionals, args: Object.fromEntries(Object.entries(args)) };
 }
 
-/** JSON body, or multipart/form-data with a `request` JSON part plus file parts referenced as `{"$file": "<part>"}`. */
-async function parseBody(req: http.IncomingMessage, maxFileBytes: number): Promise<{ request: ExecuteRequest; files: Map<string, File> }> {
-  const body = await readBody(req, maxFileBytes);
+/** JSON body; input files are referenced as `{"$upload": "<token>"}` from `PUT /v1/uploads`. */
+async function parseBody(req: http.IncomingMessage): Promise<ExecuteRequest> {
   const contentType = req.headers['content-type'] ?? 'application/json';
-  const files = new Map<string, File>();
-  let requestText: string;
-  if (contentType.startsWith('multipart/form-data')) {
-    let form: FormData;
-    try {
-      form = await new Request('http://localhost/', { method: 'POST', headers: { 'content-type': contentType }, body }).formData();
-    } catch {
-      throw new ApiError(400, 'invalid_args', 'Malformed multipart body');
-    }
-    const part = form.get('request');
-    if (typeof part !== 'string') throw new ApiError(400, 'invalid_args', 'Missing "request" part');
-    requestText = part;
-    let total = 0;
-    for (const [name, value] of form) {
-      if (typeof value === 'string') continue;
-      files.set(name, value);
-      total += value.size;
-    }
-    if (total > maxFileBytes) throw tooLarge(maxFileBytes);
-  } else if (contentType.startsWith('application/json')) {
-    requestText = body.toString('utf8');
-  } else {
+  if (!contentType.startsWith('application/json')) {
     throw new ApiError(400, 'invalid_args', `Unsupported content type: ${contentType}`);
   }
+  const body = await readBody(req);
   let parsed: unknown;
   try {
-    parsed = JSON.parse(requestText);
+    parsed = JSON.parse(body.toString('utf8'));
   } catch {
     throw new ApiError(400, 'invalid_args', 'Request is not valid JSON');
   }
-  return { request: parseExecuteRequest(parsed), files };
+  return parseExecuteRequest(parsed);
 }
 
 /** Last path segment only, so an uploaded or requested name always stays inside the request's temp dir. */
@@ -154,25 +215,11 @@ function parseStdout(stdout: Buffer): unknown {
   }
 }
 
-/** Returned output files; sizes are checked with `stat` first, so an oversized file is never read into memory. */
-async function collectOutputs(dir: string, maxFileBytes: number): Promise<OutputFile[]> {
-  const entries = (await fsp.readdir(dir, { withFileTypes: true })).filter(e => e.isFile());
-  let total = 0;
-  for (const entry of entries) total += (await fsp.stat(path.join(dir, entry.name))).size;
-  if (total > maxFileBytes) {
-    throw new ApiError(502, 'command_failed', `Output file exceeds the ${megabytes(maxFileBytes)} remote limit`);
-  }
-  const files: OutputFile[] = [];
-  for (const entry of entries) {
-    const bytes = await fsp.readFile(path.join(dir, entry.name));
-    files.push({ name: entry.name, contentType: detectMimeType(entry.name), size: bytes.byteLength, base64: bytes.toString('base64') });
-  }
-  return files;
-}
-
 class RemoteServer {
   private readonly executor: Executor;
   private readonly audit: AuditLog;
+  private readonly uploads = new FileTokens<StoredFile>();
+  private readonly downloads = new FileTokens<Download>();
 
   constructor(private readonly options: ServeOptions) {
     this.executor = new Executor(options.executor);
@@ -183,7 +230,8 @@ class RemoteServer {
     const started = performance.now();
     const requestId = `req_${randomBytes(8).toString('hex')}`;
     // `URL.parse` instead of `new URL`: llhttp accepts targets the WHATWG parser rejects (e.g. `//[`); they get a 404.
-    const pathname = URL.parse(req.url ?? '/', 'http://localhost')?.pathname ?? '';
+    const url = URL.parse(req.url ?? '/', 'http://localhost');
+    const pathname = url?.pathname ?? '';
     const forwarded = req.headers['x-forwarded-for'];
     const entry: AuditEntry = {
       ts: new Date().toISOString(),
@@ -191,21 +239,24 @@ class RemoteServer {
       agent: null,
       src: forwarded === undefined ? null : clip(Array.isArray(forwarded) ? forwarded.join(', ') : forwarded, AUDIT_TEXT_MAX),
       method: req.method ?? '',
-      path: clip(pathname, AUDIT_TEXT_MAX),
+      // A file URL's token is a credential until used: it never reaches the log.
+      path: FILE_PATH.test(pathname) ? '/v1/files/{token}' : clip(pathname, AUDIT_TEXT_MAX),
       command: null,
       args: [],
       status: 500,
       duration_ms: 0,
     };
     try {
-      const body = await this.route(req, pathname, entry);
+      const body = await this.route(req, res, url, entry);
       entry.status = 200;
-      json(res, 200, { ok: true, request_id: requestId, ...body });
+      // undefined: the route streamed its own response.
+      if (body) json(res, 200, { ok: true, request_id: requestId, ...body });
     } catch (err) {
       const apiError = err instanceof ApiError ? err : new ApiError(500, 'command_failed', err instanceof Error ? err.message : String(err));
       entry.status = apiError.status;
       entry.error = apiError.code;
-      json(res, apiError.status, { ok: false, request_id: requestId, error: { code: apiError.code, message: apiError.message } });
+      if (res.headersSent) res.destroy();
+      else json(res, apiError.status, { ok: false, request_id: requestId, error: { code: apiError.code, message: apiError.message } });
     } finally {
       entry.duration_ms = Math.round(performance.now() - started);
       this.audit.write(entry);
@@ -223,7 +274,13 @@ class RemoteServer {
     }
   }
 
-  private async route(req: http.IncomingMessage, pathname: string, entry: AuditEntry): Promise<Record<string, unknown>> {
+  private async route(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    url: URL | null,
+    entry: AuditEntry,
+  ): Promise<Record<string, unknown> | undefined> {
+    const pathname = url?.pathname ?? '';
     if (req.method === 'GET' && pathname === '/v1/health') return {};
     if (req.method === 'GET' && pathname === '/v1/capabilities') {
       const caller = this.caller(req, entry);
@@ -238,13 +295,85 @@ class RemoteServer {
     }
     if (req.method === 'POST' && pathname === '/v1/execute') {
       const caller = this.caller(req, entry);
-      const { request, files } = await parseBody(req, this.options.maxFileBytes);
-      return this.execute(caller, request, files, entry);
+      return this.execute(caller, await parseBody(req), entry);
     }
-    throw new ApiError(404, 'not_found', `No route for ${req.method} ${pathname}`);
+    if (req.method === 'PUT' && url && pathname === '/v1/uploads') return this.upload(req, res, url, entry);
+    const file = req.method === 'GET' ? FILE_PATH.exec(pathname) : null;
+    if (file) {
+      await this.sendFile(req, res, file[1], entry);
+      return undefined;
+    }
+    throw new ApiError(404, 'not_found', `No route for ${req.method} ${entry.path}`);
   }
 
-  private async execute(caller: Caller, request: ExecuteRequest, files: Map<string, File>, entry: AuditEntry): Promise<Record<string, unknown>> {
+  /**
+   * `PUT /v1/uploads?name=<file name>`: the raw body streamed to a temp file, refused with 413 as soon as it passes
+   * `maxFileBytes`. Replies with a single-use token for `{"$upload": "<token>"}`.
+   */
+  private async upload(req: http.IncomingMessage, res: http.ServerResponse, url: URL, entry: AuditEntry): Promise<Record<string, unknown>> {
+    // Any usable grant: parseAppCapabilities refuses grants without a capability.
+    this.caller(req, entry);
+    const max = this.options.maxFileBytes;
+    const tooLarge = () => {
+      // Close instead of reading the rest of an oversized body.
+      res.setHeader('connection', 'close');
+      return new ApiError(413, 'invalid_args', `Upload exceeds the ${megabytes(max)} file limit`);
+    };
+    if (Number(req.headers['content-length']) > max) throw tooLarge();
+
+    const name = safeName(url.searchParams.get('name') ?? '', 'upload');
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'ms365-serve-up-'));
+    const target = path.join(dir, name);
+    let size = 0;
+    try {
+      const fh = await fsp.open(target, 'wx', 0o600);
+      try {
+        // destroyOnReturn: false keeps the connection usable for the 413 when the loop stops early.
+        for await (const chunk of req.iterator({ destroyOnReturn: false }) as AsyncIterable<Buffer>) {
+          size += chunk.byteLength;
+          if (size > max) throw tooLarge();
+          await fh.write(chunk);
+        }
+      } finally {
+        await fh.close();
+      }
+    } catch (err) {
+      await removeDir(dir);
+      throw err;
+    }
+    return { token: this.uploads.add({ dir, path: target, name, size }), name, size };
+  }
+
+  /**
+   * `GET /v1/files/{token}`: stream an output file once, to a caller holding the producing command's capabilities.
+   * The file is deleted as soon as it is opened.
+   */
+  private async sendFile(req: http.IncomingMessage, res: http.ServerResponse, token: string, entry: AuditEntry): Promise<void> {
+    const caller = this.caller(req, entry);
+    const file = this.downloads.get(token);
+    if (!file) throw new ApiError(404, 'not_found', 'Unknown or already used file URL');
+    entry.command = file.command;
+    const missing = file.caps.filter(c => !caller.allow.has(c));
+    if (missing.length > 0) throw new ApiError(403, 'capability_missing', `Missing capability: ${missing.join(', ')}`);
+    this.downloads.take(token);
+
+    let removed = false;
+    try {
+      const fh = await fsp.open(file.path, 'r');
+      try {
+        // The open handle keeps the bytes readable; where an open file cannot be removed, it goes after sending.
+        removed = await removeDir(file.dir).then(() => true, () => false);
+        res.writeHead(200, { 'content-type': file.contentType, 'content-length': file.size });
+        await sendChunks(fh, res);
+      } finally {
+        await fh.close();
+      }
+    } finally {
+      if (!removed) await removeDir(file.dir);
+    }
+  }
+
+  private async execute(caller: Caller, request: ExecuteRequest, entry: AuditEntry): Promise<Record<string, unknown>> {
     const node = findCommand(this.options.tree, request.command);
     // Caller-chosen text is bounded in the audit log: an unknown command and arbitrary keys are clipped.
     entry.command = node?.path ?? clip(request.command, AUDIT_TEXT_MAX);
@@ -259,13 +388,14 @@ class RemoteServer {
     const { dryRun, ...args } = request.args;
     if (dryRun !== undefined && typeof dryRun !== 'boolean') throw new ApiError(400, 'invalid_args', 'dryRun must be a boolean');
 
-    const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'ms365-serve-'));
+    const input = this.takeInput(policy, node, request.positionals);
+    let tmp: string | undefined;
     try {
+      tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'ms365-serve-'));
       const outDir = path.join(tmp, 'out');
       await fsp.mkdir(outDir, { mode: 0o700 });
-      const positionals = await this.substituteInputs(policy, node, request.positionals, files, tmp);
       if (policy.output) {
-        // Output paths are the server's: the caller only names the file; bytes come back in `files`.
+        // Output paths are the server's: the caller only names the file; bytes come back through `files`.
         const requested = typeof args.out === 'string' ? safeName(args.out, 'download') : undefined;
         delete args.out;
         delete args.force;
@@ -276,7 +406,7 @@ class RemoteServer {
 
       let argv: string[];
       try {
-        argv = buildArgv(node, { positionals, args });
+        argv = buildArgv(node, { positionals: input.positionals, args });
       } catch (err) {
         if (err instanceof InvalidInvocationError) throw new ApiError(400, 'invalid_args', err.message);
         throw err;
@@ -286,46 +416,62 @@ class RemoteServer {
       if (result.status === 'failed') throw new ApiError(502, 'command_failed', result.message);
 
       const body: Record<string, unknown> = { data: parseStdout(result.stdout) };
-      if (policy.output) body.files = await collectOutputs(outDir, this.options.maxFileBytes);
+      if (policy.output) body.files = await this.publishOutputs(outDir, node.path, policy.caps);
       if (result.stderr.trim() !== '') body.stderr = result.stderr;
       return body;
     } finally {
-      await fsp.rm(tmp, { recursive: true, force: true });
+      if (tmp) await removeDir(tmp);
+      if (input.upload) await removeDir(input.upload.dir);
     }
   }
 
-  /** Write the uploaded file for the command's input positional and put its path in its place. */
-  private async substituteInputs(
-    policy: RemoteCommand,
-    node: CommandNode,
-    positionals: unknown[],
-    files: Map<string, File>,
-    tmp: string,
-  ): Promise<unknown[]> {
+  /** Consume the upload referenced by the command's input positional and put its path in its place. */
+  private takeInput(policy: RemoteCommand, node: CommandNode, positionals: unknown[]): { positionals: unknown[]; upload?: StoredFile } {
     const result = [...positionals];
-    if (policy.input === undefined || policy.input >= result.length) return result;
+    if (policy.input === undefined || policy.input >= result.length) return { positionals: result };
     const ref = result[policy.input];
     const argName = node.arguments[policy.input]?.name ?? 'file';
-    const part = typeof ref === 'object' && ref !== null && '$file' in ref ? ref.$file : undefined;
-    if (typeof part !== 'string') {
-      throw new ApiError(400, 'invalid_args', `positional <${argName}> must reference an uploaded file: {"$file": "<part>"}`);
+    const token = typeof ref === 'object' && ref !== null && '$upload' in ref ? ref.$upload : undefined;
+    if (typeof token !== 'string') {
+      throw new ApiError(400, 'invalid_args', `positional <${argName}> must reference an upload from PUT /v1/uploads: {"$upload": "<token>"}`);
     }
-    const file = files.get(part);
-    if (!file) throw new ApiError(400, 'invalid_args', `No file part named "${part}"`);
-    const dir = path.join(tmp, 'in');
-    await fsp.mkdir(dir, { mode: 0o700 });
-    const target = path.join(dir, safeName(file.name, 'upload'));
-    await fsp.writeFile(target, file.stream(), { mode: 0o600 });
-    result[policy.input] = target;
-    return result;
+    const upload = this.uploads.take(token);
+    if (!upload) throw new ApiError(400, 'invalid_args', 'Unknown or already used upload token');
+    result[policy.input] = upload.path;
+    return { positionals: result, upload };
+  }
+
+  /**
+   * Move the child's output files out of the request dir and behind one-time URLs. Sizes are checked first; the
+   * executor already stops a child that writes more.
+   */
+  private async publishOutputs(dir: string, command: string, caps: readonly Capability[]): Promise<OutputFile[]> {
+    const max = this.options.maxFileBytes;
+    const entries = (await fsp.readdir(dir, { withFileTypes: true })).filter(e => e.isFile());
+    let total = 0;
+    for (const entry of entries) total += (await fsp.stat(path.join(dir, entry.name))).size;
+    if (total > max) throw new ApiError(502, 'command_failed', `Output file exceeds the ${megabytes(max)} remote limit`);
+    const files: OutputFile[] = [];
+    for (const entry of entries) {
+      const own = await fsp.mkdtemp(path.join(os.tmpdir(), 'ms365-serve-dl-'));
+      const target = path.join(own, entry.name);
+      await fsp.rename(path.join(dir, entry.name), target);
+      const { size } = await fsp.stat(target);
+      const contentType = detectMimeType(entry.name);
+      const token = this.downloads.add({ dir: own, path: target, name: entry.name, size, contentType, caps, command });
+      files.push({ name: entry.name, contentType, size, url: `/v1/files/${token}` });
+    }
+    return files;
   }
 
   idle(): Promise<void> {
     return this.executor.idle();
   }
 
-  close(): void {
+  /** Close the audit log and remove every upload and output file nobody fetched. */
+  async close(): Promise<void> {
     this.audit.close();
+    await Promise.all([this.uploads.clear(), this.downloads.clear()]);
   }
 }
 
@@ -404,7 +550,7 @@ export async function serve(options: ServeOptions): Promise<void> {
     }
     await listening.promise;
   } catch (err) {
-    app.close();
+    await app.close();
     throw err;
   }
 
@@ -438,6 +584,6 @@ export async function serve(options: ServeOptions): Promise<void> {
   await app.idle();
   await closed.promise;
   if (socket) fs.rmSync(socket, { force: true });
-  app.close();
+  await app.close();
   lifecycle('ms365 serve stopped');
 }

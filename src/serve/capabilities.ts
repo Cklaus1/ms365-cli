@@ -5,9 +5,10 @@
  * missing from the table, so every new command needs a conscious decision.
  *
  * The same table records local file arguments, which the server and `ms365-remote` translate:
- * - `input`: index of the positional naming a local file to read (uploaded as a multipart part).
- * - `output`: the command writes a local file via `--out` (and `--force`). `stdout` commands print the bytes
- *   when `--out` is omitted; `named` commands then write a file named by the CLI into the current directory.
+ * - `input`: index of the positional naming a local file to read (sent with `PUT /v1/uploads`, referenced by token).
+ * - `output`: the command writes a local file via `--out` (and `--force`), returned as a one-time file URL. `stdout`
+ *   commands print the bytes when `--out` is omitted; `named` commands then write a file named by the CLI into the
+ *   current directory.
  */
 
 export const CAPABILITIES = [
