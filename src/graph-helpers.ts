@@ -155,19 +155,35 @@ export interface DateTimeTimeZone {
   timeZone: string;
 }
 
+/** `YYYY-MM-DD`, optionally `THH:MM[:SS[.fff]]` (or a space instead of `T`), then optionally `Z`/`±HH[:]MM`. */
+const EVENT_TIME = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?(Z|[+-]\d{2}:?\d{2})?)?$/i;
+
 /**
- * A Graph `dateTimeTimeZone` for a user-supplied event time. An explicit `timeZone` is sent as given.
- * Otherwise a wall-clock time (no `Z`/offset) is local: sent with the local zone when Graph documents
- * it, else converted to the UTC instant. A time with `Z` or an offset is always sent as UTC.
+ * A Graph `dateTimeTimeZone` for a user-supplied event time. Only ISO 8601 forms are accepted (a
+ * date-only value means local midnight); anything else, or a day/time that does not exist, throws
+ * before any request. An explicit `timeZone` is sent as given. Otherwise a wall-clock time (no
+ * `Z`/offset) is local: sent with the local zone when Graph documents it, else converted to the UTC
+ * instant. A time with `Z` or an offset is always sent as UTC.
  */
 export function eventTime(dateTime: string, timeZone?: string): DateTimeTimeZone {
-  if (timeZone) return { dateTime, timeZone };
-  const absolute = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(dateTime);
-  const zone = absolute ? undefined : graphTimeZone();
-  if (zone) return { dateTime, timeZone: zone };
-  const instant = new Date(dateTime);
-  if (Number.isNaN(instant.getTime())) throw new Error(`Invalid date/time: "${dateTime}". Use ISO 8601, e.g. 2026-10-07T09:00.`);
-  return { dateTime: instant.toISOString().slice(0, 19), timeZone: 'UTC' };
+  const m = EVENT_TIME.exec(dateTime);
+  const [year, month, day, hour = 0, minute = 0, second = 0] = (m ?? []).slice(1, 7).map(v => (v === undefined ? undefined : Number(v)));
+  if (!m || !isCalendarDate(`${m[1]}-${m[2]}-${m[3]}`) || hour! > 23 || minute! > 59 || second! > 59) {
+    throw new Error(`Invalid date/time: "${dateTime}". Use ISO 8601, e.g. 2026-10-07T09:00.`);
+  }
+  const date = `${m[1]}-${m[2]}-${m[3]}`;
+  const millis = m[7] ? Number(m[7].slice(0, 3).padEnd(3, '0')) : 0;
+  const offset = m[8];
+  const wallClock = m[4] === undefined ? `${date}T00:00:00` : dateTime.replace(' ', 'T');
+  if (timeZone) return { dateTime: wallClock, timeZone };
+  if (offset) {
+    const iso = `${date}T${m[4]}:${m[5]}:${m[6] ?? '00'}.${String(millis).padStart(3, '0')}${offset.length === 5 ? `${offset.slice(0, 3)}:${offset.slice(3)}` : offset}`;
+    return { dateTime: new Date(iso).toISOString().slice(0, 19), timeZone: 'UTC' };
+  }
+  const zone = graphTimeZone();
+  if (zone) return { dateTime: wallClock, timeZone: zone };
+  const local = new Date(year!, month! - 1, day!, hour, minute, second, millis);
+  return { dateTime: local.toISOString().slice(0, 19), timeZone: 'UTC' };
 }
 
 /**

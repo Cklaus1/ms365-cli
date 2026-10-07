@@ -452,7 +452,7 @@ ms365 cal update-calendar <calendarId> --name "Renamed"
 ```
 
 - Event reads return times in your local time zone; day and week boundaries are local. If the runtime cannot name the zone (a POSIX `TZ` such as `JST-9`, or an empty `TZ=`), UTC is used.
-- Every `--timezone` (`create`, `update`, `free-busy`, `decline`) defaults to the local time zone. A wall-clock `--start`/`--end` is sent with the local IANA zone when Graph documents it; otherwise (e.g. `Europe/Amsterdam`, or a POSIX `TZ` such as `JST-9`) it is converted to the UTC instant and sent as UTC. An explicit `--timezone` is sent as given. A time with `Z` or an offset is sent as UTC.
+- Every `--timezone` (`create`, `update`, `free-busy`, `decline`) defaults to the local time zone. `--start`/`--end` take ISO 8601 (`2026-10-07`, `2026-10-07T09:00`, optionally with `Z` or an offset); a date alone means local midnight, and other text or a day/time that does not exist (`2026-02-30`, `25:00`) exits 1 before any request. A wall-clock `--start`/`--end` is sent with the local IANA zone when Graph documents it; otherwise (e.g. `Europe/Amsterdam`, or a POSIX `TZ` such as `JST-9`) it is converted to the UTC instant and sent as UTC. An explicit `--timezone` is sent as given. A time with `Z` or an offset is sent as UTC.
 - `decline --propose-start`/`--propose-end` must be given together and cannot be combined with `--no-notify`.
 - `free-busy --interval` is an integer from 5 to 1440 minutes (default 30).
 - `create-calendar`/`update-calendar --color` take `auto`, `lightBlue`, `lightGreen`, `lightOrange`, `lightGray`, `lightYellow`, `lightTeal`, `lightPink`, `lightBrown`, `lightRed` or `maxColor`.

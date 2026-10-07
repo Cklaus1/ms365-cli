@@ -251,6 +251,28 @@ describe('calendar time zones (CAL-4)', () => {
     expect(fb.endTime).toEqual({ dateTime: '2026-10-07T08:00:00', timeZone: 'UTC' });
   });
 
+  it.each([
+    ['America/New_York', { dateTime: '2026-10-07T00:00:00', timeZone: 'America/New_York' }],
+    ['Europe/Amsterdam', { dateTime: '2026-10-06T22:00:00', timeZone: 'UTC' }],
+    ['JST-9', { dateTime: '2026-10-06T15:00:00', timeZone: 'UTC' }],
+  ])('a date-only --start is local midnight with TZ=%s', async (tz, start) => {
+    const body = await sent(['calendar', 'create', '--subject', 's', '--start', '2026-10-07', '--end', '2026-10-08', '-o', 'json'], tz, createRoute);
+    expect(body.start).toEqual(start);
+  });
+
+  it.each([
+    ['America/New_York', 'Oct 7 9:00'],
+    ['Europe/Amsterdam', 'Oct 7 9:00'],
+    ['Europe/Amsterdam', '9'],
+    ['Europe/Amsterdam', '2026-02-30T09:00'],
+    ['America/New_York', '2026-10-07T25:00'],
+  ])('TZ=%s rejects --start %j before any request', async (tz, start) => {
+    const r = await runCli(['calendar', 'create', '--subject', 's', '--start', start, '--end', '2026-10-07T10:00', '-o', 'json'], { env: { ...ENV, TZ: tz }, routes: [createRoute] });
+    expect(r.code).toBe(1);
+    expect(r.requests).toHaveLength(0);
+    expect(r.stderr).toContain('Invalid date/time');
+  });
+
   it('help shows no machine-specific default zone', async () => {
     for (const cmd of ['create', 'update', 'free-busy', 'decline']) {
       const tokyo = await runCli(['calendar', cmd, '--help'], { env: { ...ENV, TZ: 'Asia/Tokyo' } });

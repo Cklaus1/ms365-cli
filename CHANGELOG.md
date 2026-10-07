@@ -23,7 +23,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - `search query --entity` rejects types that Graph cannot combine (e.g. `driveItem,message`). [SEARCH-1]
 - `planner --due` dates mean that day in the local time zone (were midnight UTC). [PLANNER-2]
 - **`drive download` takes `<driveId> <itemId>`** and fetches `/drives/{driveId}/items/{itemId}/content`; the old 3-argument form exits 1 (`too many arguments`). [fu:DRIVE-3]
-- **Calendar `--timezone` defaults to the local time zone instead of UTC** (`cal create`, `free-busy`, `update`'s fallback, `decline --propose-*`). Wall-clock times in a zone Graph does not document (e.g. `Europe/Amsterdam`, or a POSIX `TZ` like `JST-9`) are converted to the UTC instant; `decline` no longer sends the bare zone name or a UTC-labelled wall-clock time. [fu:CAL-4]
+- **Calendar `--timezone` defaults to the local time zone instead of UTC** (`cal create`, `free-busy`, `update`'s fallback, `decline --propose-*`). Wall-clock times in a zone Graph does not document (e.g. `Europe/Amsterdam`, or a POSIX `TZ` like `JST-9`) are converted to the UTC instant; `decline` no longer sends the bare zone name or a UTC-labelled wall-clock time. Event times must be ISO 8601: a date alone is local midnight, and non-ISO text (`Oct 7 9:00`) or impossible days/times (`2026-02-30`, `25:00`) exit 1 before any request. [fu:CAL-4]
 
 ### Fixed
 
