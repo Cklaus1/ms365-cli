@@ -1,14 +1,35 @@
-import { Command, InvalidArgumentError } from 'commander';
+import { Command, InvalidArgumentError, Option } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { odataQuote } from '../graph-helpers.js';
 import { outputOption } from '../utils.js';
+import { listRequest } from '../list.js';
 import { handleErrors } from '../errors.js';
 
 interface OutputOpts { output: string }
 interface ChartOpts extends OutputOpts { type: string; source: string; seriesBy: string }
 interface FormatOpts extends OutputOpts { fontBold?: boolean; fontColor?: string; fillColor?: string }
 interface SortOpts extends OutputOpts { fields: string; matchCase?: boolean }
+
+/**
+ * Office JS `Excel.ChartType` members of API set ExcelApi 1.1, except `Invalid`, as their string values
+ * (Graph's chartcollection-add lists only a few and ends with "etc.").
+ * Source: https://learn.microsoft.com/en-us/javascript/api/excel/excel.charttype?view=excel-js-1.1
+ */
+const CHART_TYPES = [
+  '3DArea', '3DAreaStacked', '3DAreaStacked100', '3DBarClustered', '3DBarStacked', '3DBarStacked100',
+  '3DColumn', '3DColumnClustered', '3DColumnStacked', '3DColumnStacked100', '3DLine', '3DPie', '3DPieExploded',
+  'Area', 'AreaStacked', 'AreaStacked100', 'BarClustered', 'BarOfPie', 'BarStacked', 'BarStacked100',
+  'Bubble', 'Bubble3DEffect', 'ColumnClustered', 'ColumnStacked', 'ColumnStacked100',
+  'ConeBarClustered', 'ConeBarStacked', 'ConeBarStacked100', 'ConeCol', 'ConeColClustered', 'ConeColStacked', 'ConeColStacked100',
+  'CylinderBarClustered', 'CylinderBarStacked', 'CylinderBarStacked100', 'CylinderCol', 'CylinderColClustered',
+  'CylinderColStacked', 'CylinderColStacked100', 'Doughnut', 'DoughnutExploded', 'Histogram',
+  'Line', 'LineMarkers', 'LineMarkersStacked', 'LineMarkersStacked100', 'LineStacked', 'LineStacked100',
+  'Pie', 'PieExploded', 'PieOfPie', 'PyramidBarClustered', 'PyramidBarStacked', 'PyramidBarStacked100',
+  'PyramidCol', 'PyramidColClustered', 'PyramidColStacked', 'PyramidColStacked100', 'Radar', 'RadarFilled', 'RadarMarkers',
+  'StockHLC', 'StockOHLC', 'StockVHLC', 'StockVOHLC', 'Surface', 'SurfaceTopView', 'SurfaceTopViewWireframe', 'SurfaceWireframe',
+  'XYScatter', 'XYScatterLines', 'XYScatterLinesNoMarkers', 'XYScatterSmooth', 'XYScatterSmoothNoMarkers',
+];
 
 function parseBool(value: string): boolean {
   if (value === 'true') return true;
@@ -34,8 +55,7 @@ export function registerExcelCommands(program: Command, getClient: () => GraphCl
     .description('List worksheets in a workbook')
     .addOption(outputOption())
     .action(handleErrors(async (driveId: string, itemId: string, opts: OutputOpts) => {
-      const response = await getClient().request(`${wbPath(driveId, itemId)}/worksheets`);
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await listRequest(getClient(), `${wbPath(driveId, itemId)}/worksheets`, {}, { output: opts.output, all: true });
     }));
 
   excel
@@ -50,9 +70,9 @@ export function registerExcelCommands(program: Command, getClient: () => GraphCl
   excel
     .command('create-chart <driveId> <itemId> <worksheetId>')
     .description('Create a chart')
-    .requiredOption('--type <type>', 'Chart type (e.g. ColumnClustered, Pie, Line)')
+    .addOption(new Option('--type <type>', 'Chart type (Excel.ChartType, e.g. ColumnClustered, Pie, Line)').choices(CHART_TYPES).makeOptionMandatory())
     .requiredOption('--source <range>', 'Source data range (e.g. A1:D10)')
-    .requiredOption('--series-by <by>', 'Series grouped by: auto, columns, rows')
+    .addOption(new Option('--series-by <by>', 'Series grouped by').choices(['auto', 'columns', 'rows']).makeOptionMandatory())
     .addOption(outputOption())
     .action(handleErrors(async (driveId: string, itemId: string, worksheetId: string, opts: ChartOpts) => {
       const response = await getClient().request(`${wsPath(driveId, itemId, worksheetId)}/charts/add`, {

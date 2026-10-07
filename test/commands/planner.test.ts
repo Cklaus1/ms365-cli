@@ -111,3 +111,27 @@ describe('PLANNER-2', () => {
     expect(r.requests).toHaveLength(0);
   });
 });
+
+describe('PAGE-2 planner collections drain every page', () => {
+  const cases: Array<[string[], string]> = [
+    [['plans'], '/me/planner/plans'],
+    [['my-tasks'], '/me/planner/tasks'],
+    [['tasks', 'P1'], '/planner/plans/P1/tasks'],
+    [['buckets', 'P1'], '/planner/plans/P1/buckets'],
+    [['bucket-tasks', 'B1'], '/planner/buckets/B1/tasks'],
+  ];
+  for (const [args, endpoint] of cases) {
+    it(`${args[0]} prints one combined JSON array from two pages`, async () => {
+      const r = await runCli(['planner', ...args, '-o', 'json'], {
+        env: ENV,
+        routes: [
+          { match: 'skiptoken=2', body: { value: [{ id: 'b' }] } },
+          { match: endpoint, body: { value: [{ id: 'a' }], '@odata.nextLink': `https://graph.microsoft.com/v1.0${endpoint}?$skiptoken=2` } },
+        ],
+      });
+      expect(r.code).toBe(0);
+      expect(JSON.parse(r.stdout)).toEqual([{ id: 'a' }, { id: 'b' }]);
+      expect(r.requests).toHaveLength(2);
+    });
+  }
+});

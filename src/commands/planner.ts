@@ -2,7 +2,8 @@ import { Command, Option } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
-import { outputOption, confirm, info } from '../utils.js';
+import { outputOption, confirm, done } from '../utils.js';
+import { listRequest } from '../list.js';
 import { calendarDate, stringField } from '../graph-helpers.js';
 
 interface OutputOpts { output: string }
@@ -39,11 +40,11 @@ async function patch(client: GraphClient, endpoint: string, body: Record<string,
   console.log(formatOutput(response.data, opts.output as OutputFormat));
 }
 
-async function remove(client: GraphClient, endpoint: string, prompt: string, opts: EtagOpts): Promise<void> {
+async function remove(client: GraphClient, endpoint: string, prompt: string, opts: EtagOpts, message: string): Promise<void> {
   client.assertAllowed('DELETE', endpoint);
   await confirm(prompt);
   const headers = { 'If-Match': await ifMatch(client, 'DELETE', endpoint, opts.etag) };
-  await client.request(endpoint, { method: 'DELETE', headers });
+  done(await client.request(endpoint, { method: 'DELETE', headers }), message);
 }
 
 /** A due date (YYYY-MM-DD) as the start of that day in the local time zone, so Planner shows that day. */
@@ -68,13 +69,22 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
         console.log(formatOutput(response.data, opts.output as OutputFormat));
       }));
 
+  /** A collection command that follows every @odata.nextLink (PAGE-2: no $top or paging documented). */
+  const list = (name: string, description: string, endpoint: (id: string) => string) =>
+    planner
+      .command(name)
+      .description(description)
+      .addOption(outputOption())
+      .action(handleErrors(async (id: string, opts: OutputOpts) => {
+        await listRequest(getClient(), endpoint(id), {}, { output: opts.output, all: true });
+      }));
+
   planner
     .command('plans')
     .description('List my planner plans')
     .addOption(outputOption())
     .action(handleErrors(async (opts: OutputOpts) => {
-      const response = await getClient().request('/me/planner/plans');
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await listRequest(getClient(), '/me/planner/plans', {}, { output: opts.output, all: true });
     }));
 
   get('plan <planId>', 'Get plan details', planPath);
@@ -85,16 +95,15 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
     .description('List my planner tasks')
     .addOption(outputOption())
     .action(handleErrors(async (opts: OutputOpts) => {
-      const response = await getClient().request('/me/planner/tasks');
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await listRequest(getClient(), '/me/planner/tasks', {}, { output: opts.output, all: true });
     }));
 
-  get('tasks <planId>', 'List tasks in a plan', (id) => `${planPath(id)}/tasks`);
+  list('tasks <planId>', 'List tasks in a plan', (id) => `${planPath(id)}/tasks`);
   get('task <taskId>', 'Get task details', taskPath);
   get('task-details <taskId>', 'Get task extended details (description, checklist, etc.)', (id) => `${taskPath(id)}/details`);
-  get('buckets <planId>', 'List plan buckets', (id) => `${planPath(id)}/buckets`);
+  list('buckets <planId>', 'List plan buckets', (id) => `${planPath(id)}/buckets`);
   get('bucket <bucketId>', 'Get bucket details', bucketPath);
-  get('bucket-tasks <bucketId>', 'List tasks in a bucket', (id) => `${bucketPath(id)}/tasks`);
+  list('bucket-tasks <bucketId>', 'List tasks in a bucket', (id) => `${bucketPath(id)}/tasks`);
 
   planner
     .command('create-task')
@@ -181,8 +190,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
     .description('Delete a planner task')
     .option('--etag <etag>', 'ETag for concurrency (auto-fetched if omitted)')
     .action(handleErrors(async (taskId: string, opts: EtagOpts) => {
-      await remove(getClient(), taskPath(taskId), `Delete planner task ${taskId.substring(0, 16)}...?`, opts);
-      info('Task deleted.');
+      await remove(getClient(), taskPath(taskId), `Delete planner task ${taskId.substring(0, 16)}...?`, opts, 'Task deleted.');
     }));
 
   planner
@@ -190,8 +198,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
     .description('Delete a planner plan')
     .option('--etag <etag>', 'ETag for concurrency (auto-fetched if omitted)')
     .action(handleErrors(async (planId: string, opts: EtagOpts) => {
-      await remove(getClient(), planPath(planId), `Delete planner plan ${planId.substring(0, 16)}...?`, opts);
-      info('Plan deleted.');
+      await remove(getClient(), planPath(planId), `Delete planner plan ${planId.substring(0, 16)}...?`, opts, 'Plan deleted.');
     }));
 
   planner
@@ -199,8 +206,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
     .description('Delete a planner bucket')
     .option('--etag <etag>', 'ETag for concurrency (auto-fetched if omitted)')
     .action(handleErrors(async (bucketId: string, opts: EtagOpts) => {
-      await remove(getClient(), bucketPath(bucketId), `Delete planner bucket ${bucketId.substring(0, 16)}...?`, opts);
-      info('Bucket deleted.');
+      await remove(getClient(), bucketPath(bucketId), `Delete planner bucket ${bucketId.substring(0, 16)}...?`, opts, 'Bucket deleted.');
     }));
 
   planner
