@@ -6,8 +6,12 @@ import { outputOption, done, info } from '../utils.js';
 import { saveOrStream } from '../files.js';
 import { listRequest, paginationOptions, type ListOptions } from '../list.js';
 import { isCalendarDate } from '../graph-helpers.js';
+import { detectMimeType } from '../mime.js';
 import fs from 'fs';
 import path from 'path';
+
+/** Photo formats Graph documents for `PUT /me/photo/$value`. */
+const PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/gif'];
 
 /** The availability/activity pairs `setUserPreferredPresence` supports (availability -> activity). */
 const PREFERRED_PRESENCE: Record<string, string> = {
@@ -216,13 +220,13 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
     .description('Upload/update profile photo (JPEG, PNG, GIF — max 4MB)')
     .action(handleErrors(async (filePath: string) => {
       const resolvedPath = path.resolve(filePath);
+      const contentType = detectMimeType(resolvedPath);
+      if (!PHOTO_TYPES.includes(contentType)) {
+        throw new Error(`Unsupported photo type ${path.extname(resolvedPath) || '(no extension)'}: use a JPEG, PNG or GIF file.`);
+      }
       if (!fs.existsSync(resolvedPath)) {
         throw new Error(`File not found: ${resolvedPath}`);
       }
-
-      const ext = path.extname(resolvedPath).toLowerCase();
-      const mimeMap: Record<string, string> = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif' };
-      const contentType = mimeMap[ext] || 'image/jpeg';
 
       const stat = fs.statSync(resolvedPath);
       if (stat.size > 4 * 1024 * 1024) {
