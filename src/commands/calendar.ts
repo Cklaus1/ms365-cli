@@ -6,6 +6,9 @@ import { handleErrors } from '../errors.js';
 import { integer, paginationOptions, listRequest, type ListOptions } from '../list.js';
 import { eventTime, preferTimezone } from '../graph-helpers.js';
 
+/** Graph `calendarColor` values (https://learn.microsoft.com/en-us/graph/api/resources/calendar). */
+const CALENDAR_COLORS = ['auto', 'lightBlue', 'lightGreen', 'lightOrange', 'lightGray', 'lightYellow', 'lightTeal', 'lightPink', 'lightBrown', 'lightRed', 'maxColor'];
+
 /**
  * `--timezone` for event times. No Commander default: the local zone is resolved in the action
  * (`eventTime`), so the command tree and generated skills stay machine-independent.
@@ -333,7 +336,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     .command('create-calendar')
     .description('Create a secondary calendar')
     .requiredOption('--name <name>', 'Calendar display name')
-    .option('--color <color>', 'Color: auto, lightBlue, lightGreen, lightOrange, lightGray, lightYellow, lightTeal, lightPink, lightBrown, lightRed, maxColor')
+    .addOption(new Option('--color <color>', 'Color').choices(CALENDAR_COLORS))
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();
@@ -351,7 +354,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     .command('update-calendar <calendarId>')
     .description('Update a calendar')
     .option('--name <name>', 'Display name')
-    .option('--color <color>', 'Color')
+    .addOption(new Option('--color <color>', 'Color').choices(CALENDAR_COLORS))
     .addOption(outputOption())
     .action(handleErrors(async (calendarId: string, opts) => {
       const patch: Record<string, unknown> = {};

@@ -273,3 +273,21 @@ describe('calendar time zones (CAL-4)', () => {
     expect(tokyo).not.toContain('Asia/Tokyo');
   });
 });
+
+describe('calendar colors (CHOICE-1)', () => {
+  it.each([
+    ['create-calendar', '--name', 'n'],
+    ['update-calendar', 'C1'],
+  ])('%s rejects an unknown --color before any request', async (...args) => {
+    const r = await runCli(['calendar', ...args, '--color', 'purple'], { env: ENV, routes: [] });
+    expect(r.code).toBe(1);
+    expect(r.requests).toHaveLength(0);
+    expect(r.stderr).toContain('Allowed choices are auto, lightBlue, lightGreen, lightOrange, lightGray, lightYellow, lightTeal, lightPink, lightBrown, lightRed, maxColor');
+  });
+
+  it('update-calendar sends a listed --color', async () => {
+    const r = await runCli(['calendar', 'update-calendar', 'C1', '--color', 'lightTeal', '-o', 'json'], { env: ENV, routes: [{ match: '/me/calendars/C1$', method: 'PATCH', body: { id: 'C1' } }] });
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.requests[0].body!)).toEqual({ color: 'lightTeal' });
+  });
+});
