@@ -233,6 +233,22 @@ describe('workflow email-to-task (MISC-1, WF-3)', () => {
     expect(r.requests).toHaveLength(0);
     expect(r.stderr).toContain('Invalid date: "2026-02-30". Use YYYY-MM-DD format.');
   });
+
+  it('--dry-run without --list previews the POST to <default-list> with a <subject> title (DRY-2)', async () => {
+    const r = await runCli(['--dry-run', 'workflow', 'email-to-task', 'M1', '-o', 'json'], { env: ENV, routes: [] });
+    expect(r.code).toBe(0);
+    expect(r.requests).toHaveLength(0);
+    expect(r.stderr).toContain('[dry-run] POST https://graph.microsoft.com/v1.0/me/todo/lists/%3Cdefault-list%3E/tasks');
+    expect(r.stderr).toContain('"title":"[Email] <subject>"');
+    expect(JSON.parse(r.stdout)).toMatchObject({ dryRun: true, method: 'POST' });
+  });
+
+  it('--dry-run with --list keeps the list and still uses the <subject> placeholder (DRY-2)', async () => {
+    const r = await runCli(['--dry-run', 'workflow', 'email-to-task', 'M1', '--list', 'L1', '-o', 'json'], { env: ENV, routes: [] });
+    expect(r.code).toBe(0);
+    expect(r.stderr).toContain('[dry-run] POST https://graph.microsoft.com/v1.0/me/todo/lists/L1/tasks');
+    expect(r.stderr).toContain('"title":"[Email] <subject>"');
+  });
 });
 
 describe('workflow focus-time (MISC-1)', () => {

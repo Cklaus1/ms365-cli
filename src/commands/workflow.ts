@@ -263,7 +263,9 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
       const msg = msgRes.data as Item;
       const from = (msg.from as Item | undefined)?.emailAddress as Item | undefined;
 
+      // Under --dry-run nothing is read: placeholders stand in for the default list and the subject.
       let listId = opts.list;
+      if (!listId && client.isDryRun) listId = '<default-list>';
       if (!listId) {
         const listsRes = await client.request('/me/todo/lists', {
           queryParams: { '$filter': "wellknownListName eq 'defaultList'" },
@@ -273,8 +275,9 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
         listId = list.id as string;
       }
 
+      const subject = client.isDryRun ? '<subject>' : msg.subject || '(no subject)';
       const task: Item = {
-        title: `[Email] ${msg.subject || '(no subject)'}`,
+        title: `[Email] ${subject}`,
         importance: opts.importance,
         body: {
           contentType: 'text',
