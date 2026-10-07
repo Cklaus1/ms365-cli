@@ -1,5 +1,6 @@
 import { Command, Option } from 'commander';
 import { GraphClient, type ConflictBehavior } from '../graph-client.js';
+import { graph } from '../command-tree.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
 import { detectMimeType } from '../mime.js';
@@ -55,16 +56,14 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
   const itemRoot = (driveId: string, itemId: string) =>
     `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}`;
 
-  paginationOptions(drive
-    .command('list')
+  paginationOptions(graph(drive.command('list'), ['GET /me/drives'])
     .description('List available drives'))
     .addOption(outputOption())
     .action(handleErrors(async (opts: ListOptions) => {
       await listRequest(getClient(), '/me/drives', {}, opts);
     }));
 
-  drive
-    .command('root <driveId>')
+  graph(drive.command('root <driveId>'), ['GET /drives/{drive-id}/root'])
     .description('Get root folder of a drive')
     .addOption(outputOption())
     .action(handleErrors(async (driveId: string, opts: OutputOpts) => {
@@ -72,8 +71,7 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  paginationOptions(drive
-    .command('files <driveId> <folderId>')
+  paginationOptions(graph(drive.command('files <driveId> <folderId>'), ['GET /drives/{drive-id}/items/{item-id}/children'])
     .description('List files in a folder')
     .option('--filter <filter>', 'OData filter')
     .option('--select <fields>', 'Fields to return'))
@@ -85,16 +83,17 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
       await listRequest(getClient(), `${itemRoot(driveId, folderId)}/children`, { queryParams }, opts);
     }));
 
-  saveOptions(drive
-    .command('download <driveId> <itemId>')
+  saveOptions(graph(drive.command('download <driveId> <itemId>'), ['GET /drives/{drive-id}/items/{item-id}/content'])
     .description('Download a file (to --out, or raw bytes to stdout)'), 'Output file path (default: stdout)')
     .allowExcessArguments(false)
     .action(handleErrors(async (driveId: string, itemId: string, opts: SaveOpts) => {
       await download(getClient(), `${itemRoot(driveId, itemId)}/content`, opts);
     }));
 
-  drive
-    .command('upload <driveId> <parentId> <filePath>')
+  graph(drive.command('upload <driveId> <parentId> <filePath>'), [
+    'PUT /drives/{drive-id}/items/{parent-id}:/{filename}:/content',
+    'POST /drives/{drive-id}/items/{parent-id}:/{filename}:/createUploadSession',
+  ])
     .description('Upload a file into a folder (auto-detects MIME type, streams large files)')
     .option('--content-type <mime>', 'Override MIME type')
     .addOption(conflictOption('rename'))
@@ -105,24 +104,24 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
       await upload(getClient(), itemPath, localPath, opts);
     }));
 
-  drive
-    .command('delete <driveId> <itemId>')
+  graph(drive.command('delete <driveId> <itemId>'), ['DELETE /drives/{drive-id}/items/{item-id}'])
     .description('Delete a drive item')
     .action(handleErrors(async (driveId: string, itemId: string) => {
       await confirm(`Delete drive item ${itemId.substring(0, 16)}...?`);
       done(await getClient().request(itemRoot(driveId, itemId), { method: 'DELETE' }), 'Item deleted.');
     }));
 
-  saveOptions(drive
-    .command('download-shared <shareId>')
+  saveOptions(graph(drive.command('download-shared <shareId>'), ['GET /shares/{share-id}/driveItem/content'])
     .description('Download a file via sharing link (to --out, or raw bytes to stdout)'), 'Output file path (default: stdout)')
     .action(handleErrors(async (shareId: string, opts: SaveOpts) => {
       await download(getClient(), `/shares/${encodeURIComponent(shareId)}/driveItem/content`, opts);
     }));
 
   // ── Search ───────────────────────────────────────────────────
-  paginationOptions(drive
-    .command('search <query>')
+  paginationOptions(graph(drive.command('search <query>'), [
+    "GET /me/drive/root/search(q='{query}')",
+    "GET /drives/{drive-id}/root/search(q='{query}')",
+  ])
     .description('Search files across OneDrive')
     .option('--drive <driveId>', 'Limit to specific drive'), 25)
     .addOption(outputOption())
@@ -134,8 +133,7 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
     }));
 
   // ── Create folder ───────────────────────────────────────────
-  drive
-    .command('mkdir <driveId> <parentId> <name>')
+  graph(drive.command('mkdir <driveId> <parentId> <name>'), ['POST /drives/{drive-id}/items/{item-id}/children'])
     .description('Create a folder')
     .addOption(outputOption())
     .action(handleErrors(async (driveId: string, parentId: string, name: string, opts: OutputOpts) => {
@@ -151,8 +149,7 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
     }));
 
   // ── Sharing links ───────────────────────────────────────────
-  drive
-    .command('share <driveId> <itemId>')
+  graph(drive.command('share <driveId> <itemId>'), ['POST /drives/{drive-id}/items/{item-id}/createLink'])
     .description('Create a sharing link for a file or folder')
     .addOption(new Option('--type <type>', 'Link type').choices(['view', 'edit', 'embed']).default('view'))
     .addOption(new Option('--scope <scope>', 'Link scope').choices(['anonymous', 'organization', 'users']).default('organization'))
@@ -182,8 +179,7 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
     }));
 
   // ── Permissions ─────────────────────────────────────────────
-  drive
-    .command('permissions <driveId> <itemId>')
+  graph(drive.command('permissions <driveId> <itemId>'), ['GET /drives/{drive-id}/items/{item-id}/permissions'])
     .description('List sharing permissions on a file or folder')
     .addOption(outputOption())
     .action(handleErrors(async (driveId: string, itemId: string, opts: OutputOpts) => {
@@ -191,8 +187,7 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
     }));
 
   // ── Quota / storage usage ───────────────────────────────────
-  drive
-    .command('quota')
+  graph(drive.command('quota'), ['GET /me/drive'])
     .description('Show OneDrive storage usage and quota')
     .addOption(outputOption('text'))
     .action(handleErrors(async (opts: OutputOpts) => {
@@ -220,8 +215,7 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
     }));
 
   // ── Get item info ───────────────────────────────────────────
-  drive
-    .command('info <driveId> <itemId>')
+  graph(drive.command('info <driveId> <itemId>'), ['GET /drives/{drive-id}/items/{item-id}'])
     .description('Get metadata for a file or folder')
     .addOption(outputOption())
     .action(handleErrors(async (driveId: string, itemId: string, opts: OutputOpts) => {
@@ -230,23 +224,23 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
     }));
 
   // ── Path-based shortcuts ──────────────────────────────────
-  paginationOptions(drive
-    .command('ls [path]')
+  paginationOptions(graph(drive.command('ls [path]'), ['GET /me/drive/root/children', 'GET /me/drive/root:/{path}:/children'])
     .description('List files by path (e.g. "/Documents", "/Documents/Reports")'))
     .addOption(outputOption())
     .action(handleErrors(async (userPath: string | undefined, opts: ListOptions) => {
       await listRequest(getClient(), drivePath('/me/drive/root', userPath ?? '', '/children'), {}, opts);
     }));
 
-  saveOptions(drive
-    .command('cat <path>')
+  saveOptions(graph(drive.command('cat <path>'), ['GET /me/drive/root:/{path}:/content'])
     .description('Download a file by path (e.g. "/Documents/notes.md"); raw bytes to stdout'), 'Save to file instead of stdout')
     .action(handleErrors(async (userPath: string, opts: SaveOpts) => {
       await download(getClient(), drivePath('/me/drive/root', userPath, '/content'), opts);
     }));
 
-  drive
-    .command('cp <localFile> <remotePath>')
+  graph(drive.command('cp <localFile> <remotePath>'), [
+    'PUT /me/drive/root:/{path}:/content',
+    'POST /me/drive/root:/{path}:/createUploadSession',
+  ])
     .description('Upload a file by path (e.g. ./report.pdf /Documents/report.pdf; a path ending in / is a folder)')
     .option('--content-type <mime>', 'Override MIME type')
     .addOption(conflictOption('replace'))

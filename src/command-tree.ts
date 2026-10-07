@@ -44,6 +44,20 @@ export interface GroupNode {
   description: string;
 }
 
+/** One Microsoft Graph request a command makes: method and path template (`/me/messages/{message-id}`). */
+export interface GraphRequest {
+  method: GraphMethod;
+  path: string;
+}
+
+export type GraphMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
+
+/** `METHOD /path` with `{name}` placeholders, e.g. `'GET /me/messages/{message-id}'`. */
+export type GraphRequestSpec = `${GraphMethod} /${string}`;
+
+/** The Graph requests a command makes, in order (alternatives included), or `none` when it calls no Graph API. */
+export type GraphAnnotation = GraphRequest[] | 'none';
+
 export interface CommandNode {
   /** Dotted path of canonical names, e.g. `calendar.view`. */
   path: string;
@@ -56,6 +70,8 @@ export interface CommandNode {
   options: OptionNode[];
   /** Ancestor group paths, outermost first (`[]` for a top-level leaf). */
   groups: string[];
+  /** Graph requests declared with `graph()`; absent when the command is not annotated. */
+  graph?: GraphAnnotation;
 }
 
 export interface CommandTree {
@@ -112,6 +128,22 @@ export function listChoicesOption(flags: string, description: string, choices: s
   return opt;
 }
 
+/** Graph requests declared per command with `graph()` (Commander has no metadata slot). */
+const GRAPH = new WeakMap<Command, GraphAnnotation>();
+
+/**
+ * Declare the Graph requests `cmd` makes, in order: every lookup, alternative (e.g. small upload vs upload
+ * session) and follow-up request, or `'none'` for commands that call no Graph API. `buildCommandTree` exposes
+ * the annotation as `CommandNode.graph`; `ms365 schema` builds its catalog from it. Returns `cmd` for chaining.
+ */
+export function graph<T extends Command>(cmd: T, requests: GraphRequestSpec[] | 'none'): T {
+  GRAPH.set(cmd, requests === 'none' ? 'none' : requests.map(spec => {
+    const space = spec.indexOf(' ');
+    return { method: spec.slice(0, space) as GraphMethod, path: spec.slice(space + 1) };
+  }));
+  return cmd;
+}
+
 function argumentNode(arg: Argument): ArgumentNode {
   const node: ArgumentNode = {
     name: arg.name(),
@@ -165,7 +197,7 @@ export function buildCommandTree(program: Command): CommandTree {
       for (const child of children) visit(child, names, [...groups, path]);
       return;
     }
-    tree.leaves.push({
+    const leaf: CommandNode = {
       path,
       names,
       aliases: [...cmd.aliases()],
@@ -173,7 +205,10 @@ export function buildCommandTree(program: Command): CommandTree {
       arguments: cmd.registeredArguments.map(argumentNode),
       options: cmd.options.map(optionNode),
       groups,
-    });
+    };
+    const annotation = GRAPH.get(cmd);
+    if (annotation) leaf.graph = annotation === 'none' ? 'none' : annotation.map(r => ({ ...r }));
+    tree.leaves.push(leaf);
   };
 
   for (const cmd of program.commands) {

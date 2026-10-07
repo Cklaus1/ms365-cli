@@ -4,6 +4,7 @@ import * as readline from 'node:readline';
 import { handleErrors } from '../errors.js';
 import { AuthManager, buildScopes, DEFAULT_CLIENT_ID, NotLoggedInError, SCOPE_GROUPS } from '../auth.js';
 import { info } from '../utils.js';
+import { graph } from '../command-tree.js';
 
 /**
  * Line prompts on stderr. One reader for the whole wizard: piped answers arrive in one chunk, and a
@@ -162,8 +163,7 @@ export function registerSetupCommand(program: Command, getAuth: () => AuthManage
   const auth = program.commands.find(c => c.name() === 'auth');
   if (!auth) return;
 
-  auth
-    .command('setup')
+  graph(auth.command('setup'), 'none')
     .description('Interactive setup wizard: built-in app or your own Azure AD app registration')
     .action(handleErrors(async () => {
       const prompter = new Prompter();

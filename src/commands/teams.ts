@@ -4,6 +4,7 @@ import { formatOutput, type OutputFormat } from '../formatter.js';
 import { outputOption, done } from '../utils.js';
 import { handleErrors } from '../errors.js';
 import { listRequest, paginationOptions, type ListOptions } from '../list.js';
+import { graph } from '../command-tree.js';
 
 function messageBody(opts: { body: string; html?: boolean }): { contentType: string; content: string } {
   return { contentType: opts.html ? 'html' : 'text', content: opts.body };
@@ -25,16 +26,14 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
   const teams = program.command('teams').description('Microsoft Teams (requires --org-mode)');
 
   // joinedTeams and channels take no $top; drain every nextLink into one result.
-  teams
-    .command('list')
+  graph(teams.command('list'), ['GET /me/joinedTeams'])
     .description('List joined teams')
     .addOption(outputOption())
     .action(handleErrors(async (opts: { output: string }) => {
       await listRequest(getClient(), '/me/joinedTeams', {}, { output: opts.output, all: true });
     }));
 
-  teams
-    .command('get <teamId>')
+  graph(teams.command('get <teamId>'), ['GET /teams/{team-id}'])
     .description('Get team details')
     .addOption(outputOption())
     .action(handleErrors(async (teamId: string, opts) => {
@@ -44,8 +43,7 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
     }));
 
   paginationOptions(
-    teams
-      .command('members <teamId>')
+    graph(teams.command('members <teamId>'), ['GET /teams/{team-id}/members'])
       .description('List team members'),
   )
     .addOption(outputOption())
@@ -53,16 +51,14 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       await listRequest(getClient(), `/teams/${encodeURIComponent(teamId)}/members`, {}, opts);
     }));
 
-  teams
-    .command('channels <teamId>')
+  graph(teams.command('channels <teamId>'), ['GET /teams/{team-id}/channels'])
     .description('List team channels')
     .addOption(outputOption())
     .action(handleErrors(async (teamId: string, opts: { output: string }) => {
       await listRequest(getClient(), `/teams/${encodeURIComponent(teamId)}/channels`, {}, { output: opts.output, all: true });
     }));
 
-  teams
-    .command('channel <teamId> <channelId>')
+  graph(teams.command('channel <teamId> <channelId>'), ['GET /teams/{team-id}/channels/{channel-id}'])
     .description('Get channel details')
     .addOption(outputOption())
     .action(handleErrors(async (teamId: string, channelId: string, opts) => {
@@ -74,8 +70,10 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
     }));
 
   paginationOptions(
-    teams
-      .command('channel-messages <teamId> <channelId>')
+    graph(
+      teams.command('channel-messages <teamId> <channelId>'),
+      ['GET /teams/{team-id}/channels/{channel-id}/messages'],
+    )
       .description('List channel messages'),
   )
     .addOption(outputOption())
@@ -84,8 +82,10 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       await listRequest(getClient(), endpoint, {}, opts);
     }));
 
-  teams
-    .command('send-channel-message <teamId> <channelId>')
+  graph(
+    teams.command('send-channel-message <teamId> <channelId>'),
+    ['POST /teams/{team-id}/channels/{channel-id}/messages'],
+  )
     .description('Send a message to a channel')
     .requiredOption('--body <body>', 'Message body')
     .option('--html', 'Body is HTML')
@@ -100,8 +100,10 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       );
     }));
 
-  teams
-    .command('reply-channel-message <teamId> <channelId> <messageId>')
+  graph(
+    teams.command('reply-channel-message <teamId> <channelId> <messageId>'),
+    ['POST /teams/{team-id}/channels/{channel-id}/messages/{message-id}/replies'],
+  )
     .description('Reply to a channel message (threaded)')
     .requiredOption('--body <body>', 'Reply body')
     .option('--html', 'Body is HTML')
@@ -120,8 +122,7 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
   const chat = program.command('chat').description('Teams chat (requires --org-mode)');
 
   paginationOptions(
-    chat
-      .command('list')
+    graph(chat.command('list'), ['GET /me/chats'])
       .description('List chats'),
   )
     .addOption(outputOption())
@@ -129,8 +130,7 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       await listRequest(getClient(), '/me/chats', {}, opts);
     }));
 
-  chat
-    .command('get <chatId>')
+  graph(chat.command('get <chatId>'), ['GET /chats/{chat-id}'])
     .description('Get chat details')
     .addOption(outputOption())
     .action(handleErrors(async (chatId: string, opts) => {
@@ -140,8 +140,7 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
     }));
 
   paginationOptions(
-    chat
-      .command('messages <chatId>')
+    graph(chat.command('messages <chatId>'), ['GET /chats/{chat-id}/messages'])
       .description('List chat messages'),
   )
     .addOption(outputOption())
@@ -149,8 +148,7 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       await listRequest(getClient(), `/chats/${encodeURIComponent(chatId)}/messages`, {}, opts);
     }));
 
-  chat
-    .command('send <chatId>')
+  graph(chat.command('send <chatId>'), ['POST /chats/{chat-id}/messages'])
     .description('Send a chat message')
     .requiredOption('--body <body>', 'Message body')
     .option('--html', 'Body is HTML')
@@ -159,8 +157,7 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       await post(getClient(), `/chats/${encodeURIComponent(chatId)}/messages`, { body: messageBody(opts) }, 'Message sent.', opts.output);
     }));
 
-  chat
-    .command('reply <chatId> <messageId>')
+  graph(chat.command('reply <chatId> <messageId>'), ['POST /chats/{chat-id}/messages/replyWithQuote'])
     .description('Reply to a chat message (posts a new message quoting it)')
     .requiredOption('--body <body>', 'Reply body')
     .option('--html', 'Body is HTML')

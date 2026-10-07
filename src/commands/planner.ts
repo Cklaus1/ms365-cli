@@ -1,5 +1,6 @@
 import { Command, Option } from 'commander';
 import { GraphClient } from '../graph-client.js';
+import { graph, type GraphRequestSpec } from '../command-tree.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
 import { outputOption, confirm, done } from '../utils.js';
@@ -59,9 +60,8 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
   const planPath = (id: string) => `/planner/plans/${encodeURIComponent(id)}`;
   const bucketPath = (id: string) => `/planner/buckets/${encodeURIComponent(id)}`;
 
-  const get = (name: string, description: string, endpoint: (id: string) => string) =>
-    planner
-      .command(name)
+  const get = (name: string, description: string, endpoint: (id: string) => string, requests: GraphRequestSpec[]) =>
+    graph(planner.command(name), requests)
       .description(description)
       .addOption(outputOption())
       .action(handleErrors(async (id: string, opts: OutputOpts) => {
@@ -70,43 +70,42 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
       }));
 
   /** A collection command that follows every @odata.nextLink (PAGE-2: no $top or paging documented). */
-  const list = (name: string, description: string, endpoint: (id: string) => string) =>
-    planner
-      .command(name)
+  const list = (name: string, description: string, endpoint: (id: string) => string, requests: GraphRequestSpec[]) =>
+    graph(planner.command(name), requests)
       .description(description)
       .addOption(outputOption())
       .action(handleErrors(async (id: string, opts: OutputOpts) => {
         await listRequest(getClient(), endpoint(id), {}, { output: opts.output, all: true });
       }));
 
-  planner
-    .command('plans')
+  graph(planner.command('plans'), ['GET /me/planner/plans'])
     .description('List my planner plans')
     .addOption(outputOption())
     .action(handleErrors(async (opts: OutputOpts) => {
       await listRequest(getClient(), '/me/planner/plans', {}, { output: opts.output, all: true });
     }));
 
-  get('plan <planId>', 'Get plan details', planPath);
-  get('plan-details <planId>', 'Get plan extended details (category labels, etc.)', (id) => `${planPath(id)}/details`);
+  get('plan <planId>', 'Get plan details', planPath, ['GET /planner/plans/{plan-id}']);
+  get('plan-details <planId>', 'Get plan extended details (category labels, etc.)', (id) => `${planPath(id)}/details`,
+    ['GET /planner/plans/{plan-id}/details']);
 
-  planner
-    .command('my-tasks')
+  graph(planner.command('my-tasks'), ['GET /me/planner/tasks'])
     .description('List my planner tasks')
     .addOption(outputOption())
     .action(handleErrors(async (opts: OutputOpts) => {
       await listRequest(getClient(), '/me/planner/tasks', {}, { output: opts.output, all: true });
     }));
 
-  list('tasks <planId>', 'List tasks in a plan', (id) => `${planPath(id)}/tasks`);
-  get('task <taskId>', 'Get task details', taskPath);
-  get('task-details <taskId>', 'Get task extended details (description, checklist, etc.)', (id) => `${taskPath(id)}/details`);
-  list('buckets <planId>', 'List plan buckets', (id) => `${planPath(id)}/buckets`);
-  get('bucket <bucketId>', 'Get bucket details', bucketPath);
-  list('bucket-tasks <bucketId>', 'List tasks in a bucket', (id) => `${bucketPath(id)}/tasks`);
+  list('tasks <planId>', 'List tasks in a plan', (id) => `${planPath(id)}/tasks`, ['GET /planner/plans/{plan-id}/tasks']);
+  get('task <taskId>', 'Get task details', taskPath, ['GET /planner/tasks/{task-id}']);
+  get('task-details <taskId>', 'Get task extended details (description, checklist, etc.)', (id) => `${taskPath(id)}/details`,
+    ['GET /planner/tasks/{task-id}/details']);
+  list('buckets <planId>', 'List plan buckets', (id) => `${planPath(id)}/buckets`, ['GET /planner/plans/{plan-id}/buckets']);
+  get('bucket <bucketId>', 'Get bucket details', bucketPath, ['GET /planner/buckets/{bucket-id}']);
+  list('bucket-tasks <bucketId>', 'List tasks in a bucket', (id) => `${bucketPath(id)}/tasks`,
+    ['GET /planner/buckets/{bucket-id}/tasks']);
 
-  planner
-    .command('create-task')
+  graph(planner.command('create-task'), ['POST /planner/tasks'])
     .description('Create a planner task')
     .requiredOption('--plan <planId>', 'Plan ID')
     .requiredOption('--title <title>', 'Task title')
@@ -132,8 +131,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  planner
-    .command('update-task <taskId>')
+  graph(planner.command('update-task <taskId>'), ['GET /planner/tasks/{task-id}', 'PATCH /planner/tasks/{task-id}'])
     .description('Update a planner task')
     .option('--title <title>', 'Task title')
     .option('--due <date>', 'Due date (YYYY-MM-DD, local time zone)')
@@ -150,8 +148,10 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
       await patch(getClient(), taskPath(taskId), body, opts);
     }));
 
-  planner
-    .command('update-plan-details <planId>')
+  graph(planner.command('update-plan-details <planId>'), [
+    'GET /planner/plans/{plan-id}/details',
+    'PATCH /planner/plans/{plan-id}/details',
+  ])
     .description('Update plan details (category labels)')
     .option('--etag <etag>', 'ETag for concurrency (auto-fetched if omitted)')
     .option('--categories <json>', 'Category descriptions as JSON (e.g. {"category1":"Urgent"})')
@@ -173,8 +173,10 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
       await patch(getClient(), `${planPath(planId)}/details`, body, opts);
     }));
 
-  planner
-    .command('update-task-details <taskId>')
+  graph(planner.command('update-task-details <taskId>'), [
+    'GET /planner/tasks/{task-id}/details',
+    'PATCH /planner/tasks/{task-id}/details',
+  ])
     .description('Update task details (description)')
     .option('--etag <etag>', 'ETag for concurrency (auto-fetched if omitted)')
     .option('--description <text>', 'Task description')
@@ -185,32 +187,28 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
       await patch(getClient(), `${taskPath(taskId)}/details`, body, opts);
     }));
 
-  planner
-    .command('delete-task <taskId>')
+  graph(planner.command('delete-task <taskId>'), ['GET /planner/tasks/{task-id}', 'DELETE /planner/tasks/{task-id}'])
     .description('Delete a planner task')
     .option('--etag <etag>', 'ETag for concurrency (auto-fetched if omitted)')
     .action(handleErrors(async (taskId: string, opts: EtagOpts) => {
       await remove(getClient(), taskPath(taskId), `Delete planner task ${taskId.substring(0, 16)}...?`, opts, 'Task deleted.');
     }));
 
-  planner
-    .command('delete-plan <planId>')
+  graph(planner.command('delete-plan <planId>'), ['GET /planner/plans/{plan-id}', 'DELETE /planner/plans/{plan-id}'])
     .description('Delete a planner plan')
     .option('--etag <etag>', 'ETag for concurrency (auto-fetched if omitted)')
     .action(handleErrors(async (planId: string, opts: EtagOpts) => {
       await remove(getClient(), planPath(planId), `Delete planner plan ${planId.substring(0, 16)}...?`, opts, 'Plan deleted.');
     }));
 
-  planner
-    .command('delete-bucket <bucketId>')
+  graph(planner.command('delete-bucket <bucketId>'), ['GET /planner/buckets/{bucket-id}', 'DELETE /planner/buckets/{bucket-id}'])
     .description('Delete a planner bucket')
     .option('--etag <etag>', 'ETag for concurrency (auto-fetched if omitted)')
     .action(handleErrors(async (bucketId: string, opts: EtagOpts) => {
       await remove(getClient(), bucketPath(bucketId), `Delete planner bucket ${bucketId.substring(0, 16)}...?`, opts, 'Bucket deleted.');
     }));
 
-  planner
-    .command('update-plan <planId>')
+  graph(planner.command('update-plan <planId>'), ['GET /planner/plans/{plan-id}', 'PATCH /planner/plans/{plan-id}'])
     .description('Update a planner plan')
     .option('--title <title>', 'Plan title')
     .option('--etag <etag>', 'ETag for concurrency (auto-fetched if omitted)')
@@ -221,8 +219,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
       await patch(getClient(), planPath(planId), body, opts);
     }));
 
-  planner
-    .command('update-bucket <bucketId>')
+  graph(planner.command('update-bucket <bucketId>'), ['GET /planner/buckets/{bucket-id}', 'PATCH /planner/buckets/{bucket-id}'])
     .description('Update a planner bucket')
     .option('--name <name>', 'Bucket name')
     .option('--etag <etag>', 'ETag for concurrency (auto-fetched if omitted)')
@@ -233,8 +230,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
       await patch(getClient(), bucketPath(bucketId), body, opts);
     }));
 
-  planner
-    .command('create-plan')
+  graph(planner.command('create-plan'), ['POST /planner/plans'])
     .description('Create a planner plan in a Microsoft 365 group')
     .requiredOption('--title <title>', 'Plan title')
     .requiredOption('--group <groupId>', 'Group/Team ID (plan container)')
@@ -250,8 +246,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  planner
-    .command('create-bucket')
+  graph(planner.command('create-bucket'), ['POST /planner/buckets'])
     .description('Create a bucket in a plan')
     .requiredOption('--plan <planId>', 'Plan ID')
     .requiredOption('--name <name>', 'Bucket name')

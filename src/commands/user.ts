@@ -7,6 +7,7 @@ import { saveOrStream } from '../files.js';
 import { listRequest, paginationOptions, type ListOptions } from '../list.js';
 import { isCalendarDate } from '../graph-helpers.js';
 import { detectMimeType } from '../mime.js';
+import { graph } from '../command-tree.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -56,8 +57,7 @@ function scheduleTime(value: string, flag: string): { dateTime: string; timeZone
 export function registerUserCommands(program: Command, getClient: () => GraphClient): void {
   const user = program.command('user').description('User profile and management');
 
-  user
-    .command('me')
+  graph(user.command('me'), ['GET /me'])
     .description('Get current user profile')
     .option('--select <fields>', 'Fields to return')
     .addOption(outputOption())
@@ -71,8 +71,7 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
     }));
 
   paginationOptions(
-    user
-      .command('list')
+    graph(user.command('list'), ['GET /users'])
       .description('List users in the organization (requires --org-mode)')
       .option('--filter <filter>', 'OData filter')
       .option('--select <fields>', 'Fields to return'),
@@ -86,8 +85,7 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
     }));
 
   // ── Out of Office / Auto-replies ────────────────────────────
-  user
-    .command('ooo')
+  graph(user.command('ooo'), ['GET /me/mailboxSettings/automaticRepliesSetting'])
     .description('Get out-of-office / automatic reply settings')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
@@ -96,8 +94,7 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  user
-    .command('set-ooo')
+  graph(user.command('set-ooo'), ['PATCH /me/mailboxSettings'])
     .description('Set out-of-office / automatic replies')
     .addOption(new Option('--status <status>', 'Status').choices(['alwaysEnabled', 'scheduled', 'disabled']).makeOptionMandatory())
     .option('--internal <message>', 'Auto-reply for internal senders (HTML)')
@@ -133,8 +130,7 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
     }));
 
   // ── Presence ────────────────────────────────────────────────
-  user
-    .command('presence')
+  graph(user.command('presence'), ['GET /me/presence'])
     .description('Get your current presence status (Available, Busy, etc.)')
     .addOption(outputOption('text'))
     .action(handleErrors(async (opts) => {
@@ -150,8 +146,7 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
       }
     }));
 
-  user
-    .command('set-presence')
+  graph(user.command('set-presence'), ['POST /me/presence/setUserPreferredPresence'])
     .description('Set your preferred presence (shown while you have a Teams or app presence session)')
     .addOption(
       new Option('--availability <status>', 'Preferred availability')
@@ -176,8 +171,7 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
       done(res, `Presence set to ${opts.availability} (${activity}).`);
     }));
 
-  user
-    .command('clear-presence')
+  graph(user.command('clear-presence'), ['POST /me/presence/clearUserPreferredPresence'])
     .description('Clear your preferred presence and revert to automatic')
     .action(handleErrors(async () => {
       const res = await getClient().request('/me/presence/clearUserPreferredPresence', { method: 'POST' });
@@ -185,8 +179,7 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
     }));
 
   // ── Profile photo ───────────────────────────────────────────
-  user
-    .command('photo')
+  graph(user.command('photo'), ['GET /me/photo'])
     .description('Get profile photo metadata')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
@@ -195,8 +188,7 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  user
-    .command('download-photo')
+  graph(user.command('download-photo'), ['GET /me/photo/$value'])
     .description('Download profile photo')
     .option('--out <path>', 'Output file path (default: profile-photo.<ext from the content type>)')
     .option('--force', 'Overwrite an existing file')
@@ -215,8 +207,7 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
       info(`Photo saved to ${path.resolve(out)} (${saved.bytes} bytes).`);
     }));
 
-  user
-    .command('upload-photo <filePath>')
+  graph(user.command('upload-photo <filePath>'), ['PUT /me/photo/$value'])
     .description('Upload/update profile photo (JPEG, PNG, GIF — max 4MB)')
     .action(handleErrors(async (filePath: string) => {
       const resolvedPath = path.resolve(filePath);
@@ -239,8 +230,7 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
     }));
 
   // ── Mailbox settings ────────────────────────────────────────
-  user
-    .command('mailbox-settings')
+  graph(user.command('mailbox-settings'), ['GET /me/mailboxSettings'])
     .description('Get mailbox settings (timezone, language, working hours)')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
@@ -249,8 +239,7 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  user
-    .command('set-timezone <timezone>')
+  graph(user.command('set-timezone <timezone>'), ['PATCH /me/mailboxSettings'])
     .description('Set mailbox timezone (e.g. "America/New_York", "UTC")')
     .action(handleErrors(async (timezone: string) => {
       const res = await getClient().request('/me/mailboxSettings', {
@@ -260,8 +249,7 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
       done(res, `Timezone set to ${timezone}.`);
     }));
 
-  user
-    .command('set-language <locale>')
+  graph(user.command('set-language <locale>'), ['PATCH /me/mailboxSettings'])
     .description('Set mailbox language (e.g. "en-US", "fr-FR")')
     .action(handleErrors(async (locale: string) => {
       const res = await getClient().request('/me/mailboxSettings', {
@@ -271,8 +259,7 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
       done(res, `Language set to ${locale}.`);
     }));
 
-  user
-    .command('working-hours')
+  graph(user.command('working-hours'), ['GET /me/mailboxSettings/workingHours'])
     .description('Get working hours configuration')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
