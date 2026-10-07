@@ -233,6 +233,38 @@ describe('workflow email-to-task (MISC-1, WF-3)', () => {
     expect(r.requests).toHaveLength(0);
     expect(r.stderr).toContain('Invalid date: "2026-02-30". Use YYYY-MM-DD format.');
   });
+
+  it('--dry-run without --list previews the POST to <default-list> with a <subject> title (DRY-2)', async () => {
+    const r = await runCli(['--dry-run', 'workflow', 'email-to-task', 'M1', '-o', 'json'], { env: ENV, routes: [] });
+    expect(r.code).toBe(0);
+    expect(r.requests).toHaveLength(0);
+    expect(r.stderr).toContain('[dry-run] POST https://graph.microsoft.com/v1.0/me/todo/lists/%3Cdefault-list%3E/tasks');
+    expect(r.stderr).toContain('"title":"[Email] <subject>"');
+    expect(JSON.parse(r.stdout)).toMatchObject({ dryRun: true, method: 'POST' });
+  });
+
+  it('--dry-run with --list keeps the list and still uses the <subject> placeholder (DRY-2)', async () => {
+    const r = await runCli(['--dry-run', 'workflow', 'email-to-task', 'M1', '--list', 'L1', '-o', 'json'], { env: ENV, routes: [] });
+    expect(r.code).toBe(0);
+    expect(r.stderr).toContain('[dry-run] POST https://graph.microsoft.com/v1.0/me/todo/lists/L1/tasks');
+    expect(r.stderr).toContain('"title":"[Email] <subject>"');
+  });
+
+  it.each([
+    ['Asia/Tokyo', 'Asia/Tokyo'],
+    ['Europe/Amsterdam', 'UTC'],
+  ])('TZ=%s: --due is local midnight in %s (TZ-1)', async (tz, zone) => {
+    const r = await runCli(['workflow', 'email-to-task', 'M1', '--list', 'L1', '--due', '2026-10-07', '-o', 'json'], {
+      env: { ...ENV, TZ: tz },
+      routes: [
+        { match: '/me/messages/M1', method: 'GET', body: { subject: 'Hi' } },
+        { match: '/me/todo/lists/L1/tasks', method: 'POST', status: 201, body: { id: 'T1' } },
+      ],
+    });
+    expect(r.code).toBe(0);
+    const post = r.requests.find((q) => q.method === 'POST')!;
+    expect(JSON.parse(post.body!).dueDateTime).toEqual({ dateTime: '2026-10-07T00:00:00', timeZone: zone });
+  });
 });
 
 describe('workflow focus-time (MISC-1)', () => {
@@ -281,5 +313,19 @@ describe('workflow file-announce (WF-3, CORE-4)', () => {
     expect(body.content).toContain('<a href="https://x.test/a?b=1&amp;c=2">a&lt;b&gt;&amp;c.txt</a>');
     expect(JSON.parse(r.stdout).id).toBe('MSG1');
     expect(r.stderr).toContain('Announced');
+  });
+});
+
+describe('workflow dry-run (DRY-1)', () => {
+  it.each([
+    [['--org-mode', 'workflow', 'file-announce', 'D1', 'I1', '--team', 'T', '--channel', 'C'], 'POST https://graph.microsoft.com/v1.0/teams/T/channels/C/messages', 'Announced'],
+    [['workflow', 'meeting-prep'], 'GET https://graph.microsoft.com/v1.0/me/calendarView', 'No upcoming meetings'],
+    [['workflow', 'meeting-prep', '-o', 'json'], 'GET https://graph.microsoft.com/v1.0/me/calendarView', 'No upcoming meetings'],
+  ])('--dry-run %j prints the preview and no success/empty-state text', async (args, preview, text) => {
+    const r = await runCli(['--dry-run', ...args], { env: ENV, routes: [] });
+    expect(r.code).toBe(0);
+    expect(r.requests).toHaveLength(0);
+    expect(r.stderr).toContain(`[dry-run] ${preview}`);
+    expect(r.stderr).not.toContain(text);
   });
 });
