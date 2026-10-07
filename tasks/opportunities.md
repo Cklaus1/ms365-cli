@@ -1,5 +1,7 @@
 # opportunities — deferred work (no task, no failing test)
 
+All 25 rows are specified in `tasks/ms365-cli-followup-spec.md` (2026-10-06; mapping in its §0).
+
 | # | Item | Proposed severity | Source |
 |---|---|---|---|
 | 1 | REMOTE-2: move `ms365 serve` behind a Tailscale Service (`svc:ms365`); first live-test that `Tailscale-App-Capabilities` arrives for `svc:` grants | P3 | spec §7 (later) |
