@@ -122,13 +122,22 @@ describe('GRAPH-2 / DRIVE-2 binary downloads', () => {
 
   it('download --out is byte-identical', async () => {
     const cwd = tempDir();
-    const r = await runCli(['drive', 'download', 'D1', 'I1', 'C1', '--out', 'b.pdf'], {
+    const r = await runCli(['drive', 'download', 'D1', 'I1', '--out', 'b.pdf'], {
       env: ENV,
       cwd,
-      routes: [{ match: '/drives/D1/items/I1/children/C1/content', ...PDF_ROUTE }],
+      routes: [{ match: '/drives/D1/items/I1/content', ...PDF_ROUTE }],
     });
     expect(r.code).toBe(0);
     expect(fs.readFileSync(path.join(cwd, 'b.pdf')).equals(PDF)).toBe(true);
+  });
+
+  it('DRIVE-3 the old 3-argument form exits 1 with too many arguments and sends nothing', async () => {
+    const cwd = tempDir();
+    const r = await runCli(['drive', 'download', 'D1', 'I1', 'C1', '--out', 'b.pdf'], { env: ENV, cwd, routes: [{ match: '/content', ...PDF_ROUTE }] });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('too many arguments');
+    expect(r.requests).toHaveLength(0);
+    expect(fs.readdirSync(cwd)).toEqual([]);
   });
 
   it('download-shared --out is byte-identical', async () => {
@@ -146,20 +155,20 @@ describe('GRAPH-2 / DRIVE-2 binary downloads', () => {
     const cwd = tempDir();
     fs.writeFileSync(path.join(cwd, 'keep.pdf'), 'original');
     const routes = [{ match: '/content', ...PDF_ROUTE }];
-    const r = await runCli(['drive', 'download', 'D1', 'I1', 'C1', '--out', 'keep.pdf'], { env: ENV, cwd, routes });
+    const r = await runCli(['drive', 'download', 'D1', 'I1', '--out', 'keep.pdf'], { env: ENV, cwd, routes });
     expect(r.code).toBe(1);
     expect(r.stderr).toContain('--force');
     expect(fs.readFileSync(path.join(cwd, 'keep.pdf'), 'utf8')).toBe('original');
     expect(fs.readdirSync(cwd)).toEqual(['keep.pdf']);
 
-    const f = await runCli(['drive', 'download', 'D1', 'I1', 'C1', '--out', 'keep.pdf', '--force'], { env: ENV, cwd, routes });
+    const f = await runCli(['drive', 'download', 'D1', 'I1', '--out', 'keep.pdf', '--force'], { env: ENV, cwd, routes });
     expect(f.code).toBe(0);
     expect(fs.readFileSync(path.join(cwd, 'keep.pdf')).equals(PDF)).toBe(true);
   });
 
   it('dry-run download writes no file and nothing to stdout', async () => {
     const cwd = tempDir();
-    const r = await runCli(['--dry-run', 'drive', 'download', 'D1', 'I1', 'C1', '--out', 'b.pdf'], { env: ENV, cwd, routes: [] });
+    const r = await runCli(['--dry-run', 'drive', 'download', 'D1', 'I1', '--out', 'b.pdf'], { env: ENV, cwd, routes: [] });
     expect(r.code).toBe(0);
     expect(r.stdout).toBe('');
     expect(fs.readdirSync(cwd)).toEqual([]);
@@ -194,5 +203,51 @@ describe('CORE-4 / PAGE-1 drive listings', () => {
     const r = await runCli(['drive', 'quota', '-o', 'json'], { env: ENV, routes: [{ match: '/me/drive', body: { quota: { used: 1, total: 2 } } }] });
     expect(r.code).toBe(0);
     expect(JSON.parse(r.stdout).quota.used).toBe(1);
+  });
+});
+
+describe('DRY-1 drive upload under --dry-run', () => {
+  it('prints the preview but no Uploading line', async () => {
+    const cwd = tempDir();
+    const r = await runCli(['--dry-run', 'drive', 'upload', 'D1', 'P1', localFile(cwd)], { env: ENV, cwd, routes: [] });
+    expect(r.code).toBe(0);
+    expect(r.requests).toHaveLength(0);
+    expect(r.stderr).toContain('[dry-run]');
+    expect(r.stderr).not.toContain('Uploading');
+  });
+});
+
+describe('PAGE-2 drive permissions drains every page', () => {
+  it('prints one combined JSON array from two pages', async () => {
+    const r = await runCli(['drive', 'permissions', 'D1', 'I1', '-o', 'json'], {
+      env: ENV,
+      routes: [
+        { match: 'skiptoken=2', body: { value: [{ id: 'b' }] } },
+        { match: '/drives/D1/items/I1/permissions', body: { value: [{ id: 'a' }], '@odata.nextLink': 'https://graph.microsoft.com/v1.0/drives/D1/items/I1/permissions?$skiptoken=2' } },
+      ],
+    });
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.stdout)).toEqual([{ id: 'a' }, { id: 'b' }]);
+    expect(r.requests).toHaveLength(2);
+  });
+});
+
+describe('CHOICE-1 drive share choices', () => {
+  for (const args of [['--type', 'bogus'], ['--scope', 'everyone']]) {
+    it(`share ${args.join(' ')} exits 1 with Allowed choices before any request`, async () => {
+      const r = await runCli(['drive', 'share', 'D1', 'I1', ...args], { env: ENV, routes: [] });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain('Allowed choices');
+      expect(r.requests).toHaveLength(0);
+    });
+  }
+
+  it('share --type edit --scope users sends them', async () => {
+    const r = await runCli(['drive', 'share', 'D1', 'I1', '--type', 'edit', '--scope', 'users', '-o', 'json'], {
+      env: ENV,
+      routes: [{ match: '/createLink', body: { link: { webUrl: 'https://x' } } }],
+    });
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.requests[0].body ?? '')).toEqual({ type: 'edit', scope: 'users' });
   });
 });

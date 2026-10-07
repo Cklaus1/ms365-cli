@@ -6,7 +6,7 @@ import { detectMimeType } from '../mime.js';
 import { saveOrStream } from '../files.js';
 import { drivePath, field, odataQuote } from '../graph-helpers.js';
 import { listRequest, paginationOptions, type ListOptions } from '../list.js';
-import { formatSize, outputOption, confirm, info } from '../utils.js';
+import { formatSize, outputOption, confirm, done, info } from '../utils.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -39,7 +39,7 @@ async function download(client: GraphClient, endpoint: string, opts: SaveOpts): 
 /** Upload a local file to `itemPath` (colon path without trailing colon) and print the stored driveItem. */
 async function upload(client: GraphClient, itemPath: string, localPath: string, opts: UploadOpts): Promise<void> {
   const contentType = opts.contentType || detectMimeType(path.basename(localPath));
-  info(`Uploading ${path.basename(localPath)} (${formatSize(fs.statSync(localPath).size)}, ${contentType})`);
+  if (!client.isDryRun) info(`Uploading ${path.basename(localPath)} (${formatSize(fs.statSync(localPath).size)}, ${contentType})`);
   const response = await client.uploadDriveItem(itemPath, localPath, { conflict: opts.conflict, contentType });
   console.log(formatOutput(response.data, opts.output as OutputFormat));
 }
@@ -86,10 +86,11 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
     }));
 
   saveOptions(drive
-    .command('download <driveId> <itemId> <childId>')
+    .command('download <driveId> <itemId>')
     .description('Download a file (to --out, or raw bytes to stdout)'), 'Output file path (default: stdout)')
-    .action(handleErrors(async (driveId: string, itemId: string, childId: string, opts: SaveOpts) => {
-      await download(getClient(), `${itemRoot(driveId, itemId)}/children/${encodeURIComponent(childId)}/content`, opts);
+    .allowExcessArguments(false)
+    .action(handleErrors(async (driveId: string, itemId: string, opts: SaveOpts) => {
+      await download(getClient(), `${itemRoot(driveId, itemId)}/content`, opts);
     }));
 
   drive
@@ -109,8 +110,7 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
     .description('Delete a drive item')
     .action(handleErrors(async (driveId: string, itemId: string) => {
       await confirm(`Delete drive item ${itemId.substring(0, 16)}...?`);
-      await getClient().request(itemRoot(driveId, itemId), { method: 'DELETE' });
-      info('Item deleted.');
+      done(await getClient().request(itemRoot(driveId, itemId), { method: 'DELETE' }), 'Item deleted.');
     }));
 
   saveOptions(drive
@@ -154,8 +154,8 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
   drive
     .command('share <driveId> <itemId>')
     .description('Create a sharing link for a file or folder')
-    .option('--type <type>', 'Link type: view, edit, embed', 'view')
-    .option('--scope <scope>', 'Link scope: anonymous, organization, users', 'organization')
+    .addOption(new Option('--type <type>', 'Link type').choices(['view', 'edit', 'embed']).default('view'))
+    .addOption(new Option('--scope <scope>', 'Link scope').choices(['anonymous', 'organization', 'users']).default('organization'))
     .option('--password <password>', 'Password-protect the link')
     .option('--expiry <datetime>', 'Expiration datetime (ISO 8601)')
     .addOption(outputOption())
@@ -187,8 +187,7 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
     .description('List sharing permissions on a file or folder')
     .addOption(outputOption())
     .action(handleErrors(async (driveId: string, itemId: string, opts: OutputOpts) => {
-      const response = await getClient().request(`${itemRoot(driveId, itemId)}/permissions`);
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await listRequest(getClient(), `${itemRoot(driveId, itemId)}/permissions`, {}, { output: opts.output, all: true });
     }));
 
   // ── Quota / storage usage ───────────────────────────────────
