@@ -27,3 +27,10 @@
 - [x] §6 docs/hygiene, README, CHANGELOG, schema ENDPOINTS (f2cb9b9; README Remote Access section added after REMOTE merge); npm audit 0
 - [x] Implementation review loop: 4 reviewers, 15 findings + 1 follow-up (parseDate), all reproduced fail-first, all fixed (afd2b72, 903fafc, merges fix/cmds, fix/remote 0295592, fix/core 2df98e3); 579 tests; smoke 1-4 + dot-segment + impossible-date pass
 - [x] End-of-run report
+
+## Follow-up spec (`tasks/ms365-cli-followup-spec.md`, branch `build/ms365-cli-followup`)
+- [x] Q1-Q10 decided (recommendations), adversarial spec review + [REVISED] notes
+- [x] T0: CLEAN-1, META-2, DRY-1 helper (6d7da8c); CAL-4/TZ-1 zone helpers (75872a5)
+- [x] Slices: files 4402c86, mail 09f40ee, org 4d803e8, calwf 2e5a58d; SCHEMA-2 af81759; docs 1280769; REMOTE-4/5 42bc846
+- [x] Implementation review: 2 reviewers, 3 findings (eventTime date-only/non-ISO 92193a0; DRIVE-3 test migration in fu/remote; PAGE-2 Breaking entry 6638d1f) + 1 smoke finding (serve repeated signal)
+- [x] README/CHANGELOG, full gate, built-binary smoke 1-4 + follow-up checks

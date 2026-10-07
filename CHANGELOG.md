@@ -25,9 +25,11 @@ All notable changes to this project are documented here. The format follows [Kee
 - **`drive download` takes `<driveId> <itemId>`** and fetches `/drives/{driveId}/items/{itemId}/content`; the old 3-argument form exits 1 (`too many arguments`). [fu:DRIVE-3]
 - **Calendar `--timezone` defaults to the local time zone instead of UTC** (`cal create`, `free-busy`, `update`'s fallback, `decline --propose-*`). Wall-clock times in a zone Graph does not document (e.g. `Europe/Amsterdam`, or a POSIX `TZ` like `JST-9`) are converted to the UTC instant; `decline` no longer sends the bare zone name or a UTC-labelled wall-clock time. Event times must be ISO 8601: a date alone is local midnight, and non-ISO text (`Oct 7 9:00`) or impossible days/times (`2026-02-30`, `25:00`) exit 1 before any request. [fu:CAL-4]
 - **Drained list commands print a JSON array instead of `{ "value": [...] }`** with `-o json`: `planner plans`, `my-tasks`, `tasks`, `buckets`, `bucket-tasks`, `excel worksheets`, `drive permissions`, `teams list`, `teams channels`. Scripts reading `.value` must read the array directly. [fu:PAGE-2]
+- **`ms365 serve` file protocol**: output files come back as `files:[{name, contentType, size, url}]` with a one-time `GET /v1/files/{token}` URL instead of `base64`. Input files are uploaded with a raw-body `PUT /v1/uploads` and referenced as `{"$upload": "<token>"}`; multipart and `{"$file"}` are removed, and `/v1/execute` accepts JSON only (1 MB). Update `ms365-remote` and `ms365 serve` together. [fu:REMOTE-5]
 
 ### Fixed
 
+- `ms365 -q serve` no longer hides its listening, signal and stopped lines (they always go to stderr). A SIGTERM sent right after the listening line now stops the server gracefully instead of killing it, and a repeated SIGTERM/SIGINT during shutdown (GNU `timeout` signals both the process and its group) no longer kills it before running requests finish and the socket is removed. [fu:REMOTE-4]
 - The process exits once, after stdout/stderr are flushed; large `-o json` output is no longer truncated and broken pipes exit cleanly. [CORE-1]
 - The codebase type-checks; `npm test` runs `tsc --noEmit` before the tests. [CORE-2]
 - `schema`, `generate-skills` and `auth` commands no longer need a client ID or token cache. [CORE-3]
@@ -87,9 +89,11 @@ All notable changes to this project are documented here. The format follows [Kee
 - `teams send-channel-message`, `teams reply-channel-message`, `chat send` and `chat reply` take `-o` and print the created message on stdout, so callers get its ID; the confirmation stays on stderr. `schema chat.send`/`chat.reply` describe this response. [fu:OUT-1]
 - `teams members` and `groups owners` take `--top`/`--all`/`--page-limit`/`--page-delay` (team-list-members and group-list-owners document `$top` and `@odata.nextLink`). [fu:PAGE-2]
 - `mail folders --parent`, `mail create-folder --parent` and `mail create-rule --move-to` accept folder names (well-known, display name, nested) as well as IDs; well-known `--move-to` names are converted to the real folder ID. [fu:MAIL-10]
+- `ms365 serve --concurrency <n>` (1-64, default 4), `--max-stdout-mb <n>` (default 50) and `--max-file-mb <n>` (default 25). [fu:REMOTE-4]
 
 ### Changed
 
+- `ms365 serve` and `ms365-remote` stream file transfers to and from disk. The default file cap stays 25 MB, but `--max-file-mb` can raise it without memory growing with file size (a 100 MB round trip grew server memory by a few MB). [fu:REMOTE-5]
 - `planner plans`, `my-tasks`, `tasks`, `buckets`, `bucket-tasks` (planneruser-list-plans, planneruser-list-tasks, plannerplan-list-tasks, plannerplan-list-buckets, plannerbucket-list-tasks), `excel worksheets` (workbook-list-worksheets), `drive permissions` (driveitem-list-permissions), `teams list` (user-list-joinedteams) and `teams channels` (channel-list) follow every `@odata.nextLink` and print one combined result. [fu:PAGE-2]
 - Options with a documented value set reject other values before any request (`Allowed choices`): `drive share --type view|edit|embed` / `--scope anonymous|organization|users`, `excel create-chart --type` (the 74 ExcelApi 1.1 `Excel.ChartType` values) / `--series-by auto|columns|rows`, `cal create-calendar`/`update-calendar --color` (`calendarColor` values), `mail create-rule --importance low|normal|high`, and each item of `search query --entity` (also checked by `ms365 serve` and `ms365-remote`, and listed in generated skills). [fu:CHOICE-1]
 - `mail flag` start/due and To Do due dates (`todo create/update --due`, `workflow email-to-task --due`) are midnight in the local time zone when Graph documents it (else UTC); the default `mail flag` start is the local date, not the UTC date. [fu:TZ-1]

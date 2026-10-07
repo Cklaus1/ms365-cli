@@ -81,6 +81,7 @@ Confidence: `[verified]` reproduced; `[code]` read from source, unambiguous; `[g
 - [REVISED: adversarial review] Graph only documents Windows zone names plus a fixed list of ~100 IANA "Additional time zones" (learn.microsoft.com/en-us/graph/api/resources/datetimetimezone); `Europe/Amsterdam`, `America/Toronto`, `Asia/Hong_Kong` are not on it. Add `graphTimeZone(): string | undefined` to `src/graph-helpers.ts`: the runtime IANA zone if it is on that documented list (embed the list from the doc page, with the URL in a comment), else `undefined`. When no explicit `--timezone` is given and `graphTimeZone()` is `undefined`, convert the wall-clock `--start/--end` to the UTC instant (via `Intl`) and send `timeZone: 'UTC'`. An explicit `--timezone` is sent as given.
 - **Accept:** with `TZ=America/New_York`, `--dry-run cal create --start 2026-10-07T09:00 …` body has `{dateTime:'2026-10-07T09:00…', timeZone:'America/New_York'}`; with `TZ=Europe/Amsterdam` it has `{dateTime:'2026-10-07T07:00…', timeZone:'UTC'}`; with `TZ=JST-9` the runtime has no name → UTC conversion; explicit `--timezone` wins; generated skills and `schema` output are machine-independent (no zone name as a default). README/CHANGELOG updated (interface change).
 - [REVISED: implementation] `decline --propose-*` goes through the same `eventTime()`; an undocumented zone or nameless POSIX `TZ` is converted to the UTC instant instead of sent raw / mislabelled UTC.
+- [REVISED: implementation review] `eventTime()` accepts ISO 8601 only (`YYYY-MM-DD[THH:MM[:SS[.f]]][Z|±HH:MM]`); a date alone is local midnight (ECMAScript would read it as UTC midnight in the UTC fallback), and non-ISO text (`Oct 7 9:00`, which V8 turned into a 2001 date) or impossible days/times (`2026-02-30`, `25:00`) exit 1 before any request. Listed under Breaking in the CHANGELOG.
 
 ### TZ-1 (P3) To Do and mail-flag dates written as UTC midnight `[graph-doc]`
 - `todo.ts:84,109`, `workflow.ts:289`: `dueDateTime = { dateTime: '<date>T00:00:00', timeZone: 'UTC' }`; `mail.ts:617-618` (flag start/due) does the same. Clients east/west of UTC may show the previous/next day. Readers already compensate (`workflow.ts:69-79` `dueDay()`); planner writes local midnight (`planner.ts:48-52`).
@@ -133,6 +134,7 @@ Confidence: `[verified]` reproduced; `[code]` read from source, unambiguous; `[g
   - `teams list/members/channels` (`teams.ts:22-59`)
   - `calendar rooms/room-lists` (beta, `calendar.ts:309-325`)
 - `mail rules` sends `$top` only when passed (`mail.ts:732-735`).
+- [REVISED: implementation review] Drained commands print a bare JSON array instead of `{ value: [...] }` under `-o json`; the CHANGELOG lists this as Breaking.
 - [REVISED: adversarial review] Doc facts per endpoint (graph-rest-1.0 method pages):
 
 | Command | Endpoint doc | `$top` | Paging | Decision |
@@ -187,6 +189,7 @@ Confidence: `[verified]` reproduced; `[code]` read from source, unambiguous; `[g
 - Limits are constants: `serve.ts:63-65` (`maxStdoutBytes` 50 MiB, `maxFileBytes`, `concurrency: 4`); `MAX_FILE_BYTES` (`server.ts:17`) also sizes the request body (`19`), output collection (`164-166`) and the 413 message (`88`).
 - **Fix:** lifecycle lines always to stderr (service log, not a confirmation); add `--concurrency <n>` (1-64), `--max-stdout-mb <n>`, `--max-file-mb <n>` with CLEAN-1's integer parser; thread the file cap into `server.ts` instead of the module constant.
 - **Accept:** `ms365 -q serve --socket …` still prints `listening on`; `--concurrency 1` serializes two slow fake requests; `--max-file-mb 1` makes a 2 MB upload return 413 with the 1 MB figure. README `904,959`.
+- [REVISED: implementation] Lifecycle lines go straight to stderr, and SIGTERM/SIGINT handlers are installed before the listening line is printed (under load a SIGTERM sent right after the line used to kill the server before its handler existed). [REVISED: smoke] The handlers stay registered until shutdown completes: with `process.once`, a second SIGTERM (GNU `timeout` signals process and group) hit Node's default action mid-shutdown, leaving the socket and skipping `stopped` (seen 1 in 5 smoke runs). Test: a repeated SIGTERM or SIGINT while a request is running → 200, exit 0, socket removed.
 
 ### REMOTE-5 (P3) Transfers buffered in memory, capped at 25 MB `[code]`
 - Upload: `readBody` concatenates the whole body (`server.ts:75-86`), parsed with `new Request(…).formData()` (`114`).
@@ -196,6 +199,7 @@ Confidence: `[verified]` reproduced; `[code]` read from source, unambiguous; `[g
 - [REVISED: adversarial review] Uploads, no new dependency: `ms365-remote` sends each local file as a raw-body `PUT /v1/uploads` (no multipart), streamed to a temp file and aborted with 413 as soon as `--max-file-mb` is exceeded; the reply is a single-use token (≥128-bit, 10-minute TTL); `/v1/execute` references tokens instead of embedding bodies. Uploading requires a grant with at least one capability.
 - [REVISED: adversarial review] Caps: `--max-file-mb` (REMOTE-4, default 25) still bounds per-request files, now enforced while streaming.
 - **Accept:** with `serve --max-file-mb 200`, a 100 MB fake download round-trips byte-identical through `ms365-remote` and the serve process's peak RSS (`VmHWM` from `/proc/<pid>/status`, Linux only, skipped elsewhere) grows by < 64 MB; the file URL is single-use and refused for a header lacking the capability; an upload over the cap → 413 and the temp file is gone. README/CHANGELOG (protocol version note).
+- [REVISED: implementation] A refused upload gets its 413 at once, but the rest of the body is read and discarded (never stored) rather than the connection being closed: closing reset the connection under a client still sending, so fetch saw a network error instead of the 413. Connections still discarding are cut off at shutdown once no child is running. The output file is opened, then deleted, before streaming, so the URL is single-use from the first GET even if that transfer is interrupted. Measured RSS growth for 100 MB: about 3-6 MB.
 
 ### REMOTE-2 later: Tailscale Service (`svc:ms365`) — opportunity #1
 Unchanged from hardening spec §7. Blocked on a live test that `Tailscale-App-Capabilities` reaches `svc:` grants. Not built in this run.

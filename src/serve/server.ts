@@ -566,11 +566,12 @@ export async function serve(options: ServeOptions): Promise<void> {
   }
 
   // Handlers go in before the listening line: a supervisor may signal as soon as it reads it, and an unhandled
-  // SIGTERM kills the process without the graceful stop.
+  // SIGTERM kills the process without the graceful stop. They stay until shutdown is done, so a repeated signal
+  // (GNU `timeout` signals both the process and its group) is ignored instead of killing it mid-shutdown.
   const signal = Promise.withResolvers<NodeJS.Signals>();
   const onSignal = (sig: NodeJS.Signals) => signal.resolve(sig);
-  process.once('SIGTERM', onSignal);
-  process.once('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
+  process.on('SIGINT', onSignal);
 
   if (socket) {
     fs.chmodSync(socket, 0o600);
@@ -586,18 +587,20 @@ export async function serve(options: ServeOptions): Promise<void> {
   }
 
   const received = await signal.promise;
-  process.off('SIGTERM', onSignal);
-  process.off('SIGINT', onSignal);
-
-  lifecycle(`Received ${received}; finishing ${inflight.size} request(s)`);
-  stopping = true;
-  const closed = Promise.withResolvers<void>();
-  server.close(() => closed.resolve());
-  server.closeIdleConnections();
-  await Promise.allSettled(inflight);
-  await app.idle();
-  await closed.promise;
-  if (socket) fs.rmSync(socket, { force: true });
-  await app.close();
-  lifecycle('ms365 serve stopped');
+  try {
+    lifecycle(`Received ${received}; finishing ${inflight.size} request(s)`);
+    stopping = true;
+    const closed = Promise.withResolvers<void>();
+    server.close(() => closed.resolve());
+    server.closeIdleConnections();
+    await Promise.allSettled(inflight);
+    await app.idle();
+    await closed.promise;
+    if (socket) fs.rmSync(socket, { force: true });
+    await app.close();
+    lifecycle('ms365 serve stopped');
+  } finally {
+    process.off('SIGTERM', onSignal);
+    process.off('SIGINT', onSignal);
+  }
 }

@@ -29,3 +29,6 @@ All 25 rows are specified in `tasks/ms365-cli-followup-spec.md` (2026-10-06; map
 | 23 | `/v1/execute` buffers downloads as base64 in memory (25 MB → ~34 MB JSON); stream instead | P3 | RemoteTrack (same as #3) |
 | 24 | `ms365 -q serve` also hides the "listening on" line (goes through `info()`) | P3 | RemoteTrack |
 | 25 | `serve` concurrency (4), stdout cap (50 MB) and file cap (25 MB) are constants, not flags | P3 | RemoteTrack |
+| 26 | A crashed `ms365 serve` leaves `ms365-serve-up-*` / `ms365-serve-dl-*` dirs in TMPDIR (tokens live only in memory); a startup sweep could remove them | P3 | fu:RemoteSlice |
+| 27 | Under `--dry-run`, `workflow meeting-prep -o json` prints `null` rather than a dry-run object (the request goes through `requestAllPages`) | P3 | fu:CalWfSlice, fu:DocsFollowup |
+| 28 | With an explicit `--timezone`, a `--start`/`--end` carrying `Z` or an offset is sent unchanged under that zone label (ambiguous to Graph); convert it or reject the combination. `--start`/`--end` help says only "(ISO 8601)" | P3 | fu:ReviewTimeMail, fu:DocsFollowup |

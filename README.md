@@ -920,12 +920,12 @@ ms365 serve --app-cap example.com/cap/ms365        # foreground; run it under sy
 tailscale serve --bg --accept-app-caps example.com/cap/ms365 unix:$HOME/.config/ms365-cli/serve.sock
 ```
 
-`ms365 [--org-mode] [--read-only] [--api-version <v>] serve --app-cap <name> [--socket <path>] [--port <n> [--host <loopback>]] [--audit-log <path>] [--timeout <seconds>]`
+`ms365 [--org-mode] [--read-only] [--api-version <v>] serve --app-cap <name> [--socket <path>] [--port <n> [--host <loopback>]] [--audit-log <path>] [--timeout <seconds>] [--concurrency <n>] [--max-stdout-mb <n>] [--max-file-mb <n>]`
 
 - `--app-cap` is required and must equal the `--accept-app-caps` value. Use a capability name under a domain you control.
 - The default socket is `~/.config/ms365-cli/serve.sock`, mode 0600 in a 0700 directory, so other Unix users cannot connect. A stale socket is replaced; a socket that is still served is refused (exit 1).
 - `--org-mode`, `--read-only` and `--api-version` given before `serve` apply to every request.
-- On SIGTERM/SIGINT the server stops accepting, finishes running requests, removes the socket and exits 0.
+- On SIGTERM/SIGINT the server stops accepting, finishes running requests, removes the socket and exits 0; repeated signals during that shutdown are ignored (use SIGKILL to force). The listening, signal and stopped lines always go to stderr, even with `-q`.
 - Serving a `unix:` target needs a Tailscale version that supports it. Fallback for older versions: `ms365 serve --app-cap example.com/cap/ms365 --port 8365` with `tailscale serve --bg --accept-app-caps example.com/cap/ms365 http://127.0.0.1:8365`. In TCP mode every local process on the host can connect and forge the capability header, and serve prints a warning. Non-loopback `--host` values are refused.
 
 Serve does not use Tailscale identity headers (`Tailscale-User-Login`, …): Tailscale does not set them for tagged devices. Access comes only from the `Tailscale-App-Capabilities` header, which `tailscale serve` sets and strips from incoming requests.
@@ -972,10 +972,11 @@ ms365-remote drive download <driveId> <itemId> --out ./copy.pdf  # saved locally
 
 - `GET /v1/health` → `{ok: true, request_id}`
 - `GET /v1/capabilities` → `{ok, request_id, agent, capabilities[], commands[]}` (the commands the caller may run)
-- `POST /v1/execute` with JSON `{"command": "mail.list", "positionals": [], "args": {"top": 5, "dryRun": true}}`. `args` keys are option names in camelCase, and `dryRun` is the only global flag allowed per request. Send input files as `multipart/form-data`: a `request` JSON part, plus file parts referenced as `{"$file": "<part>"}` in `positionals`.
-- Success: `{ok: true, request_id, data, files?, stderr?}`. `data` is the parsed JSON output, the raw string if the output is not JSON, or `null` when there is no output. `files` is `[{name, contentType, size, base64}]` for downloads.
-- Errors: `{ok: false, request_id, error: {code, message}}`. Statuses: 400 `invalid_args`, 403 `capability_missing` (missing or bad header, capability not granted, command not remote), 404 `not_found`, 413 `invalid_args` (uploads over 25 MB), 502 `command_failed` (the CLI exited non-zero; the message is its stderr), 504 `timeout`, 500 `command_failed` (server error).
-- Limits: 4 commands run at once and further requests queue; 120 s per command (`--timeout`); 50 MB stdout; 25 MB of uploaded files and 25 MB of returned files per request.
+- `POST /v1/execute` with JSON `{"command": "mail.list", "positionals": [], "args": {"top": 5, "dryRun": true}}` (`application/json` only, at most 1 MB). `args` keys are option names in camelCase, and `dryRun` is the only global flag allowed per request.
+- Input files: first `PUT /v1/uploads?name=<file name>` with the raw bytes as body (needs a grant with at least one capability). The reply is `{ok, request_id, token, name, size}`. Reference the upload in `positionals` as `{"$upload": "<token>"}`; the token is single-use and expires after 10 minutes.
+- Success: `{ok: true, request_id, data, files?, stderr?}`. `data` is the parsed JSON output, the raw string if the output is not JSON, or `null` when there is no output. `files` is `[{name, contentType, size, url}]` for downloads. Each `url` is a one-time `GET /v1/files/{token}` that streams the bytes: it needs the capabilities of the command that produced the file (403 otherwise), returns 404 once used, and expires after 10 minutes if never fetched.
+- Errors: `{ok: false, request_id, error: {code, message}}`. Statuses: 400 `invalid_args`, 403 `capability_missing` (missing or bad header, capability not granted, command not remote), 404 `not_found` (unknown route, unknown or already used file URL), 413 `invalid_args` (uploads over `--max-file-mb`, refused as soon as the limit is passed; execute bodies over 1 MB), 502 `command_failed` (the CLI exited non-zero; the message is its stderr), 504 `timeout`, 500 `command_failed` (server error).
+- Limits: `--concurrency` commands run at once (default 4, 1-64) and further requests queue; `--timeout` per command (default 120 s); `--max-stdout-mb` of output (default 50); `--max-file-mb` (default 25) per upload and for the files returned by one request. Transfers stream to and from disk, so a higher `--max-file-mb` does not grow memory with file size.
 
 Each request runs the CLI as a child process in an empty temporary directory, which is deleted afterwards. The child receives only `PATH`, `HOME`, `TZ`, the log, org-mode and read-only variables, and the client/tenant ID. `MS365_CLI_TOKEN` is never passed on, so children use the host's token cache. The audit log (`~/.config/ms365-cli/serve-audit.jsonl`, 0600) has one line per request: `{ts, request_id, agent, src, method, path, command, args, status, duration_ms, error?}`. `args` lists option names only. Bodies and values are never logged.
 

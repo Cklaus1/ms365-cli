@@ -9,3 +9,4 @@
 - Node joins repeated custom headers with ", ", so an `Array.isArray(header)` check was dead in the server and only its unit test exercised it → test header rules over a raw socket request; read `req.headersDistinct`.
 - A subagent's relative-path edits landed in the main checkout instead of its worktree → give worktree agents absolute paths and check `git status` in main before merging.
 - `import './env.js'` first does not order side effects once tsup splits shared chunks → make singletons read env lazily instead of relying on import order.
+- `process.once('SIGTERM')` in a graceful-shutdown server left no handler for a second signal, which GNU `timeout`/group signalling delivers → keep signal handlers registered until shutdown completes, and smoke service shutdown more than once.

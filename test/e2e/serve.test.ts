@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { aadRoutes } from '../auth-fake-aad.js';
@@ -72,6 +72,21 @@ describe('REMOTE-1a ms365 serve: transport', () => {
     const res = await pending;
     expect(res.status).toBe(200);
     expect(await stopped).toEqual({ code: 0, signal: null });
+  });
+
+  // Supervisors such as GNU `timeout` signal both the process and its group, so a second signal arrives mid-shutdown.
+  it.each([['SIGTERM'], ['SIGINT']] as const)('a repeated %s during shutdown still finishes requests and removes the socket', async (again) => {
+    const home = await loginHome();
+    const server = await startServer({ home, routes: [{ ...MESSAGES, delayMs: 1500 }] });
+    const pending = call(server, { caps: capsHeader(['mail.read']), body: { command: 'mail.list' } });
+    await server.waitForChild();
+    const stopped = server.stop('SIGTERM');
+    await vi.waitFor(() => expect(server.stderr()).toContain('Received SIGTERM'));
+    server.proc.kill(again);
+    expect((await pending).status).toBe(200);
+    expect(await stopped).toEqual({ code: 0, signal: null });
+    expect(server.stderr()).toContain('ms365 serve stopped');
+    expect(fs.existsSync(server.socket!)).toBe(false);
   });
 });
 
