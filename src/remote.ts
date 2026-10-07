@@ -12,6 +12,7 @@ import { saveOrStream } from './files.js';
 import { formatOutput, type OutputFormat } from './formatter.js';
 import { commandPolicy } from './serve/capabilities.js';
 import { formatSize, info, setQuiet } from './utils.js';
+import { VERSION } from './version.js';
 
 for (const stream of [process.stdout, process.stderr]) {
   stream.on('error', (err: NodeJS.ErrnoException) => {
@@ -46,7 +47,7 @@ function buildProgram(onInvoke: (invocation: Invocation) => void): Command {
   const program = introspectionProgram()
     .name('ms365-remote')
     .description('Run ms365 commands on the ms365 serve host (MS365_REMOTE_URL) or over Tailscale SSH (MS365_REMOTE_SSH)')
-    .version('0.1.0')
+    .version(VERSION)
     .option('--dry-run', 'Preview the API request without executing it')
     .option('-q, --quiet', 'Suppress non-data output (confirmations, progress)');
 
