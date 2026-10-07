@@ -123,7 +123,7 @@ export function registerSharePointCommands(program: Command, getClient: () => Gr
 
   sp
     .command('item <siteId> <itemId>')
-    .description('Get a specific site item')
+    .description('Get one item by ID through the site\'s non-enumerable items relationship (addressing only, no listing)')
     .addOption(outputOption())
     .action(handleErrors(async (siteId: string, itemId: string, opts: OutputOpts) => {
       const response = await getClient().request(`${sitePath(siteId)}/items/${encodeURIComponent(itemId)}`);
