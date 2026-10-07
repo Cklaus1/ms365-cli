@@ -64,7 +64,7 @@ ms365 --org-mode teams list -o table
 - **Scheduling** — accept/decline/tentative meeting invites, free/busy lookup, room finder
 - **File management** — path-based `ls`/`cat`/`cp`, search, upload (streaming + MIME detection, conflict handling), share, create folders, quota
 - **Presence & OOO** — get/set preferred availability and out-of-office auto-replies
-- **Schema introspection** — inspect API endpoints, parameters, and scopes
+- **Schema introspection** — inspect the Graph request(s) behind every Graph-calling command, with parameters and scopes for the most-used ones
 - **AI agent skills** — generate SKILL.md files for Claude Code and other agents from the registered commands
 - **Interactive setup wizard** — built-in app (no Azure portal step) or your own app registration
 - **5 output formats** — table on a terminal, JSON when piped; CSV, YAML and text on request
@@ -322,7 +322,7 @@ ms365 mail get <messageId>                 # Raw API response
 
 - `mail list` lists messages from **all folders** (`/me/messages`); use `--folder inbox` for the inbox only.
 - `mail triage` defaults to the **inbox**. Its `--filter` (default `isRead eq false`) is combined with a `receivedDateTime` condition so Graph accepts the sort order; `--include-read` drops only the unread condition and keeps your `--filter`. It also takes `--all`, `--page-limit` and `--page-delay`.
-- `--folder` (on `list`, `triage`, `shared-list`, `move`, `batch-move`) accepts a well-known name (`inbox`, `drafts`, `sentitems`, `archive`, …), a folder display name (exact match, case-insensitive, nested folders included) or a folder ID. An unknown name, or a name that matches two folders at the same depth, is an error.
+- `--folder` (on `list`, `triage`, `shared-list`, `move`, `batch-move`), `folders --parent`, `create-folder --parent` and `create-rule --move-to` accept a well-known name (`inbox`, `drafts`, `sentitems`, `archive`, …), a folder display name (exact match, case-insensitive, nested folders included) or a folder ID. An unknown name, or a name that matches two folders at the same depth, is an error.
 - `mail read -o json` / `-o yaml` print the structured message including an `attachments` array; `table`, `text` and `csv` print the human view.
 
 #### Sending and replying
@@ -349,7 +349,7 @@ ms365 mail send-draft <id>                 # Send a draft
 #### Attachments
 
 ```bash
-ms365 mail attachments <messageId>                     # List attachments
+ms365 mail attachments <messageId>                     # List attachments (metadata only, no content)
 ms365 mail attachment <messageId> <attachmentId>       # Attachment metadata/content
 ms365 mail add-attachment <messageId> --name "file.pdf" --content-type "application/pdf" --content <base64>
 ms365 mail download-attachment <messageId> <attachmentId> --out ./downloads/
@@ -357,14 +357,14 @@ ms365 mail download-attachment <messageId> <attachmentId> --out invoice.pdf --fo
 ms365 mail delete-attachment <messageId> <attachmentId>  # Asks for confirmation
 ```
 
-`download-attachment` saves the raw bytes. `--out` may be a file or an existing directory; without `--out` the file goes into the current directory. The sender's file name is reduced to its base name, so it cannot escape the target directory. Existing files are never overwritten without `--force`. Reference (link) attachments are refused.
+`attachments` returns `id`, `name`, `contentType`, `size`, `isInline` and `lastModifiedDateTime`; use `attachment` or `download-attachment` for the content. `download-attachment` saves the raw bytes. `--out` may be a file or an existing directory; without `--out` the file goes into the current directory. The sender's file name is reduced to its base name, so it cannot escape the target directory. Existing files are never overwritten without `--force`. Reference (link) attachments are refused.
 
 #### Inbox management
 
 ```bash
 ms365 mail mark-read <id>                  # Mark as read
 ms365 mail mark-unread <id>                # Mark as unread
-ms365 mail flag <id> --due 2026-03-25      # Follow-up flag (start: today, or the due date if earlier)
+ms365 mail flag <id> --due 2026-03-25      # Follow-up flag (start: today in local time, or the due date if earlier)
 ms365 mail flag <id> --due 2026-03-25 --start 2026-03-20
 ms365 mail unflag <id>                     # Remove flag
 ms365 mail complete <id>                   # Mark flag as complete
@@ -372,6 +372,8 @@ ms365 mail categorize <id> --categories "Red category,Blue category"
 ms365 mail move <id> --folder "Archive"
 ms365 mail delete <id>                     # Asks for confirmation
 ```
+
+`flag --start`/`--due` are sent as midnight in your local time zone when Graph documents that zone, otherwise as midnight UTC.
 
 #### Batch operations
 
@@ -386,9 +388,10 @@ If any message fails, the batch exits 1 and prints each failed full ID with its 
 
 ```bash
 ms365 mail folders -o table                # List top-level folders with item counts
-ms365 mail folders --parent <folderId>     # Child folders
+ms365 mail folders --parent Inbox          # Child folders (name or ID)
 ms365 mail folder "Sent Items"             # Lookup folder by name
 ms365 mail create-folder --name "Projects"
+ms365 mail create-folder --name "Clients" --parent Inbox
 ```
 
 #### Inbox rules
@@ -396,12 +399,13 @@ ms365 mail create-folder --name "Projects"
 ```bash
 ms365 mail rules                           # List rules
 ms365 mail rule <ruleId>                   # Get rule details
-ms365 mail create-rule --name "Auto-archive" --from "news@co.com" --move-to <folderId> --mark-read
+ms365 mail create-rule --name "Auto-archive" --from "news@co.com" --move-to Archive --mark-read
 ms365 mail create-rule --name "Disabled draft rule" --subject-contains "[spam]" --delete --no-enabled
 ms365 mail update-rule <ruleId> --enabled false   # Disable a rule
 ```
 
-- `create-rule` needs at least one action (`--move-to <folderId>`, `--forward-to`, `--delete`, `--mark-read`, `--importance`, `--stop-processing`). `--from` matches exact sender addresses. `--sequence <n>` sets the order (default: after the last rule). Rules are enabled unless you pass `--no-enabled`.
+- `create-rule` needs at least one action (`--move-to <name>`, `--forward-to`, `--delete`, `--mark-read`, `--importance low|normal|high`, `--stop-processing`). `--from` matches exact sender addresses. `--sequence <n>` sets the order (default: after the last rule). Rules are enabled unless you pass `--no-enabled`.
+- `--move-to` takes a folder name or ID; well-known names are converted to the real folder ID. Under `--dry-run` the name is shown unchanged.
 - A rule with **no conditions** applies to every incoming message; creating one asks for interactive confirmation.
 - `update-rule --enabled` takes `true/false`, `yes/no`, `on/off` or `1/0`.
 
@@ -448,8 +452,10 @@ ms365 cal update-calendar <calendarId> --name "Renamed"
 ```
 
 - Event reads return times in your local time zone; day and week boundaries are local. If the runtime cannot name the zone (a POSIX `TZ` such as `JST-9`, or an empty `TZ=`), UTC is used.
-- `cal create --timezone` defaults to `UTC`.
-- `decline --propose-start`/`--propose-end` must be given together, cannot be combined with `--no-notify`, and are interpreted in `--timezone` (default: the local zone).
+- Every `--timezone` (`create`, `update`, `free-busy`, `decline`) defaults to the local time zone. A wall-clock `--start`/`--end` is sent with the local IANA zone when Graph documents it; otherwise (e.g. `Europe/Amsterdam`, or a POSIX `TZ` such as `JST-9`) it is converted to the UTC instant and sent as UTC. An explicit `--timezone` is sent as given. A time with `Z` or an offset is sent as UTC.
+- `decline --propose-start`/`--propose-end` must be given together and cannot be combined with `--no-notify`.
+- `free-busy --interval` is an integer from 5 to 1440 minutes (default 30).
+- `create-calendar`/`update-calendar --color` take `auto`, `lightBlue`, `lightGreen`, `lightOrange`, `lightGray`, `lightYellow`, `lightTeal`, `lightPink`, `lightBrown`, `lightRed` or `maxColor`.
 - `update` / `update-calendar` with no fields fail with "Nothing to update" (exit 1). `update --timezone` needs `--start` or `--end`.
 - `rooms` / `room-lists` use the Graph **beta** endpoints `/me/findRooms` and `/me/findRoomLists` (work/school accounts).
 - `list` and `view` take `--top`/`--all`/`--page-limit`/`--page-delay`.
@@ -479,7 +485,7 @@ ms365 drive cp ./report.pdf "/Documents/Q3 report#v2.pdf" --conflict fail
 # Upload / download by ID
 ms365 drive upload <driveId> <parentId> ./report.xlsx   # Auto-detects MIME, streams large files
 ms365 drive upload <driveId> <parentId> ./data.bin --content-type "application/gzip" --conflict replace
-ms365 drive download <driveId> <itemId> <childId> --out ./report.pdf
+ms365 drive download <driveId> <itemId> --out ./report.pdf
 ms365 drive download-shared <shareId> > shared.bin
 
 # Organize
@@ -495,6 +501,8 @@ ms365 drive permissions <driveId> <itemId>
 - `download`, `download-shared` and `cat` write to `--out <path>`, or stream raw bytes to stdout without it. An existing `--out` file is never overwritten without `--force` (exit 1).
 - `--conflict rename|replace|fail` decides what happens when the target name exists: `upload` defaults to `rename`, `cp` to `replace`. The output and the stderr notice show the name OneDrive actually stored.
 - Paths may contain spaces, `#`, `?` and `%`.
+- `share --type` is `view|edit|embed` (default `view`); `--scope` is `anonymous|organization|users` (default `organization`).
+- `permissions` returns every page as one result.
 - Files up to 4 MiB are sent in one request; larger files use a resumable upload session.
 
 ---
@@ -515,7 +523,7 @@ ms365 todo get <listId> <taskId>
 ms365 todo delete <listId> <taskId>
 ```
 
-`--importance` is `low|normal|high`; `--status` is `notStarted|inProgress|completed|waitingOnOthers|deferred`. `update` with no fields fails with "Nothing to update".
+`--importance` is `low|normal|high`; `--status` is `notStarted|inProgress|completed|waitingOnOthers|deferred`. `update` with no fields fails with "Nothing to update". `--due` is sent as midnight in your local time zone when Graph documents that zone, otherwise as midnight UTC.
 
 ---
 
@@ -555,6 +563,9 @@ ms365 --org-mode teams send-channel-message <teamId> <channelId> --body "Hello!"
 ms365 --org-mode teams reply-channel-message <teamId> <channelId> <messageId> --body "Agreed."
 ```
 
+- `list` and `channels` return every page as one result; `members` takes `--top`/`--all`/`--page-limit`/`--page-delay`.
+- `send-channel-message`, `reply-channel-message`, `chat send` and `chat reply` print the created message on stdout (use `-o json` to get its `id`); the confirmation goes to stderr.
+
 ---
 
 ### chat
@@ -587,7 +598,7 @@ ms365 --org-mode sp lists <siteId> -o table
 ms365 --org-mode sp list <siteId> <listId>
 ms365 --org-mode sp list-items <siteId> <listId> --expand "fields" --all
 ms365 --org-mode sp list-item <siteId> <listId> <itemId>
-ms365 --org-mode sp item <siteId> <itemId>
+ms365 --org-mode sp item <siteId> <itemId>  # One item by ID (Graph cannot list site items)
 ms365 --org-mode sp delta                  # Track site changes
 ms365 --org-mode sp delta --delta-link "<nextLink or deltaLink>"
 ```
@@ -621,6 +632,7 @@ ms365 planner update-plan <planId> --title "[ARCHIVED] Old Plan" --etag 'W/"abc"
 - `--due` is that day in your local time zone. `--percent` accepts `0`, `50` or `100`.
 - `create-plan --group` sets the group that owns the plan.
 - Update commands with no field fail with "Nothing to update".
+- `plans`, `my-tasks`, `tasks`, `buckets` and `bucket-tasks` return every page as one result.
 
 ---
 
@@ -652,7 +664,9 @@ ms365 excel format-range <driveId> <itemId> <worksheetId> "A2:D2" --fill-color "
 ms365 excel sort-range <driveId> <itemId> <worksheetId> "A1:D10" --fields '[{"key":0,"ascending":true}]'
 ```
 
-`format-range` needs at least one of `--font-bold [true|false]` (flag alone = true), `--font-color`, `--fill-color`. `sort-range --fields` must be a JSON array.
+- `format-range` needs at least one of `--font-bold [true|false]` (flag alone = true), `--font-color`, `--fill-color`. `sort-range --fields` must be a JSON array.
+- `create-chart --type` is one of the 74 `Excel.ChartType` values of ExcelApi 1.1 (e.g. `ColumnClustered`, `3DPie`, `XYScatterSmooth`); `--series-by` is `auto|columns|rows`.
+- `worksheets` returns every page as one result.
 
 ---
 
@@ -667,7 +681,7 @@ ms365 search query "alpha" --entity "driveItem,site"
 ms365 search people "John"
 ```
 
-Entity types can only be combined within one group:
+`--entity` is a comma-separated list of `driveItem`, `drive`, `list`, `listItem`, `site`, `externalItem`, `message`, `event`, `chatMessage`, `person`, `acronym`, `bookmark`, `qna`. Other values exit 1. Types can only be combined within one group:
 
 | Group | Types |
 |-------|-------|
@@ -716,6 +730,7 @@ ms365 user working-hours
 - `set-ooo --status` is `alwaysEnabled|scheduled|disabled`. `--start`/`--end` are ISO 8601, local time unless they carry `Z` or an offset; `scheduled` needs both, other statuses reject them. `--audience` (`all|contactsOnly|none`) is left unchanged when omitted.
 - `set-presence` sets your **preferred** presence, which shows only while you have a Teams (or other app) presence session. `--availability` is one of `Available`, `Busy`, `DoNotDisturb`, `BeRightBack`, `Away`, `Offline`; `--activity` is optional and derived (the only valid pairs are the same name, and `Offline`/`OffWork`). `--duration` is an ISO 8601 duration (default `PT60M`).
 - `download-photo --out` defaults to `profile-photo.<ext>` from the content type and never overwrites without `--force`.
+- `upload-photo` accepts `.jpg`, `.jpeg`, `.png` and `.gif` files (case-insensitive); other files exit 1 before any upload.
 
 ---
 
@@ -734,7 +749,7 @@ ms365 --org-mode groups distribution-lists # Mail-enabled DLs (excludes Microsof
 ms365 --org-mode groups teams              # Groups with Teams
 ```
 
-`distribution-lists` drops Microsoft 365 (Unified) groups on the client, so a page can hold fewer than `--top` items.
+`owners` takes `--top`/`--all`/`--page-limit`/`--page-delay`. `distribution-lists` drops Microsoft 365 (Unified) groups on the client, so a page can hold fewer than `--top` items.
 
 ---
 
@@ -754,7 +769,7 @@ ms365 --org-mode wf file-announce <driveId> <itemId> --team <id> --channel <id>
 - `standup` and `digest` report the inbox `unreadItemCount`; in JSON `unreadEmails` is a number.
 - `digest` JSON: `week: { start, end }` are local dates (Monday–Sunday); `tasksDueThisWeek` counts open tasks due today through Sunday, and overdue tasks (`overdueTasks[].due`, `YYYY-MM-DD`) are listed separately. All To Do lists are scanned.
 - `meeting-prep` picks the next timed, non-cancelled meeting starting within 24 hours. With none it prints a message on stderr (and `null` with `-o json`).
-- `email-to-task` uses the default To Do list unless `--list` is given; `--importance` is `low|normal|high`.
+- `email-to-task` uses the default To Do list unless `--list` is given; `--importance` is `low|normal|high`. `--due` is midnight in the local time zone (UTC when Graph does not document the zone). Under `--dry-run` the preview uses `<default-list>` and the title `[Email] <subject>`.
 - `file-announce` posts an HTML message (`--message` is plain text and is escaped) and prints the posted message.
 - `focus-time --work-start`/`--work-end` take `HH:MM` (24 h; defaults 09:00/17:00).
 
@@ -762,7 +777,7 @@ ms365 --org-mode wf file-announce <driveId> <itemId> --team <id> --channel <id>
 
 ### schema
 
-Inspect API endpoints before calling them. Runs without login.
+Inspect the Graph requests behind a command before calling it. Runs without login. Every command that calls Microsoft Graph has an entry, keyed `<group>.<command>` (aliases work, e.g. `cal.view`); `auth`, `schema`, `generate-skills` and `serve` have none.
 
 ```bash
 ms365 schema --list                        # JSON array of {endpoint, method, path, description}
@@ -772,7 +787,9 @@ ms365 schema calendar.create -o yaml
 ms365 schema drive.upload
 ```
 
-An unknown endpoint exits 1 with "Did you mean: …" and "Run: ms365 schema --list".
+- `--list` prints one row per Graph request, so a command that makes several requests (lookups, ETag GET then PATCH/DELETE, workflows) has several rows.
+- 35 commonly used endpoints include parameters, scopes and response shape. The others show `httpMethod`, `path` and `description`, or `description` plus `requests: [{httpMethod, path}, …]` for multi-request commands.
+- An unknown endpoint exits 1 with "Did you mean: …" and "Run: ms365 schema --list".
 
 ---
 
@@ -847,10 +864,12 @@ ms365 --dry-run mail list --top 5 --filter "isRead eq false"
 ms365 --dry-run mail send --to "a@b.com" --subject "Test" --body "Hello"
 # stderr: [dry-run] POST https://graph.microsoft.com/v1.0/me/sendMail
 # stderr: [dry-run] Body: {"message":{"subject":"Test",...}}
+# (no "Email sent successfully." line)
 ```
 
 - The `[dry-run]` preview lines always go to **stderr**, even with `--quiet`. Commands with `-o` print a `{ dryRun, method, url, body }` object on stdout, so `-o json` output stays parseable.
 - Dry run skips authentication: it works without logging in (including Planner updates and deletes, which preview `If-Match: <dry-run>` instead of fetching the ETag).
+- Write commands print only the preview under `--dry-run`, never a success line such as `Email sent successfully.`; `mail batch-read`/`batch-move` print no summary.
 
 ---
 
@@ -939,7 +958,7 @@ export MS365_REMOTE_URL=https://ms365-host.<tailnet>.ts.net
 ms365-remote mail list --top 5
 ms365-remote --dry-run mail send --to a@b.com --subject Hi --body Hello
 ms365-remote drive upload <driveId> <folderId> ./report.pdf     # the local file is uploaded
-ms365-remote drive download <driveId> <itemId> <childId> --out ./copy.pdf  # saved locally
+ms365-remote drive download <driveId> <itemId> --out ./copy.pdf  # saved locally
 ```
 
 - Commands, help, usage errors and `-o` (TTY → table, pipe → json) behave as with `ms365`. Output is formatted locally.
