@@ -31,16 +31,26 @@ interface Invocation {
 interface RemoteFile {
   name: string;
   contentType?: string;
-  base64: string;
+  /** One-time `/v1/files/{token}` path on the configured server. */
+  url: string;
 }
 
-interface RemoteResponse {
-  ok: boolean;
-  data?: unknown;
-  files?: RemoteFile[];
+interface ExecuteReply {
+  data: unknown;
+  files: RemoteFile[];
   stderr?: string;
-  error?: { code: string; message: string };
 }
+
+interface ApiError {
+  code: string;
+  message: string;
+}
+
+/** A parsed serve API reply: the success body, or the error object. */
+type ApiReply = { ok: true; status: number; value: object } | { ok: false; error: ApiError };
+
+/** File URLs must stay on the configured server: a path under `/v1/files/`, never another host. */
+const FILE_URL = /^\/v1\/files\/[A-Za-z0-9_-]+$/;
 
 /** The `ms365` command tree, renamed, with every leaf action replaced by a capture of its invocation. */
 function buildProgram(onInvoke: (invocation: Invocation) => void): Command {
@@ -94,24 +104,51 @@ function shellQuote(arg: string): string {
   return `'${arg.replace(/'/g, `'\\''`)}'`;
 }
 
-/** Check the `/v1/execute` response shape; anything else is reported with the HTTP status. */
-function parseRemoteResponse(value: unknown, status: number): RemoteResponse {
-  const invalid = new Error(`ms365 serve answered HTTP ${status} with an unexpected body`);
-  if (typeof value !== 'object' || value === null || !('ok' in value) || typeof value.ok !== 'boolean') throw invalid;
-  if (!value.ok) {
-    const error = 'error' in value ? value.error : undefined;
-    if (typeof error !== 'object' || error === null || !('code' in error) || !('message' in error)) throw invalid;
-    return { ok: false, error: { code: String(error.code), message: String(error.message) } };
+const unexpectedBody = (status: number) => new Error(`ms365 serve answered HTTP ${status} with an unexpected body`);
+
+/** `fetch` with a connection failure reported against the configured server. */
+async function fetchServe(base: URL, url: string, init: RequestInit = {}): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (err) {
+    const cause = err instanceof Error && err.cause instanceof Error ? err.cause.message : String(err);
+    throw new Error(`Cannot reach ms365 serve at ${base.href}: ${cause}`);
   }
+}
+
+/** Check the `{ ok, … }` / `{ ok: false, error }` reply shape; anything else is reported with the HTTP status. */
+async function readReply(base: URL, res: Response): Promise<ApiReply> {
+  let value: unknown;
+  try {
+    value = await res.json();
+  } catch {
+    throw new Error(`ms365 serve at ${base.href} answered HTTP ${res.status} without a JSON body`);
+  }
+  if (typeof value !== 'object' || value === null || !('ok' in value) || typeof value.ok !== 'boolean') throw unexpectedBody(res.status);
+  if (value.ok) return { ok: true, status: res.status, value };
+  const error = 'error' in value ? value.error : undefined;
+  if (typeof error !== 'object' || error === null || !('code' in error) || !('message' in error)) throw unexpectedBody(res.status);
+  return { ok: false, error: { code: String(error.code), message: String(error.message) } };
+}
+
+/** The `/v1/execute` success body: `data`, `files` (one-time URLs on this server) and the child's `stderr`. */
+function parseExecuteReply(value: object, status: number): ExecuteReply {
   const files: RemoteFile[] = [];
   const rawFiles = 'files' in value ? value.files : [];
-  if (!Array.isArray(rawFiles)) throw invalid;
+  if (!Array.isArray(rawFiles)) throw unexpectedBody(status);
   for (const f of rawFiles) {
-    if (typeof f?.name !== 'string' || typeof f.base64 !== 'string') throw invalid;
-    files.push({ name: f.name, contentType: typeof f.contentType === 'string' ? f.contentType : undefined, base64: f.base64 });
+    if (typeof f?.name !== 'string' || typeof f.url !== 'string' || !FILE_URL.test(f.url)) throw unexpectedBody(status);
+    files.push({ name: f.name, contentType: typeof f.contentType === 'string' ? f.contentType : undefined, url: f.url });
   }
   const stderr = 'stderr' in value && typeof value.stderr === 'string' ? value.stderr : undefined;
-  return { ok: true, data: 'data' in value ? value.data : null, files, stderr };
+  return { data: 'data' in value ? value.data : null, files, stderr };
+}
+
+/** Print a server error like the local CLI would; returns the exit code. */
+function reportApiError(error: ApiError): number {
+  // command_failed carries the remote CLI's own stderr ("Error: …"); other codes come from the server.
+  console.error(error.code === 'command_failed' ? error.message : `Error: ${error.message} (${error.code})`);
+  return 1;
 }
 
 /**
@@ -137,7 +174,10 @@ async function runSsh(host: string, argv: string[]): Promise<number> {
   return promise;
 }
 
-/** REMOTE-1d: POST /v1/execute, uploading the local input file and writing returned output files locally. */
+/**
+ * REMOTE-1d: POST /v1/execute. The local input file is streamed to PUT /v1/uploads first and referenced by its
+ * token; a returned output file is streamed from its one-time URL to the local --out (or stdout).
+ */
 async function runHttp(baseUrl: string, invocation: Invocation, dryRun: boolean): Promise<number> {
   let base: URL;
   try {
@@ -146,6 +186,7 @@ async function runHttp(baseUrl: string, invocation: Invocation, dryRun: boolean)
     throw new Error(`MS365_REMOTE_URL is not a URL: ${baseUrl}`);
   }
   if (base.protocol !== 'http:' && base.protocol !== 'https:') throw new Error('MS365_REMOTE_URL must be an http(s) URL');
+  const root = base.href.replace(/\/+$/, '');
 
   const policy = commandPolicy(invocation.command);
   const remote = policy?.remote ? policy : undefined;
@@ -165,57 +206,44 @@ async function runHttp(baseUrl: string, invocation: Invocation, dryRun: boolean)
   }
 
   const positionals: unknown[] = [...invocation.positionals];
-  let upload: string | undefined;
   if (remote?.input !== undefined && remote.input < positionals.length) {
-    upload = path.resolve(invocation.positionals[remote.input]);
+    const upload = path.resolve(invocation.positionals[remote.input]);
     if (!fs.statSync(upload, { throwIfNoEntry: false })?.isFile()) throw new Error(`File not found: ${upload}`);
-    positionals[remote.input] = { $file: 'file0' };
+    // A file-backed Blob: fetch streams it from disk with its Content-Length, so the server can refuse it up front.
+    const res = await fetchServe(base, `${root}/v1/uploads?name=${encodeURIComponent(path.basename(upload))}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/octet-stream' },
+      body: await fs.openAsBlob(upload),
+    });
+    const reply = await readReply(base, res);
+    if (!reply.ok) return reportApiError(reply.error);
+    const token = 'token' in reply.value ? reply.value.token : undefined;
+    if (typeof token !== 'string') throw unexpectedBody(reply.status);
+    positionals[remote.input] = { $upload: token };
   }
 
-  const request = { command: invocation.command, positionals, args };
-  let body: string | FormData;
-  const headers: Record<string, string> = {};
-  if (upload) {
-    body = new FormData();
-    body.append('request', JSON.stringify(request));
-    body.append('file0', await fs.openAsBlob(upload), path.basename(upload));
-  } else {
-    body = JSON.stringify(request);
-    headers['content-type'] = 'application/json';
-  }
-
-  const endpoint = `${base.href.replace(/\/+$/, '')}/v1/execute`;
-  let res: Response;
-  try {
-    res = await fetch(endpoint, { method: 'POST', headers, body });
-  } catch (err) {
-    const cause = err instanceof Error && err.cause instanceof Error ? err.cause.message : String(err);
-    throw new Error(`Cannot reach ms365 serve at ${base.href}: ${cause}`);
-  }
-  let parsed: unknown;
-  try {
-    parsed = await res.json();
-  } catch {
-    throw new Error(`ms365 serve at ${base.href} answered HTTP ${res.status} without a JSON body`);
-  }
-  const payload = parseRemoteResponse(parsed, res.status);
-
-  if (!payload.ok) {
-    const error = payload.error ?? { code: 'unknown', message: `HTTP ${res.status}` };
-    // command_failed carries the remote CLI's own stderr ("Error: …"); other codes come from the server.
-    console.error(error.code === 'command_failed' ? error.message : `Error: ${error.message} (${error.code})`);
-    return 1;
-  }
+  const reply = await readReply(base, await fetchServe(base, `${root}/v1/execute`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ command: invocation.command, positionals, args }),
+  }));
+  if (!reply.ok) return reportApiError(reply.error);
+  const payload = parseExecuteReply(reply.value, reply.status);
 
   if (payload.stderr) info(payload.stderr.replace(/\n$/, ''));
 
-  const file = payload.files?.[0];
+  const file = payload.files[0];
   if (remote?.output && file) {
-    const bytes = Buffer.from(file.base64, 'base64');
     let target = outPath;
     if (outIsDir) target = path.join(outPath!, localFileName(invocation.command, file));
     else if (target === undefined && remote.output === 'named') target = localFileName(invocation.command, file);
-    const saved = await saveOrStream(bytes, { out: target, force: force === true });
+    const res = await fetchServe(base, `${root}${file.url}`);
+    if (!res.ok) {
+      const error = await readReply(base, res);
+      if (!error.ok) return reportApiError(error.error);
+      throw unexpectedBody(res.status);
+    }
+    const saved = await saveOrStream(res.body ?? new Uint8Array(), { out: target, force: force === true });
     if (saved.path) info(`Saved to ${path.resolve(saved.path)} (${formatSize(saved.bytes)})`);
   }
 

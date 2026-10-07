@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { aadRoutes } from '../auth-fake-aad.js';
 import { runCli, tempDir, type FakeRoute } from './run-cli.js';
-import { APP_CAP, call, capsHeader, DEFAULT_CLIENT_ID, loginHome, maxAlive, rawCall, startServer } from './serve-harness.js';
+import { APP_CAP, call, capsHeader, DEFAULT_CLIENT_ID, getFile, loginHome, maxAlive, rawCall, startServer } from './serve-harness.js';
 
 const mode = (p: string) => fs.statSync(p).mode & 0o777;
 const MESSAGES: FakeRoute = { match: '/me/messages', method: 'GET', body: { value: [{ id: 'm1', subject: 'Hello' }] } };
@@ -183,7 +183,7 @@ describe('REMOTE-1b/1c authorization and execution', () => {
   it('kills a command that exceeds --timeout: 504 timeout', async () => {
     const server = await startServer({ home, routes: [{ ...MESSAGES, delayMs: 10_000 }], args: ['--timeout', '1'] });
     const res = await call(server, { caps: capsHeader(['mail.read']), body: { command: 'mail.list' } });
-    expect(res.status).toBe(504);
+    expect(res.status, JSON.stringify(res.body)).toBe(504);
     expect(res.body.error?.code).toBe('timeout');
     await server.stop();
   });
@@ -269,7 +269,7 @@ describe('REMOTE-1c child configuration and load', () => {
     const caps = capsHeader(['mail.read']);
     const results = await Promise.all(Array.from({ length: 20 }, () => call(server, { caps, body: { command: 'mail.list' } })));
     await server.stop();
-    expect(results.map(r => r.status)).toEqual(Array(20).fill(200));
+    expect(results.map(r => r.status), JSON.stringify(results.filter(r => r.status !== 200).map(r => r.body))).toEqual(Array(20).fill(200));
     expect(results.every(r => r.body.ok === true)).toBe(true);
     const events = server.procs();
     expect(childStarts(events, server.proc.pid)).toBe(20);
@@ -281,59 +281,190 @@ describe('REMOTE-1c child configuration and load', () => {
   }, 90_000);
 });
 
-describe('REMOTE-1c files over the API', () => {
-  it('accepts multipart uploads referenced by {"$file"} and returns output files as base64', async () => {
-    const home = await loginHome();
+describe('REMOTE-5 files over the API: uploads and one-time file URLs', () => {
+  let home: string;
+  beforeAll(async () => {
+    home = await loginHome();
+  });
+
+  it('streams an upload to disk and lets /v1/execute reference its single-use token', async () => {
     const bytes = Buffer.from(Array.from({ length: 4096 }, (_, i) => i % 256));
+    const tmp = tempDir('ms365-srv-tmp-');
     const server = await startServer({
       home,
-      routes: [
-        { match: '/content\\?@microsoft\\.graph\\.conflictBehavior=rename', method: 'PUT', body: { id: 'new', name: 'a.bin' } },
-        { match: '/drives/d1/items/i1/children/c1/content', method: 'GET', bodyBase64: bytes.toString('base64'), headers: { 'content-type': 'application/octet-stream' } },
-      ],
+      env: { TMPDIR: tmp },
+      routes: [{ match: '/content\\?@microsoft\\.graph\\.conflictBehavior=rename', method: 'PUT', body: { id: 'new', name: 'a.bin' } }],
     });
-    const caps = capsHeader(['drive.read', 'drive.write']);
+    const caps = capsHeader(['drive.write']);
 
     const plainPath = await call(server, { caps, body: { command: 'drive.upload', positionals: ['d1', 'p1', '/etc/passwd'] } });
     expect(plainPath.status).toBe(400);
-    expect(plainPath.body.error?.message).toContain('$file');
+    expect(plainPath.body.error?.message).toContain('$upload');
 
-    const form = new FormData();
-    form.append('request', JSON.stringify({ command: 'drive.upload', positionals: ['d1', 'p1', { $file: 'f' }] }));
-    form.append('f', new Blob([bytes]), '../a.bin');
-    const encoded = new Response(form);
-    const upload = await call(server, {
-      caps,
-      headers: { 'content-type': encoded.headers.get('content-type')! },
-      raw: Buffer.from(await encoded.arrayBuffer()),
-    });
-    expect(upload.status, JSON.stringify(upload.body)).toBe(200);
-    expect(upload.body.data).toMatchObject({ id: 'new' });
+    // The caller's name is reduced to its last path segment.
+    const up = await call(server, { method: 'PUT', path: `/v1/uploads?name=${encodeURIComponent('../a.bin')}`, caps, raw: bytes });
+    expect(up.status, JSON.stringify(up.body)).toBe(200);
+    expect(up.body).toMatchObject({ ok: true, name: 'a.bin', size: bytes.length });
+    expect(up.body.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
 
-    const download = await call(server, { caps, body: { command: 'drive.download', positionals: ['d1', 'i1', 'c1'], args: { out: '/etc/x.bin', force: true } } });
-    expect(download.status).toBe(200);
-    expect(download.body.files).toHaveLength(1);
-    expect(download.body.files![0]).toMatchObject({ name: 'x.bin', size: bytes.length });
-    expect(Buffer.from(download.body.files![0].base64, 'base64').equals(bytes)).toBe(true);
+    const request = { command: 'drive.upload', positionals: ['d1', 'p1', { $upload: up.body.token }] };
+    const res = await call(server, { caps, body: request });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.data).toMatchObject({ id: 'new' });
+    // Single use: the file is gone once a command consumed it.
+    expect(fs.readdirSync(tmp)).toEqual([]);
+    const again = await call(server, { caps, body: request });
+    expect(again.status).toBe(400);
+    expect(again.body.error?.message).toContain('Unknown or already used upload');
     await server.stop();
 
-    const put = server.requests().find(q => q.method === 'PUT');
-    expect(put!.url).toContain('/drives/d1/items/p1:/a.bin:/content');
-    expect(put!.body).toBe(`base64:${bytes.toString('base64')}`);
+    const puts = server.requests().filter(q => q.method === 'PUT');
+    expect(puts).toHaveLength(1);
+    expect(puts[0].url).toContain('/drives/d1/items/p1:/a.bin:/content');
+    expect(puts[0].body).toBe(`base64:${bytes.toString('base64')}`);
+  });
+
+  it('refuses uploads without a capability grant: 403, nothing stored', async () => {
+    const tmp = tempDir('ms365-srv-tmp-');
+    const server = await startServer({ home, env: { TMPDIR: tmp } });
+    for (const caps of [undefined, JSON.stringify({ [APP_CAP]: [{ agent: 'chief', allow: [] }] })]) {
+      const res = await call(server, { method: 'PUT', path: '/v1/uploads?name=a.bin', caps, raw: Buffer.from('abc') });
+      expect(res.status, String(caps)).toBe(403);
+      expect(res.body.error?.code).toBe('capability_missing');
+    }
+    expect(fs.readdirSync(tmp)).toEqual([]);
+    await server.stop();
+  });
+
+  it('an upload over --max-file-mb is refused with 413 while streaming, and the temp file is gone', async () => {
+    const tmp = tempDir('ms365-srv-tmp-');
+    const server = await startServer({ home, env: { TMPDIR: tmp }, args: ['--max-file-mb', '1'] });
+    const caps = capsHeader(['drive.write']);
+    const twoMb = Buffer.alloc(2 * 1024 * 1024, 0x62);
+    const declared = await call(server, { method: 'PUT', path: '/v1/uploads?name=a.bin', caps, raw: twoMb });
+    // Chunked: no declared length, so only the running count can stop it.
+    const chunked = await call(server, { method: 'PUT', path: '/v1/uploads?name=a.bin', caps, chunks: Array(32).fill(twoMb.subarray(0, 64 * 1024)) });
+    for (const res of [declared, chunked]) {
+      expect(res.status).toBe(413);
+      expect(res.body.error).toEqual({ code: 'invalid_args', message: 'Upload exceeds the 1 MB file limit' });
+    }
+    expect(fs.readdirSync(tmp)).toEqual([]);
+    expect((await call(server, { method: 'GET', path: '/v1/health' })).status).toBe(200);
+    await server.stop();
+    expect(childStarts(server.procs(), server.proc.pid)).toBe(0);
+  });
+
+  it('returns output files as one-time URLs: capability required, single use, deleted after reading', async () => {
+    const bytes = Buffer.from(Array.from({ length: 4096 }, (_, i) => (i * 3) % 256));
+    const tmp = tempDir('ms365-srv-tmp-');
+    const server = await startServer({
+      home,
+      env: { TMPDIR: tmp },
+      routes: [{ match: '/drives/d1/items/i1/content', method: 'GET', bodyBase64: bytes.toString('base64'), headers: { 'content-type': 'application/octet-stream' } }],
+    });
+    const caps = capsHeader(['drive.read']);
+    const download = await call(server, { caps, body: { command: 'drive.download', positionals: ['d1', 'i1'], args: { out: '/etc/x.bin', force: true } } });
+    expect(download.status, JSON.stringify(download.body)).toBe(200);
+    expect(download.body.files).toHaveLength(1);
+    const file = download.body.files![0];
+    expect(file).toEqual({ name: 'x.bin', contentType: 'application/octet-stream', size: bytes.length, url: expect.stringMatching(/^\/v1\/files\/[A-Za-z0-9_-]{43}$/) });
+    expect(file).not.toHaveProperty('base64');
+
+    // A caller lacking the producing command's capability is refused, and the URL stays valid.
+    for (const other of [capsHeader(['mail.read']), undefined]) {
+      const denied = await getFile(server, file.url, other);
+      expect(denied.status).toBe(403);
+      expect(denied.body.error?.code).toBe('capability_missing');
+    }
+    const first = await getFile(server, file.url, caps);
+    expect(first.status).toBe(200);
+    expect(first.headers['content-type']).toBe('application/octet-stream');
+    expect(first.bytes.equals(bytes)).toBe(true);
+    expect(fs.readdirSync(tmp)).toEqual([]);
+    const second = await getFile(server, file.url, caps);
+    expect(second.status).toBe(404);
+    expect(second.body.error?.code).toBe('not_found');
+    await server.stop();
     expect(fs.existsSync('/etc/x.bin')).toBe(false);
+    // The token never reaches the audit log.
+    expect(fs.readFileSync(server.auditLog, 'utf8')).not.toContain(file.url.slice('/v1/files/'.length));
+  });
+
+  it('removes unread output files when the server stops', async () => {
+    const tmp = tempDir('ms365-srv-tmp-');
+    const server = await startServer({
+      home,
+      env: { TMPDIR: tmp },
+      routes: [{ match: '/drives/d1/items/i1/content', method: 'GET', body: 'abc', headers: { 'content-type': 'text/plain' } }],
+    });
+    const res = await call(server, { caps: capsHeader(['drive.read']), body: { command: 'drive.download', positionals: ['d1', 'i1'] } });
+    expect(res.status).toBe(200);
+    expect(fs.readdirSync(tmp)).not.toEqual([]);
+    await server.stop();
+    expect(fs.readdirSync(tmp)).toEqual([]);
   });
 
   it('kills a download that grows past the 25 MB output limit: 502, nothing left on disk', async () => {
-    const home = await loginHome();
     const tmp = tempDir('ms365-srv-tmp-');
-    // 30 MB, then the body never ends: only a size bound (not the 5 s timeout) can end this request with 502.
-    const huge = { match: '/drives/d1/items/i1/children/c1/content', method: 'GET', bodySize: 30 * 1024 * 1024, stall: true, headers: { 'content-type': 'application/octet-stream' } };
-    const server = await startServer({ home, env: { TMPDIR: tmp }, args: ['--timeout', '5'], routes: [huge] });
-    const res = await call(server, { caps: capsHeader(['drive.read']), body: { command: 'drive.download', positionals: ['d1', 'i1', 'c1'] } });
+    // 30 MB, then the body never ends: only a size bound (not the timeout) can end this request with 502.
+    const huge = { match: '/drives/d1/items/i1/content', method: 'GET', bodySize: 30 * 1024 * 1024, stall: true, headers: { 'content-type': 'application/octet-stream' } };
+    const server = await startServer({ home, env: { TMPDIR: tmp }, args: ['--timeout', '60'], routes: [huge] });
+    const res = await call(server, { caps: capsHeader(['drive.read']), body: { command: 'drive.download', positionals: ['d1', 'i1'] } });
     expect(res.status, JSON.stringify(res.body)).toBe(502);
     expect(res.body.error).toEqual({ code: 'command_failed', message: 'Output file exceeds the 25 MB remote limit' });
     expect((await call(server, { method: 'GET', path: '/v1/health' })).status).toBe(200);
     expect(fs.readdirSync(tmp)).toEqual([]);
     await server.stop();
-  }, 20_000);
+  }, 90_000);
+});
+
+describe('REMOTE-4 serve operability', () => {
+  let home: string;
+  beforeAll(async () => {
+    home = await loginHome();
+  });
+
+  it('prints lifecycle lines on stderr even with -q', async () => {
+    const server = await startServer({ globals: ['-q'] });
+    expect(server.stderr()).toContain(`ms365 serve listening on unix:${server.socket}`);
+    expect(await server.stop('SIGTERM')).toEqual({ code: 0, signal: null });
+    expect(server.stderr()).toContain('Received SIGTERM; finishing 0 request(s)');
+    expect(server.stderr()).toContain('ms365 serve stopped');
+  });
+
+  it('rejects --concurrency outside 1-64 and non-integer limits with exit 1', async () => {
+    for (const args of [['--concurrency', '0'], ['--concurrency', '65'], ['--max-file-mb', '0'], ['--max-stdout-mb', '1.5']]) {
+      const r = await runCli(['serve', '--app-cap', APP_CAP, '--port', '0', ...args]);
+      expect(r.code, args.join(' ')).toBe(1);
+      expect(r.stderr, args.join(' ')).toMatch(/Expected an integer/);
+    }
+  });
+
+  it('--concurrency 1 serializes two slow requests', async () => {
+    const server = await startServer({ home, args: ['--concurrency', '1'], routes: [{ ...MESSAGES, delayMs: 500 }] });
+    const caps = capsHeader(['mail.read']);
+    const results = await Promise.all([1, 2].map(() => call(server, { caps, body: { command: 'mail.list' } })));
+    await server.stop();
+    expect(results.map(r => r.status)).toEqual([200, 200]);
+    expect(childStarts(server.procs(), server.proc.pid)).toBe(2);
+    expect(maxAlive(server.procs(), server.proc.pid)).toBe(1);
+  });
+
+  it('--max-stdout-mb bounds command output: 502 with the configured figure', async () => {
+    const big = { match: '/me/messages', method: 'GET', body: { value: [{ id: 'm1', subject: 'x'.repeat(2 * 1024 * 1024) }] } };
+    const server = await startServer({ home, args: ['--max-stdout-mb', '1'], routes: [big] });
+    const res = await call(server, { caps: capsHeader(['mail.read']), body: { command: 'mail.list' } });
+    await server.stop();
+    expect(res.status).toBe(502);
+    expect(res.body.error).toEqual({ code: 'command_failed', message: 'Command output exceeds the 1 MB limit' });
+  });
+
+  it('--max-file-mb 1: a 2 MB upload is refused with 413 naming 1 MB', async () => {
+    const server = await startServer({ home, args: ['--max-file-mb', '1'] });
+    const res = await call(server, { method: 'PUT', path: '/v1/uploads?name=a.bin', caps: capsHeader(['drive.write']), raw: Buffer.alloc(2 * 1024 * 1024) });
+    await server.stop();
+    expect(res.status).toBe(413);
+    expect(res.body.error).toEqual({ code: 'invalid_args', message: 'Upload exceeds the 1 MB file limit' });
+    expect(childStarts(server.procs(), server.proc.pid)).toBe(0);
+  });
 });

@@ -81,7 +81,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
   const ready = Promise.withResolvers<string>();
   proc.stderr!.setEncoding('utf8').on('data', (d) => {
     stderr += d;
-    const m = /listening on (\S+)/.exec(stderr);
+    const m = /listening on (\S+)\n/.exec(stderr); // the whole line: a chunk may end mid-path
     if (m) ready.resolve(m[1]);
   });
   void exited.then(({ code }) => ready.reject(new Error(`serve exited (${code}) before listening:\n${stderr}`)));
@@ -158,8 +158,10 @@ export interface CallOptions {
   /** `Tailscale-App-Capabilities` value; omitted → no header. */
   caps?: string;
   body?: unknown;
-  /** Raw request body (e.g. multipart); set `content-type` in `headers`. */
+  /** Raw request body sent with a Content-Length (e.g. an upload). */
   raw?: Buffer;
+  /** Raw request body sent chunked, without a Content-Length; writing stops once the server answers. */
+  chunks?: Buffer[];
   headers?: Record<string, string>;
 }
 
@@ -168,7 +170,11 @@ export interface ApiBody {
   ok?: boolean;
   request_id?: string;
   data?: unknown;
-  files?: Array<{ name: string; contentType: string; size: number; base64: string }>;
+  files?: Array<{ name: string; contentType: string; size: number; url: string }>;
+  /** `PUT /v1/uploads` reply. */
+  token?: string;
+  name?: string;
+  size?: number;
   stderr?: string;
   error?: { code: string; message: string };
   agent?: string;
@@ -181,22 +187,60 @@ export interface CallResult {
   body: ApiBody;
 }
 
-/** One HTTP request to the server (socket or TCP), as `tailscale serve` would forward it. */
-export function call(server: Server, opts: CallOptions = {}): Promise<CallResult> {
+interface RawResult {
+  status: number;
+  headers: http.IncomingHttpHeaders;
+  bytes: Buffer;
+}
+
+function send(server: Server, opts: CallOptions): Promise<RawResult> {
   const payload = opts.raw ?? (opts.body === undefined ? undefined : JSON.stringify(opts.body));
   const headers: Record<string, string> = { ...opts.headers };
-  if (opts.raw === undefined && payload !== undefined) headers['content-type'] = 'application/json';
+  if (opts.body !== undefined) headers['content-type'] = 'application/json';
   if (opts.caps !== undefined) headers['tailscale-app-capabilities'] = opts.caps;
   const target = server.socket ? { socketPath: server.socket } : { host: '127.0.0.1', port: Number(new URL(server.url!).port) };
-  const { promise, resolve, reject } = Promise.withResolvers<CallResult>();
+  const { promise, resolve, reject } = Promise.withResolvers<RawResult>();
+  let answered = false;
   const req = http.request({ ...target, method: opts.method ?? 'POST', path: opts.path ?? '/v1/execute', headers }, (res) => {
-    let text = '';
-    res.setEncoding('utf8').on('data', (d) => { text += d; });
-    res.on('end', () => resolve({ status: res.statusCode ?? 0, body: text ? JSON.parse(text) as ApiBody : {} }));
+    answered = true;
+    const chunks: Buffer[] = [];
+    res.on('data', (d: Buffer) => chunks.push(d));
+    res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, bytes: Buffer.concat(chunks) }));
   });
-  req.on('error', reject);
-  req.end(payload);
+  // After an early answer (413) the server closes the connection while the body is still being written.
+  req.on('error', (err) => {
+    if (!answered) reject(err);
+  });
+  if (opts.chunks) {
+    void (async () => {
+      for (const chunk of opts.chunks!) {
+        if (answered || req.destroyed) return;
+        // The callback runs once the chunk is flushed, or with an error once the server closed the connection.
+        const written = Promise.withResolvers<void>();
+        req.write(chunk, () => written.resolve());
+        await written.promise;
+      }
+      req.end();
+    })();
+  } else {
+    req.end(payload);
+  }
   return promise;
+}
+
+const parseApiBody = (bytes: Buffer): ApiBody => (bytes.length > 0 ? JSON.parse(bytes.toString('utf8')) as ApiBody : {});
+
+/** One HTTP request to the server (socket or TCP), as `tailscale serve` would forward it. */
+export async function call(server: Server, opts: CallOptions = {}): Promise<CallResult> {
+  const res = await send(server, opts);
+  return { status: res.status, body: parseApiBody(res.bytes) };
+}
+
+/** `GET` a one-time file URL; `body` is the parsed error when the answer is JSON. */
+export async function getFile(server: Server, url: string, caps?: string): Promise<RawResult & { body: ApiBody }> {
+  const res = await send(server, { method: 'GET', path: url, caps });
+  const isJson = res.headers['content-type'] === 'application/json';
+  return { ...res, body: isJson ? parseApiBody(res.bytes) : {} };
 }
 
 /**
