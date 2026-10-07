@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { runCli } from '../e2e/run-cli.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { runCli, tempDir } from '../e2e/run-cli.js';
 
 const LA = 'America/Los_Angeles';
 const ENV = {
@@ -122,7 +124,9 @@ describe('calendar reads (WF-1, PAGE-1)', () => {
       env, routes: [{ match: '/me/events/E1/decline$', method: 'POST', status: 202, body: '' }],
     });
     expect(decline.code).toBe(0);
-    expect(JSON.parse(decline.requests[0].body!).proposedNewTime.start).toEqual({ dateTime: '2026-10-07T09:00:00', timeZone: 'UTC' });
+    // No zone name: the local wall-clock time is converted to the UTC instant (CAL-4).
+    const instant = new Date(Date.UTC(2026, 9, 7, 9) - ({ 'JST-9': 9, 'UTC+3': -3, '': 0 }[tz]! * 3600_000)).toISOString().slice(0, 19);
+    expect(JSON.parse(decline.requests[0].body!).proposedNewTime.start).toEqual({ dateTime: instant, timeZone: 'UTC' });
 
     const digest = await runCli(['workflow', 'digest', '-o', 'json'], {
       env,
@@ -168,5 +172,122 @@ describe('calendar addresses (CAL-2)', () => {
       { emailAddress: { address: 'a@b.cd' }, type: 'required' },
       { emailAddress: { address: 'c@d.ef' }, type: 'required' },
     ]);
+  });
+});
+
+describe('calendar dry-run (DRY-1)', () => {
+  it.each([['accept', 'Event accepted'], ['decline', 'Event declined'], ['tentative', 'Tentatively accepted']])('--dry-run %s prints only the preview', async (cmd, message) => {
+    const r = await runCli(['--dry-run', 'calendar', cmd, 'E1'], { env: ENV });
+    expect(r.code).toBe(0);
+    expect(r.stderr).toContain('[dry-run] POST https://graph.microsoft.com/v1.0/me/events/E1/');
+    expect(r.stderr).not.toContain(message);
+  });
+
+  it('a real accept still confirms on stderr', async () => {
+    const r = await runCli(['calendar', 'accept', 'E1'], { env: ENV, routes: [{ match: '/me/events/E1/accept$', method: 'POST', status: 202, body: '' }] });
+    expect(r.code).toBe(0);
+    expect(r.stderr).toContain('Event accepted.');
+  });
+});
+
+describe('calendar free-busy --interval (CAL-3)', () => {
+  const args = ['calendar', 'free-busy', '--emails', 'a@b.cd', '--start', '2026-10-07T09:00:00', '--end', '2026-10-07T10:00:00', '--timezone', 'UTC', '-o', 'json'];
+  const route = { match: '/me/calendar/getSchedule$', method: 'POST', body: { value: [] } };
+
+  it.each([['abc'], ['15x'], ['0'], ['1441']])('--interval %s exits 1 before any request', async (bad) => {
+    const r = await runCli([...args, '--interval', bad], { env: ENV, routes: [route] });
+    expect(r.code).toBe(1);
+    expect(r.requests).toHaveLength(0);
+    expect(r.stderr).toContain('Expected an integer from 5 to 1440.');
+  });
+
+  it('sends --interval as a number, default 30', async () => {
+    const given = await runCli([...args, '--interval', '15'], { env: ENV, routes: [route] });
+    expect(given.code).toBe(0);
+    expect(JSON.parse(given.requests[0].body!).availabilityViewInterval).toBe(15);
+    const dflt = await runCli(args, { env: ENV, routes: [route] });
+    expect(dflt.code).toBe(0);
+    expect(JSON.parse(dflt.requests[0].body!).availabilityViewInterval).toBe(30);
+  });
+});
+
+describe('calendar time zones (CAL-4)', () => {
+  const create = ['calendar', 'create', '--subject', 's', '--start', '2026-10-07T09:00', '--end', '2026-10-07T10:00', '-o', 'json'];
+  const createRoute = { match: '/me/events$', method: 'POST', status: 201, body: { id: 'E9' } };
+  const sent = async (args: string[], tz: string, route: { match: string; method: string; status?: number; body: unknown }) => {
+    const r = await runCli(args, { env: { ...ENV, TZ: tz }, routes: [route] });
+    expect(r.stderr).toBe('');
+    expect(r.code).toBe(0);
+    return JSON.parse(r.requests[0].body!);
+  };
+
+  it.each([
+    ['America/New_York', '2026-10-07T09:00', '2026-10-07T10:00', 'America/New_York'],
+    ['Asia/Kolkata', '2026-10-07T09:00', '2026-10-07T10:00', 'Asia/Kolkata'],
+    ['Europe/Amsterdam', '2026-10-07T07:00:00', '2026-10-07T08:00:00', 'UTC'],
+    ['JST-9', '2026-10-07T00:00:00', '2026-10-07T01:00:00', 'UTC'],
+  ])('create with TZ=%s sends a zone Graph documents', async (tz, start, end, zone) => {
+    const body = await sent(create, tz, createRoute);
+    expect(body.start).toEqual({ dateTime: start, timeZone: zone });
+    expect(body.end).toEqual({ dateTime: end, timeZone: zone });
+  });
+
+  it('an explicit --timezone wins (create, update, free-busy)', async () => {
+    const tz = 'Europe/Amsterdam';
+    const created = await sent([...create, '--timezone', 'W. Europe Standard Time'], tz, createRoute);
+    expect(created.start).toEqual({ dateTime: '2026-10-07T09:00', timeZone: 'W. Europe Standard Time' });
+    const updated = await sent(['calendar', 'update', 'E1', '--start', '2026-10-07T09:00', '--timezone', 'Europe/Berlin', '-o', 'json'], tz, { match: '/me/events/E1$', method: 'PATCH', body: { id: 'E1' } });
+    expect(updated.start).toEqual({ dateTime: '2026-10-07T09:00', timeZone: 'Europe/Berlin' });
+    const fb = await sent(['calendar', 'free-busy', '--emails', 'a@b.cd', '--start', '2026-10-07T09:00', '--end', '2026-10-07T10:00', '--timezone', 'UTC', '-o', 'json'], tz, { match: '/me/calendar/getSchedule$', method: 'POST', body: { value: [] } });
+    expect(fb.startTime).toEqual({ dateTime: '2026-10-07T09:00', timeZone: 'UTC' });
+  });
+
+  it('update and free-busy default to the local zone, not UTC', async () => {
+    const updated = await sent(['calendar', 'update', 'E1', '--start', '2026-10-07T09:00', '--end', '2026-10-07T10:00', '-o', 'json'], 'America/New_York', { match: '/me/events/E1$', method: 'PATCH', body: { id: 'E1' } });
+    expect(updated.start).toEqual({ dateTime: '2026-10-07T09:00', timeZone: 'America/New_York' });
+    expect(updated.end).toEqual({ dateTime: '2026-10-07T10:00', timeZone: 'America/New_York' });
+    const fb = await sent(['calendar', 'free-busy', '--emails', 'a@b.cd', '--start', '2026-10-07T09:00', '--end', '2026-10-07T10:00', '-o', 'json'], 'Europe/Amsterdam', { match: '/me/calendar/getSchedule$', method: 'POST', body: { value: [] } });
+    expect(fb.startTime).toEqual({ dateTime: '2026-10-07T07:00:00', timeZone: 'UTC' });
+    expect(fb.endTime).toEqual({ dateTime: '2026-10-07T08:00:00', timeZone: 'UTC' });
+  });
+
+  it('help shows no machine-specific default zone', async () => {
+    for (const cmd of ['create', 'update', 'free-busy', 'decline']) {
+      const tokyo = await runCli(['calendar', cmd, '--help'], { env: { ...ENV, TZ: 'Asia/Tokyo' } });
+      const ny = await runCli(['calendar', cmd, '--help'], { env: { ...ENV, TZ: 'America/New_York' } });
+      expect(tokyo.stdout).toBe(ny.stdout);
+      expect(tokyo.stdout.replace(/\s+/g, ' ')).toContain('(default: local time zone)');
+      expect(tokyo.stdout).not.toMatch(/default: "?UTC/);
+    }
+  });
+
+  it('generated calendar skill is the same in every zone', async () => {
+    const skill = async (tz: string) => {
+      const out = tempDir('ms365-skills-');
+      const r = await runCli(['generate-skills', '--output-dir', out], { env: { ...ENV, TZ: tz } });
+      expect(r.code).toBe(0);
+      return fs.readFileSync(path.join(out, 'ms365-calendar', 'SKILL.md'), 'utf8');
+    };
+    const tokyo = await skill('Asia/Tokyo');
+    expect(tokyo).toBe(await skill('America/New_York'));
+    expect(tokyo).not.toContain('Asia/Tokyo');
+  });
+});
+
+describe('calendar colors (CHOICE-1)', () => {
+  it.each([
+    ['create-calendar', '--name', 'n'],
+    ['update-calendar', 'C1'],
+  ])('%s rejects an unknown --color before any request', async (...args) => {
+    const r = await runCli(['calendar', ...args, '--color', 'purple'], { env: ENV, routes: [] });
+    expect(r.code).toBe(1);
+    expect(r.requests).toHaveLength(0);
+    expect(r.stderr).toContain('Allowed choices are auto, lightBlue, lightGreen, lightOrange, lightGray, lightYellow, lightTeal, lightPink, lightBrown, lightRed, maxColor');
+  });
+
+  it('update-calendar sends a listed --color', async () => {
+    const r = await runCli(['calendar', 'update-calendar', 'C1', '--color', 'lightTeal', '-o', 'json'], { env: ENV, routes: [{ match: '/me/calendars/C1$', method: 'PATCH', body: { id: 'C1' } }] });
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.requests[0].body!)).toEqual({ color: 'lightTeal' });
   });
 });

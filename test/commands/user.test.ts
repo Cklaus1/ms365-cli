@@ -204,6 +204,30 @@ describe('USER-3 profile photo', () => {
     expect(r.requests[0].headers['content-type']).toBe('image/png');
     expect(r.stderr).toContain('Profile photo updated.');
   });
+
+  for (const name of ['doc.pdf', 'logo.svg']) {
+    it(`USER-4 upload-photo rejects ${name} before any request`, async () => {
+      const cwd = tempDir();
+      fs.writeFileSync(path.join(cwd, name), PNG);
+      const r = await runCli(['user', 'upload-photo', name], { env: ENV, cwd, routes: [] });
+      expect(r.code).toBe(1);
+      expect(r.requests).toHaveLength(0);
+      expect(r.stderr).toMatch(/JPEG, PNG or GIF/);
+    });
+  }
+
+  it('USER-4 upload-photo detects an upper-case .PNG as image/png', async () => {
+    const cwd = tempDir();
+    fs.writeFileSync(path.join(cwd, 'P.PNG'), PNG);
+    const r = await runCli(['user', 'upload-photo', 'P.PNG'], {
+      env: ENV, cwd,
+      routes: [{ match: '/me/photo/\\$value$', method: 'PUT', status: 200, body: '' }],
+    });
+    expect(r.code).toBe(0);
+    expect(r.requests).toHaveLength(1);
+    expect(r.requests[0].method).toBe('PUT');
+    expect(r.requests[0].headers['content-type']).toBe('image/png');
+  });
 });
 
 describe('CORE-4 user status messages stay off stdout', () => {

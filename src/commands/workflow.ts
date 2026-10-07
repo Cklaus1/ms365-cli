@@ -2,8 +2,9 @@ import { Command, InvalidArgumentError, Option } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
-import { outputOption, info } from '../utils.js';
-import { calendarDate, collectionItems, preferTimezone } from '../graph-helpers.js';
+import { outputOption, info, done } from '../utils.js';
+import { calendarDate, collectionItems, dateOnly, localDate, preferTimezone } from '../graph-helpers.js';
+import { graph } from '../command-tree.js';
 
 type Item = Record<string, unknown>;
 
@@ -60,14 +61,9 @@ function eventStartDay(ev: Item): Date {
   return eventInstant(start);
 }
 
-/** `YYYY-MM-DD` of `d` in the local zone. */
-function localDate(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
 /**
  * The local `YYYY-MM-DD` of a To Do `dueDateTime`. Graph stores a due date as midnight in the zone it
- * was set in (Outlook in Berlin: `2026-10-06T22:00:00` UTC for Oct 7; `todo --due`: `T00:00:00` UTC),
+ * was set in (Outlook in Berlin: `2026-10-06T22:00:00` UTC for Oct 7; `todo --due` before TZ-1: `T00:00:00` UTC),
  * or returns local midnight when the Prefer zone is honoured. The instant is rounded to the nearest
  * local midnight, which is that day whenever the setting zone is within 12 hours of the local one.
  */
@@ -127,8 +123,7 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
   const wf = program.command('workflow').alias('wf').description('Cross-service productivity workflows');
 
   // ── standup-report ──────────────────────────────────────────────
-  wf
-    .command('standup')
+  graph(wf.command('standup'), ['GET /me/calendarView', 'GET /me/mailFolders/inbox'])
     .description("Today's standup: calendar events + inbox unread count")
     .addOption(outputOption('text'))
     .action(handleErrors(async (opts: ReportOptions) => {
@@ -168,8 +163,7 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
     }));
 
   // ── meeting-prep ────────────────────────────────────────────────
-  wf
-    .command('meeting-prep')
+  graph(wf.command('meeting-prep'), ['GET /me/calendarView', 'GET /me/events/{event-id}'])
     .description('Get details for the next upcoming meeting: attendees, agenda, location')
     .option('--event-id <id>', 'Specific event ID (default: next meeting starting in the next 24 hours)')
     .addOption(outputOption('text'))
@@ -192,7 +186,8 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
       }
 
       if (!event) {
-        info('No upcoming meetings in the next 24 hours.');
+        // Under --dry-run the view is only previewed, so "no meeting" would be a guess.
+        if (!client.isDryRun) info('No upcoming meetings in the next 24 hours.');
         if (opts.output !== 'text') console.log(formatOutput(null, opts.output as OutputFormat));
         return;
       }
@@ -245,8 +240,11 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
     }));
 
   // ── email-to-task ───────────────────────────────────────────────
-  wf
-    .command('email-to-task <messageId>')
+  graph(wf.command('email-to-task <messageId>'), [
+    'GET /me/messages/{message-id}',
+    'GET /me/todo/lists',
+    'POST /me/todo/lists/{list-id}/tasks',
+  ])
     .description('Convert an email into a To Do task')
     .option('--list <listId>', 'To Do list ID (default: your default "Tasks" list)')
     .option('--due <date>', 'Due date (YYYY-MM-DD)')
@@ -262,7 +260,9 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
       const msg = msgRes.data as Item;
       const from = (msg.from as Item | undefined)?.emailAddress as Item | undefined;
 
+      // Under --dry-run nothing is read: placeholders stand in for the default list and the subject.
       let listId = opts.list;
+      if (!listId && client.isDryRun) listId = '<default-list>';
       if (!listId) {
         const listsRes = await client.request('/me/todo/lists', {
           queryParams: { '$filter': "wellknownListName eq 'defaultList'" },
@@ -272,8 +272,9 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
         listId = list.id as string;
       }
 
+      const subject = client.isDryRun ? '<subject>' : msg.subject || '(no subject)';
       const task: Item = {
-        title: `[Email] ${msg.subject || '(no subject)'}`,
+        title: `[Email] ${subject}`,
         importance: opts.importance,
         body: {
           contentType: 'text',
@@ -285,7 +286,7 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
           ].filter(Boolean).join('\n'),
         },
       };
-      if (due) task.dueDateTime = { dateTime: `${due}T00:00:00`, timeZone: 'UTC' };
+      if (due) task.dueDateTime = dateOnly(due);
 
       const taskRes = await client.request(`/me/todo/lists/${encodeURIComponent(listId)}/tasks`, {
         method: 'POST',
@@ -295,8 +296,12 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
     }));
 
   // ── weekly-digest ───────────────────────────────────────────────
-  wf
-    .command('digest')
+  graph(wf.command('digest'), [
+    'GET /me/calendarView',
+    'GET /me/mailFolders/inbox',
+    'GET /me/todo/lists',
+    'GET /me/todo/lists/{list-id}/tasks',
+  ])
     .description('Weekly digest: meetings this week, inbox unread count, open tasks due this week and overdue (all To Do lists)')
     .addOption(outputOption('text'))
     .action(handleErrors(async (opts: ReportOptions) => {
@@ -389,8 +394,10 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
     }));
 
   // ── file-announce ───────────────────────────────────────────────
-  wf
-    .command('file-announce <driveId> <itemId>')
+  graph(wf.command('file-announce <driveId> <itemId>'), [
+    'GET /drives/{drive-id}/items/{item-id}',
+    'POST /teams/{team-id}/channels/{channel-id}/messages',
+  ])
     .description('Get file info and post announcement to a Teams channel (requires --org-mode)')
     .requiredOption('--team <teamId>', 'Team ID')
     .requiredOption('--channel <channelId>', 'Channel ID')
@@ -424,13 +431,12 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
         }
       );
 
-      info(`Announced "${file.name}" to channel.`);
+      done(postRes, `Announced "${file.name}" to channel.`);
       console.log(formatOutput(postRes.data, opts.output as OutputFormat));
     }));
 
   // ── focus-time ──────────────────────────────────────────────────
-  wf
-    .command('focus-time')
+  graph(wf.command('focus-time'), ['GET /me/calendarView'])
     .description('Find gaps in your calendar today for focus time')
     .addOption(new Option('--work-start <HH:MM>', 'Work day start (24h)').argParser(clockMinutes).default(9 * 60, '09:00'))
     .addOption(new Option('--work-end <HH:MM>', 'Work day end (24h)').argParser(clockMinutes).default(17 * 60, '17:00'))

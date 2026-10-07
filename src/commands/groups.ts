@@ -5,6 +5,7 @@ import { outputOption } from '../utils.js';
 import { handleErrors } from '../errors.js';
 import { searchQuote } from '../graph-helpers.js';
 import { listRequest, paginationOptions, type ListOptions } from '../list.js';
+import { graph } from '../command-tree.js';
 
 /** Microsoft 365 groups are mail-enabled too; only non-`Unified` groups are distribution lists. */
 function isNotUnified(item: unknown): boolean {
@@ -17,8 +18,7 @@ export function registerGroupsCommands(program: Command, getClient: () => GraphC
   const groups = program.command('groups').description('Microsoft 365 Groups and distribution lists (requires --org-mode)');
 
   paginationOptions(
-    groups
-      .command('list')
+    graph(groups.command('list'), ['GET /groups'])
       .description('List groups in the organization')
       .option('--filter <filter>', 'OData filter')
       .option('--orderby <field>', 'Order results by field')
@@ -42,8 +42,7 @@ export function registerGroupsCommands(program: Command, getClient: () => GraphC
     }));
 
   paginationOptions(
-    groups
-      .command('my')
+    graph(groups.command('my'), ['GET /me/memberOf/microsoft.graph.group'])
       .description('List groups you are a member of')
       .option('--select <fields>', 'Fields to return'),
     50,
@@ -55,8 +54,7 @@ export function registerGroupsCommands(program: Command, getClient: () => GraphC
       await listRequest(getClient(), '/me/memberOf/microsoft.graph.group', { queryParams }, opts);
     }));
 
-  groups
-    .command('get <groupId>')
+  graph(groups.command('get <groupId>'), ['GET /groups/{group-id}'])
     .description('Get group details')
     .addOption(outputOption())
     .action(handleErrors(async (groupId: string, opts) => {
@@ -66,8 +64,7 @@ export function registerGroupsCommands(program: Command, getClient: () => GraphC
     }));
 
   paginationOptions(
-    groups
-      .command('members <groupId>')
+    graph(groups.command('members <groupId>'), ['GET /groups/{group-id}/members'])
       .description('List group members'),
   )
     .addOption(outputOption())
@@ -75,20 +72,18 @@ export function registerGroupsCommands(program: Command, getClient: () => GraphC
       await listRequest(getClient(), `/groups/${encodeURIComponent(groupId)}/members`, {}, opts);
     }));
 
-  groups
-    .command('owners <groupId>')
-    .description('List group owners')
+  paginationOptions(
+    graph(groups.command('owners <groupId>'), ['GET /groups/{group-id}/owners'])
+      .description('List group owners'),
+  )
     .addOption(outputOption())
-    .action(handleErrors(async (groupId: string, opts) => {
-      const client = getClient();
-      const response = await client.request(`/groups/${encodeURIComponent(groupId)}/owners`);
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+    .action(handleErrors(async (groupId: string, opts: ListOptions) => {
+      await listRequest(getClient(), `/groups/${encodeURIComponent(groupId)}/owners`, {}, opts);
     }));
 
   // Distribution lists use the same /groups endpoint with mailEnabled=true; M365 (Unified) groups are dropped client-side.
   paginationOptions(
-    groups
-      .command('distribution-lists')
+    graph(groups.command('distribution-lists'), ['GET /groups'])
       .description('List mail-enabled distribution groups (excludes Microsoft 365 groups)'),
     25,
   )
@@ -102,8 +97,7 @@ export function registerGroupsCommands(program: Command, getClient: () => GraphC
     }));
 
   paginationOptions(
-    groups
-      .command('teams')
+    graph(groups.command('teams'), ['GET /groups'])
       .description('List groups that have a Team associated'),
     25,
   )

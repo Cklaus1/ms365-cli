@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { Command } from 'commander';
 import { configDir } from '../auth.js';
-import { buildCommandTree } from '../command-tree.js';
+import { buildCommandTree, graph } from '../command-tree.js';
 import { handleErrors } from '../errors.js';
 import { integer } from '../list.js';
 import { buildChildEnv } from '../serve/executor.js';
@@ -21,8 +21,7 @@ interface ServeOpts {
 }
 
 export function registerServeCommand(program: Command): void {
-  program
-    .command('serve')
+  graph(program.command('serve'), 'none')
     .description('Serve this host\'s ms365 login to tailnet agents (POST /v1/execute; put behind tailscale serve)')
     .requiredOption('--app-cap <name>', 'Capability key from the tailnet policy (the --accept-app-caps value, e.g. example.com/cap/ms365)')
     .option('--socket <path>', 'Unix socket to listen on, mode 0600 (default: ~/.config/ms365-cli/serve.sock)')

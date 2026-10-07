@@ -5,6 +5,7 @@ import { searchQuote } from '../graph-helpers.js';
 import { integer, listRequest, paginationOptions, type ListOptions } from '../list.js';
 import { outputOption } from '../utils.js';
 import { handleErrors } from '../errors.js';
+import { graph, listChoicesOption, listItems } from '../command-tree.js';
 
 interface QueryOpts { entity: string; top: number; output: string }
 
@@ -21,12 +22,9 @@ const ENTITY_BUCKETS: string[][] = [
   ['acronym', 'bookmark', 'qna'],
 ];
 
+/** Split `--entity` (items already checked against the known types by its option parser) and enforce the bucket rule. */
 function entityTypes(value: string): string[] {
-  const types = value.split(',').map((t) => t.trim()).filter((t) => t !== '');
-  const unknown = types.filter((t) => !ENTITY_BUCKETS.flat().includes(t));
-  if (types.length === 0 || unknown.length > 0) {
-    throw new Error(`Unknown entity type(s): ${unknown.join(', ') || '(none)'}. Valid: ${ENTITY_BUCKETS.flat().join(', ')}.`);
-  }
+  const types = listItems(value);
   if (!ENTITY_BUCKETS.some((bucket) => types.every((t) => bucket.includes(t)))) {
     throw new Error(
       `${types.join(', ')} cannot be combined in one search. Combinable groups: ${ENTITY_BUCKETS.map((b) => b.join('+')).join(' | ')}. Run one search per group.`,
@@ -38,10 +36,15 @@ function entityTypes(value: string): string[] {
 export function registerSearchCommands(program: Command, getClient: () => GraphClient): void {
   const search = program.command('search').description('Microsoft 365 search');
 
-  search
-    .command('query <query>')
+  graph(search.command('query <query>'), ['POST /search/query'])
     .description('Search across Microsoft 365 (KQL query string)')
-    .option('--entity <types>', `Comma-separated entity types from one group: ${ENTITY_BUCKETS.map((b) => b.join(',')).join(' | ')}`, 'driveItem')
+    .addOption(
+      listChoicesOption(
+        '--entity <types>',
+        `Comma-separated entity types from one group: ${ENTITY_BUCKETS.map((b) => b.join(',')).join(' | ')}`,
+        ENTITY_BUCKETS.flat(),
+      ).default('driveItem'),
+    )
     .option('--top <n>', 'Number of results (1-1000)', integer(1, 1000), 10)
     .addOption(outputOption())
     .action(handleErrors(async (query: string, opts: QueryOpts) => {
@@ -61,8 +64,7 @@ export function registerSearchCommands(program: Command, getClient: () => GraphC
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  paginationOptions(search
-    .command('people [query]')
+  paginationOptions(graph(search.command('people [query]'), ['GET /me/people'])
     .description('Search people relevant to you'), 10)
     .addOption(outputOption())
     .action(handleErrors(async (query: string | undefined, opts: ListOptions) => {

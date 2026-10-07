@@ -1,10 +1,20 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
-import { outputOption, confirm, info, parseRecipients, validateEmail } from '../utils.js';
+import { outputOption, confirm, done, parseRecipients, validateEmail } from '../utils.js';
 import { handleErrors } from '../errors.js';
-import { paginationOptions, listRequest, type ListOptions } from '../list.js';
-import { localTimeZone, preferTimezone } from '../graph-helpers.js';
+import { integer, paginationOptions, listRequest, type ListOptions } from '../list.js';
+import { eventTime, preferTimezone } from '../graph-helpers.js';
+import { graph } from '../command-tree.js';
+
+/** Graph `calendarColor` values (https://learn.microsoft.com/en-us/graph/api/resources/calendar). */
+const CALENDAR_COLORS = ['auto', 'lightBlue', 'lightGreen', 'lightOrange', 'lightGray', 'lightYellow', 'lightTeal', 'lightPink', 'lightBrown', 'lightRed', 'maxColor'];
+
+/**
+ * `--timezone` for event times. No Commander default: the local zone is resolved in the action
+ * (`eventTime`), so the command tree and generated skills stay machine-independent.
+ */
+const timezoneOption = (what: string) => new Option('--timezone <tz>', `Time zone of ${what} (default: local time zone)`);
 
 interface EventsOptions extends ListOptions {
   filter?: string;
@@ -42,8 +52,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
   const cal = program.command('calendar').alias('cal').description('Calendar operations');
 
   paginationOptions(
-    cal
-      .command('list')
+    graph(cal.command('list'), ['GET /me/calendars'])
       .description('List calendars'),
   )
     .addOption(outputOption())
@@ -53,8 +62,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
 
   // Event reads ask Graph for times in the local zone (`Prefer: outlook.timezone`) instead of UTC.
   paginationOptions(
-    cal
-      .command('events')
+    graph(cal.command('events'), ['GET /me/events', 'GET /me/calendars/{calendar-id}/events'])
       .description('List calendar events (times in the local time zone)')
       .option('--filter <filter>', 'OData filter')
       .option('--select <fields>', 'Fields to return')
@@ -76,8 +84,10 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
       await listRequest(getClient(), endpoint, { queryParams, headers: preferTimezone() }, opts);
     }));
 
-  cal
-    .command('get <eventId>')
+  graph(cal.command('get <eventId>'), [
+    'GET /me/events/{event-id}',
+    'GET /me/calendars/{calendar-id}/events/{event-id}',
+  ])
     .description('Get a specific event (times in the local time zone)')
     .option('--calendar <calendarId>', 'Specific calendar ID')
     .option('--select <fields>', 'Fields to return')
@@ -95,13 +105,12 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  cal
-    .command('create')
+  graph(cal.command('create'), ['POST /me/events', 'POST /me/calendars/{calendar-id}/events'])
     .description('Create a calendar event')
     .requiredOption('--subject <subject>', 'Event subject')
     .requiredOption('--start <datetime>', 'Start datetime (ISO 8601)')
     .requiredOption('--end <datetime>', 'End datetime (ISO 8601)')
-    .option('--timezone <tz>', 'Timezone', 'UTC')
+    .addOption(timezoneOption('--start/--end'))
     .option('--body <body>', 'Event body/description')
     .option('--location <location>', 'Event location')
     .option('--attendees <emails>', 'Comma-separated attendee emails')
@@ -111,8 +120,8 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     .action(handleErrors(async (opts) => {
       const event: Record<string, unknown> = {
         subject: opts.subject,
-        start: { dateTime: opts.start, timeZone: opts.timezone },
-        end: { dateTime: opts.end, timeZone: opts.timezone },
+        start: eventTime(opts.start, opts.timezone),
+        end: eventTime(opts.end, opts.timezone),
       };
 
       if (opts.body) {
@@ -138,13 +147,15 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  cal
-    .command('update <eventId>')
+  graph(cal.command('update <eventId>'), [
+    'PATCH /me/events/{event-id}',
+    'PATCH /me/calendars/{calendar-id}/events/{event-id}',
+  ])
     .description('Update a calendar event')
     .option('--subject <subject>', 'Event subject')
     .option('--start <datetime>', 'Start datetime')
     .option('--end <datetime>', 'End datetime')
-    .option('--timezone <tz>', 'Timezone of --start/--end (default UTC)')
+    .addOption(timezoneOption('--start/--end'))
     .option('--body <body>', 'Event body')
     .option('--location <location>', 'Event location')
     .option('--calendar <calendarId>', 'Specific calendar ID')
@@ -155,8 +166,8 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
       }
       const patch: Record<string, unknown> = {};
       if (opts.subject) patch.subject = opts.subject;
-      if (opts.start) patch.start = { dateTime: opts.start, timeZone: opts.timezone || 'UTC' };
-      if (opts.end) patch.end = { dateTime: opts.end, timeZone: opts.timezone || 'UTC' };
+      if (opts.start) patch.start = eventTime(opts.start, opts.timezone);
+      if (opts.end) patch.end = eventTime(opts.end, opts.timezone);
       if (opts.body) patch.body = { contentType: 'Text', content: opts.body };
       if (opts.location) patch.location = { displayName: opts.location };
       if (Object.keys(patch).length === 0) {
@@ -176,8 +187,10 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  cal
-    .command('delete <eventId>')
+  graph(cal.command('delete <eventId>'), [
+    'DELETE /me/events/{event-id}',
+    'DELETE /me/calendars/{calendar-id}/events/{event-id}',
+  ])
     .description('Delete a calendar event')
     .option('--calendar <calendarId>', 'Specific calendar ID')
     .action(handleErrors(async (eventId: string, opts) => {
@@ -187,13 +200,12 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
         ? `/me/calendars/${encodeURIComponent(opts.calendar)}/events/${encodeURIComponent(eventId)}`
         : `/me/events/${encodeURIComponent(eventId)}`;
 
-      await client.request(endpoint, { method: 'DELETE' });
-      info('Event deleted.');
+      const res = await client.request(endpoint, { method: 'DELETE' });
+      done(res, 'Event deleted.');
     }));
 
   paginationOptions(
-    cal
-      .command('view')
+    graph(cal.command('view'), ['GET /me/calendarView'])
       .description('Get calendar view (time range; times in the local time zone)')
       .requiredOption('--start <datetime>', 'Start datetime (ISO 8601)')
       .requiredOption('--end <datetime>', 'End datetime (ISO 8601)')
@@ -210,31 +222,29 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     }));
 
   // ── Respond to event (accept/decline/tentative) ─────────────
-  cal
-    .command('accept <eventId>')
+  graph(cal.command('accept <eventId>'), ['POST /me/events/{event-id}/accept'])
     .description('Accept a meeting invite')
     .option('--comment <text>', 'Response comment')
     .option('--no-notify', 'Don\'t send response to organizer')
     .action(handleErrors(async (eventId: string, opts) => {
       const client = getClient();
-      await client.request(`/me/events/${encodeURIComponent(eventId)}/accept`, {
+      const res = await client.request(`/me/events/${encodeURIComponent(eventId)}/accept`, {
         method: 'POST',
         body: JSON.stringify({
           comment: opts.comment || '',
           sendResponse: opts.notify !== false,
         }),
       });
-      info('Event accepted.');
+      done(res, 'Event accepted.');
     }));
 
-  cal
-    .command('decline <eventId>')
+  graph(cal.command('decline <eventId>'), ['POST /me/events/{event-id}/decline'])
     .description('Decline a meeting invite')
     .option('--comment <text>', 'Response comment')
     .option('--no-notify', 'Don\'t send response to organizer (not with --propose-start)')
     .option('--propose-start <datetime>', 'Propose new start time (ISO 8601, without offset)')
     .option('--propose-end <datetime>', 'Propose new end time (ISO 8601, without offset)')
-    .option('--timezone <tz>', 'Time zone of the proposed times (default: local time zone)')
+    .addOption(timezoneOption('the proposed times'))
     .action(handleErrors(async (eventId: string, opts: DeclineOptions) => {
       const body: Record<string, unknown> = {
         comment: opts.comment || '',
@@ -248,45 +258,42 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
         if (opts.notify === false) {
           throw new Error('--propose-start cannot be combined with --no-notify: a proposed time is sent with the response.');
         }
-        const timeZone = opts.timezone ?? localTimeZone();
         body.proposedNewTime = {
-          start: { dateTime: opts.proposeStart, timeZone },
-          end: { dateTime: opts.proposeEnd, timeZone },
+          start: eventTime(opts.proposeStart, opts.timezone),
+          end: eventTime(opts.proposeEnd, opts.timezone),
         };
       }
-      await getClient().request(`/me/events/${encodeURIComponent(eventId)}/decline`, {
+      const res = await getClient().request(`/me/events/${encodeURIComponent(eventId)}/decline`, {
         method: 'POST',
         body: JSON.stringify(body),
       });
-      info(body.proposedNewTime ? 'Event declined with proposed new time.' : 'Event declined.');
+      done(res, body.proposedNewTime ? 'Event declined with proposed new time.' : 'Event declined.');
     }));
 
-  cal
-    .command('tentative <eventId>')
+  graph(cal.command('tentative <eventId>'), ['POST /me/events/{event-id}/tentativelyAccept'])
     .description('Tentatively accept a meeting invite')
     .option('--comment <text>', 'Response comment')
     .option('--no-notify', 'Don\'t send response to organizer')
     .action(handleErrors(async (eventId: string, opts) => {
       const client = getClient();
-      await client.request(`/me/events/${encodeURIComponent(eventId)}/tentativelyAccept`, {
+      const res = await client.request(`/me/events/${encodeURIComponent(eventId)}/tentativelyAccept`, {
         method: 'POST',
         body: JSON.stringify({
           comment: opts.comment || '',
           sendResponse: opts.notify !== false,
         }),
       });
-      info('Tentatively accepted.');
+      done(res, 'Tentatively accepted.');
     }));
 
   // ── Free/Busy (scheduling) ─────────────────────────────────
-  cal
-    .command('free-busy')
+  graph(cal.command('free-busy'), ['POST /me/calendar/getSchedule'])
     .description('Get free/busy schedule for one or more users')
     .requiredOption('--emails <addresses>', 'Comma-separated email addresses to check')
     .requiredOption('--start <datetime>', 'Start datetime (ISO 8601)')
     .requiredOption('--end <datetime>', 'End datetime (ISO 8601)')
-    .option('--timezone <tz>', 'Timezone', 'UTC')
-    .option('--interval <min>', 'Time slot interval in minutes', '30')
+    .addOption(timezoneOption('--start/--end'))
+    .addOption(new Option('--interval <min>', 'Time slot interval in minutes (5-1440)').argParser(integer(5, 1440)).default(30))
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const schedules = opts.emails.split(',').map(validateEmail);
@@ -295,9 +302,9 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
         method: 'POST',
         body: JSON.stringify({
           schedules,
-          startTime: { dateTime: opts.start, timeZone: opts.timezone },
-          endTime: { dateTime: opts.end, timeZone: opts.timezone },
-          availabilityViewInterval: parseInt(opts.interval),
+          startTime: eventTime(opts.start, opts.timezone),
+          endTime: eventTime(opts.end, opts.timezone),
+          availabilityViewInterval: opts.interval,
         }),
       });
 
@@ -305,8 +312,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     }));
 
   // ── Room finder (beta-only endpoints; work/school accounts) ─
-  cal
-    .command('rooms')
+  graph(cal.command('rooms'), ['GET /me/findRooms'])
     .description('List meeting rooms in your organization (Graph beta endpoint)')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
@@ -314,8 +320,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  cal
-    .command('room-lists')
+  graph(cal.command('room-lists'), ['GET /me/findRoomLists'])
     .description('List room lists / buildings in your organization (Graph beta endpoint)')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
@@ -324,11 +329,10 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     }));
 
   // ── Calendar CRUD ───────────────────────────────────────────
-  cal
-    .command('create-calendar')
+  graph(cal.command('create-calendar'), ['POST /me/calendars'])
     .description('Create a secondary calendar')
     .requiredOption('--name <name>', 'Calendar display name')
-    .option('--color <color>', 'Color: auto, lightBlue, lightGreen, lightOrange, lightGray, lightYellow, lightTeal, lightPink, lightBrown, lightRed, maxColor')
+    .addOption(new Option('--color <color>', 'Color').choices(CALENDAR_COLORS))
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();
@@ -342,11 +346,10 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  cal
-    .command('update-calendar <calendarId>')
+  graph(cal.command('update-calendar <calendarId>'), ['PATCH /me/calendars/{calendar-id}'])
     .description('Update a calendar')
     .option('--name <name>', 'Display name')
-    .option('--color <color>', 'Color')
+    .addOption(new Option('--color <color>', 'Color').choices(CALENDAR_COLORS))
     .addOption(outputOption())
     .action(handleErrors(async (calendarId: string, opts) => {
       const patch: Record<string, unknown> = {};

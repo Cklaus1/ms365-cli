@@ -7,6 +7,7 @@ import { handleErrors } from '../errors.js';
 import { saveOrStream } from '../files.js';
 import { calendarDate, dateOnly, localDate, odataQuote, searchQuote } from '../graph-helpers.js';
 import { integer, listRequest, paginationOptions } from '../list.js';
+import { graph } from '../command-tree.js';
 import { truncate, parseRecipients, formatSize, outputOption, confirm, done, info } from '../utils.js';
 
 // Well-known folder names that Graph API supports directly
@@ -83,8 +84,12 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
   const mail = program.command('mail').description('Outlook mail operations');
 
   paginationOptions(
-    mail
-      .command('list')
+    graph(mail.command('list'), [
+      'GET /me/messages',
+      'GET /me/mailFolders',
+      'GET /me/mailFolders/{folder-id}/childFolders',
+      'GET /me/mailFolders/{folder}/messages',
+    ])
       .description('List messages across all folders (use --folder inbox for the inbox only)'),
     10,
   )
@@ -106,8 +111,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       await listRequest(client, endpoint, { queryParams }, opts);
     }));
 
-  mail
-    .command('get <messageId>')
+  graph(mail.command('get <messageId>'), ['GET /me/messages/{message-id}'])
     .description('Get a specific message (raw API response)')
     .option('--select <fields>', 'Comma-separated fields to return')
     .addOption(outputOption())
@@ -120,8 +124,10 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  mail
-    .command('read <messageId>')
+  graph(mail.command('read <messageId>'), [
+    'GET /me/messages/{message-id}',
+    'GET /me/messages/{message-id}/attachments',
+  ])
     .description('Read a message with full body, attachments info, and metadata')
     .option('--text', 'Prefer plain text body over HTML')
     .addOption(outputOption())
@@ -199,8 +205,11 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     }));
 
   paginationOptions(
-    mail
-      .command('triage')
+    graph(mail.command('triage'), [
+      'GET /me/mailFolders',
+      'GET /me/mailFolders/{folder-id}/childFolders',
+      'GET /me/mailFolders/{folder}/messages',
+    ])
       .description('Show inbox summary — unread inbox messages with key metadata'),
     20,
   )
@@ -262,8 +271,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       console.log(formatOutput(rows, opts.output as OutputFormat));
     }));
 
-  mail
-    .command('send')
+  graph(mail.command('send'), ['POST /me/sendMail'])
     .description('Send an email')
     .requiredOption('--to <addresses>', 'Comma-separated recipient email addresses')
     .option('--cc <addresses>', 'Comma-separated CC addresses')
@@ -300,8 +308,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       done(res, 'Email sent successfully.');
     }));
 
-  mail
-    .command('delete <messageId>')
+  graph(mail.command('delete <messageId>'), ['DELETE /me/messages/{message-id}'])
     .description('Delete a message')
     .action(handleErrors(async (messageId: string) => {
       await confirm(`Delete message ${messageId.substring(0, 16)}...?`);
@@ -310,8 +317,11 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       done(res, 'Message deleted.');
     }));
 
-  mail
-    .command('move <messageId>')
+  graph(mail.command('move <messageId>'), [
+    'GET /me/mailFolders',
+    'GET /me/mailFolders/{folder-id}/childFolders',
+    'POST /me/messages/{message-id}/move',
+  ])
     .description('Move a message to a folder')
     .requiredOption('--folder <name>', 'Destination folder name or ID')
     .action(handleErrors(async (messageId: string, opts) => {
@@ -324,7 +334,11 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       done(res, 'Message moved.');
     }));
 
-  paginationOptions(mail.command('folders').description('List mail folders'), 100)
+  paginationOptions(graph(mail.command('folders'), [
+    'GET /me/mailFolders',
+    'GET /me/mailFolders/{folder-id}/childFolders',
+    'GET /me/mailFolders/{folder}/childFolders',
+  ]).description('List mail folders'), 100)
     .option('--parent <name>', 'List child folders of this folder (name or ID, e.g. "Inbox")')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
@@ -337,8 +351,11 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       }, opts);
     }));
 
-  mail
-    .command('folder <name>')
+  graph(mail.command('folder <name>'), [
+    'GET /me/mailFolders',
+    'GET /me/mailFolders/{folder-id}/childFolders',
+    'GET /me/mailFolders/{folder}',
+  ])
     .description('Find a folder by display name (e.g. "Drafts", "Sent Items", "Archive")')
     .addOption(outputOption())
     .action(handleErrors(async (folderName: string, opts) => {
@@ -348,8 +365,12 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  mail
-    .command('create-folder')
+  graph(mail.command('create-folder'), [
+    'POST /me/mailFolders',
+    'GET /me/mailFolders',
+    'GET /me/mailFolders/{folder-id}/childFolders',
+    'POST /me/mailFolders/{folder}/childFolders',
+  ])
     .description('Create a mail folder')
     .requiredOption('--name <name>', 'Folder display name')
     .option('--parent <name>', 'Parent folder name or ID (default: root)')
@@ -367,8 +388,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     }));
 
   // ── Drafts ────────────────────────────────────────────────────
-  mail
-    .command('draft')
+  graph(mail.command('draft'), ['POST /me/messages'])
     .description('Create a draft email')
     .requiredOption('--to <addresses>', 'Comma-separated recipient email addresses')
     .requiredOption('--subject <subject>', 'Email subject')
@@ -402,7 +422,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  paginationOptions(mail.command('drafts').description('List draft emails'), 10)
+  paginationOptions(graph(mail.command('drafts'), ['GET /me/mailFolders/drafts/messages']).description('List draft emails'), 10)
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       await listRequest(getClient(), '/me/mailFolders/drafts/messages', {
@@ -413,8 +433,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       }, opts);
     }));
 
-  mail
-    .command('update-draft <messageId>')
+  graph(mail.command('update-draft <messageId>'), ['PATCH /me/messages/{message-id}'])
     .description('Update an existing draft')
     .option('--to <addresses>', 'Comma-separated recipient emails')
     .option('--cc <addresses>', 'Comma-separated CC addresses')
@@ -445,8 +464,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  mail
-    .command('send-draft <messageId>')
+  graph(mail.command('send-draft <messageId>'), ['POST /me/messages/{message-id}/send'])
     .description('Send an existing draft')
     .action(handleErrors(async (messageId: string) => {
       const client = getClient();
@@ -456,7 +474,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       done(res, 'Draft sent.');
     }));
 
-  paginationOptions(mail.command('attachments <messageId>').description('List attachments for a message'))
+  paginationOptions(graph(mail.command('attachments <messageId>'), ['GET /me/messages/{message-id}/attachments']).description('List attachments for a message'))
     .addOption(outputOption())
     .action(handleErrors(async (messageId: string, opts) => {
       // Metadata only: without $select Graph returns every fileAttachment's contentBytes.
@@ -465,8 +483,9 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       }, opts);
     }));
 
-  mail
-    .command('attachment <messageId> <attachmentId>')
+  graph(mail.command('attachment <messageId> <attachmentId>'), [
+    'GET /me/messages/{message-id}/attachments/{attachment-id}',
+  ])
     .description('Get a specific attachment')
     .addOption(outputOption())
     .action(handleErrors(async (messageId: string, attachmentId: string, opts) => {
@@ -477,8 +496,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  mail
-    .command('add-attachment <messageId>')
+  graph(mail.command('add-attachment <messageId>'), ['POST /me/messages/{message-id}/attachments'])
     .description('Add an attachment to a draft message')
     .requiredOption('--name <name>', 'Attachment file name')
     .requiredOption('--content-type <type>', 'MIME content type')
@@ -501,8 +519,9 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  mail
-    .command('delete-attachment <messageId> <attachmentId>')
+  graph(mail.command('delete-attachment <messageId> <attachmentId>'), [
+    'DELETE /me/messages/{message-id}/attachments/{attachment-id}',
+  ])
     .description('Delete an attachment')
     .action(handleErrors(async (messageId: string, attachmentId: string) => {
       await confirm(`Delete attachment ${attachmentId.substring(0, 16)}...?`);
@@ -514,8 +533,10 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       done(res, 'Attachment deleted.');
     }));
 
-  mail
-    .command('download-attachment <messageId> <attachmentId>')
+  graph(mail.command('download-attachment <messageId> <attachmentId>'), [
+    'GET /me/messages/{message-id}/attachments/{attachment-id}',
+    'GET /me/messages/{message-id}/attachments/{attachment-id}/$value',
+  ])
     .description('Download an attachment to a file')
     .option('--out <path>', 'Output file, or an existing directory (default: the attachment name in the current directory)')
     .option('--force', 'Overwrite an existing file')
@@ -543,8 +564,10 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       if (saved.path) info(`Saved to ${path.resolve(saved.path)} (${formatSize(saved.bytes)})`);
     }));
 
-  mail
-    .command('reply <messageId>')
+  graph(mail.command('reply <messageId>'), [
+    'POST /me/messages/{message-id}/reply',
+    'POST /me/messages/{message-id}/replyAll',
+  ])
     .description('Reply to a message')
     .requiredOption('--body <body>', 'Reply body')
     .option('--html', 'Send body as HTML')
@@ -564,8 +587,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     }));
 
   // ── Forward ──────────────────────────────────────────────────
-  mail
-    .command('forward <messageId>')
+  graph(mail.command('forward <messageId>'), ['POST /me/messages/{message-id}/forward'])
     .description('Forward a message')
     .requiredOption('--to <addresses>', 'Comma-separated recipient emails')
     .option('--comment <text>', 'Comment to include with forward')
@@ -580,8 +602,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     }));
 
   // ── Mark read/unread ────────────────────────────────────────
-  mail
-    .command('mark-read <messageId>')
+  graph(mail.command('mark-read <messageId>'), ['PATCH /me/messages/{message-id}'])
     .description('Mark a message as read')
     .action(handleErrors(async (messageId: string) => {
       const client = getClient();
@@ -592,8 +613,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       done(res, 'Marked as read.');
     }));
 
-  mail
-    .command('mark-unread <messageId>')
+  graph(mail.command('mark-unread <messageId>'), ['PATCH /me/messages/{message-id}'])
     .description('Mark a message as unread')
     .action(handleErrors(async (messageId: string) => {
       const client = getClient();
@@ -605,8 +625,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     }));
 
   // ── Flag / unflag ───────────────────────────────────────────
-  mail
-    .command('flag <messageId>')
+  graph(mail.command('flag <messageId>'), ['PATCH /me/messages/{message-id}'])
     .description('Set follow-up flag on a message')
     .option('--due <date>', 'Due date (YYYY-MM-DD)')
     .option('--start <date>', 'Start date (YYYY-MM-DD; with --due default: local today, or the due date if earlier)')
@@ -626,8 +645,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       done(res, 'Message flagged.');
     }));
 
-  mail
-    .command('unflag <messageId>')
+  graph(mail.command('unflag <messageId>'), ['PATCH /me/messages/{message-id}'])
     .description('Remove follow-up flag from a message')
     .action(handleErrors(async (messageId: string) => {
       const client = getClient();
@@ -638,8 +656,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       done(res, 'Flag removed.');
     }));
 
-  mail
-    .command('complete <messageId>')
+  graph(mail.command('complete <messageId>'), ['PATCH /me/messages/{message-id}'])
     .description('Mark a flagged message as complete')
     .action(handleErrors(async (messageId: string) => {
       const client = getClient();
@@ -651,8 +668,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     }));
 
   // ── Categories ──────────────────────────────────────────────
-  mail
-    .command('categorize <messageId>')
+  graph(mail.command('categorize <messageId>'), ['PATCH /me/messages/{message-id}'])
     .description('Set categories on a message')
     .requiredOption('--categories <names>', 'Comma-separated category names (e.g. "Red category,Blue category")')
     .action(handleErrors(async (messageId: string, opts) => {
@@ -667,8 +683,12 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
 
   // Shared mailbox commands (require --org-mode)
   paginationOptions(
-    mail
-      .command('shared-list <userId>')
+    graph(mail.command('shared-list <userId>'), [
+      'GET /users/{user-id}/messages',
+      'GET /users/{user-id}/mailFolders',
+      'GET /users/{user-id}/mailFolders/{folder-id}/childFolders',
+      'GET /users/{user-id}/mailFolders/{folder}/messages',
+    ])
       .description('List shared mailbox messages (requires --org-mode)'),
     10,
   )
@@ -689,8 +709,9 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       await listRequest(client, endpoint, { queryParams }, opts);
     }));
 
-  mail
-    .command('shared-get <userId> <messageId>')
+  graph(mail.command('shared-get <userId> <messageId>'), [
+    'GET /users/{user-id}/messages/{message-id}',
+  ])
     .description('Get a shared mailbox message (requires --org-mode)')
     .option('--select <fields>', 'Fields to return')
     .addOption(outputOption())
@@ -706,8 +727,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  mail
-    .command('shared-send <userId>')
+  graph(mail.command('shared-send <userId>'), ['POST /users/{user-id}/sendMail'])
     .description('Send email from a shared mailbox (requires --org-mode)')
     .requiredOption('--to <addresses>', 'Comma-separated recipient emails')
     .requiredOption('--subject <subject>', 'Email subject')
@@ -732,14 +752,13 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     }));
 
   // ── Inbox rules ─────────────────────────────────────────────
-  paginationOptions(mail.command('rules').description('List inbox rules'))
+  paginationOptions(graph(mail.command('rules'), ['GET /me/mailFolders/inbox/messageRules']).description('List inbox rules'))
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       await listRequest(getClient(), RULES, {}, opts);
     }));
 
-  mail
-    .command('rule <ruleId>')
+  graph(mail.command('rule <ruleId>'), ['GET /me/mailFolders/inbox/messageRules/{rule-id}'])
     .description('Get a specific inbox rule')
     .addOption(outputOption())
     .action(handleErrors(async (ruleId: string, opts) => {
@@ -748,8 +767,13 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  mail
-    .command('create-rule')
+  graph(mail.command('create-rule'), [
+    'GET /me/mailFolders',
+    'GET /me/mailFolders/{folder-id}/childFolders',
+    'GET /me/mailFolders/{folder}',
+    'GET /me/mailFolders/inbox/messageRules',
+    'POST /me/mailFolders/inbox/messageRules',
+  ])
     .description('Create an inbox rule')
     .requiredOption('--name <name>', 'Rule display name')
     .option('--from <addresses>', 'Comma-separated sender addresses to match (exact addresses)')
@@ -833,8 +857,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  mail
-    .command('update-rule <ruleId>')
+  graph(mail.command('update-rule <ruleId>'), ['PATCH /me/mailFolders/inbox/messageRules/{rule-id}'])
     .description('Update an inbox rule')
     .option('--name <name>', 'Rule display name')
     .option('--enabled <bool>', 'Enable or disable the rule: true/false (also yes/no, on/off, 1/0)', (value: string) => {
@@ -859,8 +882,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
 
 
   // ── Batch operations ────────────────────────────────────────
-  mail
-    .command('batch-read <messageIds>')
+  graph(mail.command('batch-read <messageIds>'), ['PATCH /me/messages/{message-id}'])
     .description('Mark multiple messages as read (comma-separated IDs)')
     .action(handleErrors(async (messageIds: string) => {
       const client = getClient();
@@ -882,8 +904,11 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       failOnBatchErrors(failed, ids.length);
     }));
 
-  mail
-    .command('batch-move <messageIds>')
+  graph(mail.command('batch-move <messageIds>'), [
+    'GET /me/mailFolders',
+    'GET /me/mailFolders/{folder-id}/childFolders',
+    'POST /me/messages/{message-id}/move',
+  ])
     .description('Move multiple messages to a folder (comma-separated IDs)')
     .requiredOption('--folder <name>', 'Destination folder name or ID')
     .action(handleErrors(async (messageIds: string, opts) => {

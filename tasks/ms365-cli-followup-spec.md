@@ -52,18 +52,21 @@ Confidence: `[verified]` reproduced; `[code]` read from source, unambiguous; `[g
 - **Fix:** one helper (e.g. `done(res, message)` in `src/utils.ts` or `src/graph-helpers.ts`) that calls `info()` only when the response was real (`status !== 0`). Apply it to all 28 lines and move `teams.ts` `post()` and the guarded `user.ts` lines onto it. `drive upload`: skip the `Uploading` line under dry-run. Meeting-prep: under dry-run, skip the empty-state line.
 - [REVISED: adversarial review] Batch commands (`mail batch-read`/`batch-move`, N requests, one aggregate line): under dry-run print no summary (Q1); gate on `client.isDryRun` and still run `failOnBatchErrors`.
 - **Accept:** one table-driven `--dry-run` e2e test covering at least `mail send`, `mail reply`, `mail flag`, `mail batch-move`, `calendar accept`, `drive upload`, `workflow file-announce`, `workflow meeting-prep`: stderr has the `[dry-run]` preview and none of the success/empty-state text; exit 0. Delete commands are refused by `confirm()` without a TTY, so they are covered by the shared helper rather than e2e. No source-text grep tests. README `252-253,847-850` updated.
+- [REVISED: implementation] The DRY-1 cases are table-driven per owning test file (`mail-followup`, `calendar`, `workflow`, `drive` tests) instead of one shared table; the Accept command set is covered. `meeting-prep -o json` under dry-run still prints `null` (opportunity).
 
 ### DRY-2 (P3) `workflow email-to-task --dry-run` without `--list` fails `[code]`
 - `workflow.ts:266-273` looks up the default To Do list; under dry-run the preview has no `value`, so it throws `No default To Do list found; pass --list <listId>.` (exit 1, no POST preview) [INFERENCE].
 - With `--list L1` the title becomes `[Email] (no subject)` because the message is the dry-run object.
 - **Fix:** under dry-run, use the placeholder `<default-list>` as the list ID (same pattern as planner's `'<dry-run>'` ETag, `planner.ts:27`), and `<subject>` for the title.
 - **Accept:** `ms365 --dry-run workflow email-to-task M1 -o json` exits 0, stderr shows `POST …/me/todo/lists/%3Cdefault-list%3E/tasks` (or the unencoded form the URL builder produces), and no request is made.
+- [REVISED: implementation] With `--list` under dry-run the title also uses `<subject>`, as the Fix says.
 
 ### OUT-1 (P3) Teams send commands drop the created message `[code]`
 - `teams.ts:13-16` `post()` discards `res.data`; `teams send-channel-message` (85), `teams reply-channel-message` (99), `chat send` (146), `chat reply` (155) print nothing on stdout, so callers cannot get the new message ID.
 - Precedent: `workflow file-announce` prints the posted message with `-o` (`workflow.ts:428-429`, CHANGELOG WF-3).
 - **Fix:** `.addOption(outputOption())` on the four commands; print `formatOutput(res.data, opts.output)` on stdout; confirmation stays on stderr (via DRY-1 helper).
 - **Accept:** e2e with a fake 201 `{id:'m1',…}`: `chat send C1 --body hi -o json` stdout parses and has `id: 'm1'`; dry-run stdout is the dry-run object. Update `schema` ENDPOINTS for `chat.send`/`chat.reply` (response shape), README `554-555,568-569`.
+- [REVISED: implementation] Under `--dry-run`, stdout is the dry-run object rendered with `-o`.
 
 ## 2. Calendar, To Do, time zones
 
@@ -77,6 +80,7 @@ Confidence: `[verified]` reproduced; `[code]` read from source, unambiguous; `[g
 - **Fix (decided Q2):** every calendar `--timezone` defaults to the local zone. [REVISED: adversarial review] No Commander default (it would be evaluated at registration and baked into the command tree, `/v1/capabilities` and generated skills); resolve `opts.timezone ?? <local>` in the action like `decline`, help text `(default: local time zone)`.
 - [REVISED: adversarial review] Graph only documents Windows zone names plus a fixed list of ~100 IANA "Additional time zones" (learn.microsoft.com/en-us/graph/api/resources/datetimetimezone); `Europe/Amsterdam`, `America/Toronto`, `Asia/Hong_Kong` are not on it. Add `graphTimeZone(): string | undefined` to `src/graph-helpers.ts`: the runtime IANA zone if it is on that documented list (embed the list from the doc page, with the URL in a comment), else `undefined`. When no explicit `--timezone` is given and `graphTimeZone()` is `undefined`, convert the wall-clock `--start/--end` to the UTC instant (via `Intl`) and send `timeZone: 'UTC'`. An explicit `--timezone` is sent as given.
 - **Accept:** with `TZ=America/New_York`, `--dry-run cal create --start 2026-10-07T09:00 …` body has `{dateTime:'2026-10-07T09:00…', timeZone:'America/New_York'}`; with `TZ=Europe/Amsterdam` it has `{dateTime:'2026-10-07T07:00…', timeZone:'UTC'}`; with `TZ=JST-9` the runtime has no name → UTC conversion; explicit `--timezone` wins; generated skills and `schema` output are machine-independent (no zone name as a default). README/CHANGELOG updated (interface change).
+- [REVISED: implementation] `decline --propose-*` goes through the same `eventTime()`; an undocumented zone or nameless POSIX `TZ` is converted to the UTC instant instead of sent raw / mislabelled UTC.
 
 ### TZ-1 (P3) To Do and mail-flag dates written as UTC midnight `[graph-doc]`
 - `todo.ts:84,109`, `workflow.ts:289`: `dueDateTime = { dateTime: '<date>T00:00:00', timeZone: 'UTC' }`; `mail.ts:617-618` (flag start/due) does the same. Clients east/west of UTC may show the previous/next day. Readers already compensate (`workflow.ts:69-79` `dueDay()`); planner writes local midnight (`planner.ts:48-52`).
@@ -97,6 +101,7 @@ Confidence: `[verified]` reproduced; `[code]` read from source, unambiguous; `[g
 - Why it matters: `command-tree.ts:115` copies `argChoices`; remote validation rejects bad values (`command-tree.ts:219-222`); skills render `one of: …` (`generate-skills.ts:33`).
 - **Fix:** `new Option(...).choices([...])` for each fixed list (shared `CALENDAR_COLORS` for both calendar commands). For `--entity`, add a way for the command tree to carry a comma-list choice set (e.g. an `OptionNode.listChoices` read from a custom property on the Option) and validate it in `validateInvocation`; keep `entityTypes()` bucket rules.
 - **Accept:** [REVISED: adversarial review] each listed option rejects a bad value with exit 1 and `Allowed choices` before any request, locally and via `ms365-remote` (client-side, no HTTP request); a raw `POST /v1/execute` with a bad value returns 400 `invalid_args`; generated skills list the values. README `404,446,490-491,649,665-666`.
+- [REVISED: implementation] `--type` has 74 values: the ExcelApi 1.1 view has 75 members including `Invalid`. Values are the enum's string values (`3DColumn`), not TS member names (`_3DColumn`). `--entity` local error reads `Allowed choices (comma-separated) are …` (custom parser); serve/remote reads `option entity must be a comma-separated list of: …`.
 
 ### USER-4 (P3) `user upload-photo` accepts any file as JPEG `[code]`
 - `user.ts:223-225`: private map for jpg/jpeg/png/gif; any other extension (e.g. `.pdf`) uploads as `image/jpeg`. Description says "(JPEG, PNG, GIF — max 4MB)" (`user.ts:215`).
@@ -115,6 +120,7 @@ Confidence: `[verified]` reproduced; `[code]` read from source, unambiguous; `[g
 - Trap: `resolveFolder` returns well-known names unchanged (`mail.ts:40`). Fine in a URL path, wrong for `moveToFolder`, which needs a real ID.
 - **Fix:** resolve all three through `resolveFolder`; for `--move-to`, convert a well-known name with `GET /me/mailFolders/{wellKnown}?$select=id`. Dry-run keeps the name (`mail.ts:48`).
 - **Accept:** `create-rule --move-to Archive` body has `moveToFolder: '<real id>'` from the fake GET; `folders --parent Inbox` requests `/me/mailFolders/inbox/childFolders`; ambiguous names error as `--folder` does. README `399,404`.
+- [REVISED: implementation] `--move-to` is resolved after the action check and the no-conditions `confirm()`, so a refused rule makes no lookups. Option placeholders are now `<name>`. Short non-ID values (`f1`) now go through display-name lookup.
 
 ## 5. Paging, files, SharePoint
 

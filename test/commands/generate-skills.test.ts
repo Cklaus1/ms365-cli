@@ -4,7 +4,6 @@ import path from 'node:path';
 import { runCli, tempDir, type RunResult } from '../e2e/run-cli.js';
 import { buildCommandTree, type CommandTree } from '../../src/command-tree.js';
 import { introspectionProgram } from '../../src/commands/registry.js';
-import { endpointKeys } from '../../src/commands/schema.js';
 
 function readTree(dir: string): Record<string, string> {
   const files: Record<string, string> = {};
@@ -51,11 +50,23 @@ describe('SKILLS-1 generate-skills derives the catalog from the command tree', (
     expect(files['ms365-calendar/SKILL.md']).toContain('Alias: `ms365 cal`');
   });
 
-  it('emits schema hints only for endpoints that exist', () => {
-    const keys = new Set(endpointKeys());
-    const hints = [...all.matchAll(/ms365 schema ([a-z][\w.-]*)/g)].map(m => m[1]);
-    expect(hints.length).toBeGreaterThan(0);
-    expect(hints.filter(h => !keys.has(h))).toEqual([]);
+  it('CHOICE-1 lists the values of a comma-list option', () => {
+    expect(files['ms365-search/SKILL.md']).toMatch(/`--entity <types>`.*comma-separated list of: driveItem, drive, list, listItem, site, externalItem, message, event, chatMessage, person, acronym, bookmark, qna/);
+  });
+
+  it('SCHEMA-2 points each Graph group skill at ms365 schema with one line', async () => {
+    const list = await runCli(['schema', '--list']);
+    const endpoints = (JSON.parse(list.stdout) as Array<{ endpoint: string }>).map(e => e.endpoint);
+    expect(files['ms365-mail/SKILL.md']).toContain('Endpoint details: `ms365 schema mail.<command>`');
+    for (const group of tree.groups.filter(g => g.names.length === 1).map(g => g.path)) {
+      const skill = files[`ms365-${group}/SKILL.md`];
+      const hasEntries = endpoints.some(e => e.startsWith(`${group}.`));
+      expect(skill.split('\n').filter(l => l.startsWith('Endpoint details:')), group)
+        .toEqual(hasEntries ? [`Endpoint details: \`ms365 schema ${group}.<command>\``] : []);
+      expect(skill).toContain('ms365 schema --list');
+    }
+    expect(files['ms365-auth/SKILL.md']).not.toContain('Endpoint details:');
+    expect(all).not.toMatch(/ms365 schema [a-z][\w-]*\.[a-z]/);
   });
 
   it('documents the global flags declared by the running program', () => {

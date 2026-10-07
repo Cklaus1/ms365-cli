@@ -1,5 +1,6 @@
 import { Command, InvalidArgumentError, Option } from 'commander';
 import { GraphClient } from '../graph-client.js';
+import { graph } from '../command-tree.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { odataQuote } from '../graph-helpers.js';
 import { outputOption } from '../utils.js';
@@ -50,16 +51,16 @@ export function registerExcelCommands(program: Command, getClient: () => GraphCl
   const rangePath = (driveId: string, itemId: string, worksheetId: string, address: string) =>
     `${wsPath(driveId, itemId, worksheetId)}/range(address=${encodeURIComponent(odataQuote(address))})`;
 
-  excel
-    .command('worksheets <driveId> <itemId>')
+  graph(excel.command('worksheets <driveId> <itemId>'), ['GET /drives/{drive-id}/items/{item-id}/workbook/worksheets'])
     .description('List worksheets in a workbook')
     .addOption(outputOption())
     .action(handleErrors(async (driveId: string, itemId: string, opts: OutputOpts) => {
       await listRequest(getClient(), `${wbPath(driveId, itemId)}/worksheets`, {}, { output: opts.output, all: true });
     }));
 
-  excel
-    .command('range <driveId> <itemId> <worksheetId> <address>')
+  graph(excel.command('range <driveId> <itemId> <worksheetId> <address>'), [
+    "GET /drives/{drive-id}/items/{item-id}/workbook/worksheets/{worksheet-id}/range(address='{address}')",
+  ])
     .description('Get a cell range (e.g. "A1:D10")')
     .addOption(outputOption())
     .action(handleErrors(async (driveId: string, itemId: string, worksheetId: string, address: string, opts: OutputOpts) => {
@@ -67,8 +68,9 @@ export function registerExcelCommands(program: Command, getClient: () => GraphCl
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  excel
-    .command('create-chart <driveId> <itemId> <worksheetId>')
+  graph(excel.command('create-chart <driveId> <itemId> <worksheetId>'), [
+    'POST /drives/{drive-id}/items/{item-id}/workbook/worksheets/{worksheet-id}/charts/add',
+  ])
     .description('Create a chart')
     .addOption(new Option('--type <type>', 'Chart type (Excel.ChartType, e.g. ColumnClustered, Pie, Line)').choices(CHART_TYPES).makeOptionMandatory())
     .requiredOption('--source <range>', 'Source data range (e.g. A1:D10)')
@@ -86,8 +88,10 @@ export function registerExcelCommands(program: Command, getClient: () => GraphCl
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  excel
-    .command('format-range <driveId> <itemId> <worksheetId> <address>')
+  graph(excel.command('format-range <driveId> <itemId> <worksheetId> <address>'), [
+    "PATCH /drives/{drive-id}/items/{item-id}/workbook/worksheets/{worksheet-id}/range(address='{address}')/format/font",
+    "PATCH /drives/{drive-id}/items/{item-id}/workbook/worksheets/{worksheet-id}/range(address='{address}')/format/fill",
+  ])
     .description('Format a cell range (e.g. "A1:D10"): font and/or fill')
     .option('--font-bold [bool]', 'Bold font (true/false; flag alone = true)', parseBool)
     .option('--font-color <color>', 'Font color (e.g. #FF0000)')
@@ -114,8 +118,9 @@ export function registerExcelCommands(program: Command, getClient: () => GraphCl
       console.log(formatOutput(result, opts.output as OutputFormat));
     }));
 
-  excel
-    .command('sort-range <driveId> <itemId> <worksheetId> <address>')
+  graph(excel.command('sort-range <driveId> <itemId> <worksheetId> <address>'), [
+    "POST /drives/{drive-id}/items/{item-id}/workbook/worksheets/{worksheet-id}/range(address='{address}')/sort/apply",
+  ])
     .description('Sort a cell range (e.g. "A1:D10")')
     .requiredOption('--fields <json>', 'Sort fields JSON (e.g. [{"key":0,"ascending":true}])')
     .option('--match-case', 'Case-sensitive sort')

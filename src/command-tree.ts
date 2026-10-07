@@ -1,4 +1,4 @@
-import type { Argument, Command, Option } from 'commander';
+import { InvalidArgumentError, Option, type Argument, type Command } from 'commander';
 
 /**
  * Serializable view of a Commander program: every leaf command with its arguments and options.
@@ -31,6 +31,8 @@ export interface OptionNode {
   /** `--no-x` form; sets `attribute` to false. */
   negate: boolean;
   choices?: string[];
+  /** Comma-separated list option: every item must be one of these (see `listChoicesOption`). */
+  listChoices?: string[];
   default?: unknown;
 }
 
@@ -41,6 +43,20 @@ export interface GroupNode {
   aliases: string[];
   description: string;
 }
+
+/** One Microsoft Graph request a command makes: method and path template (`/me/messages/{message-id}`). */
+export interface GraphRequest {
+  method: GraphMethod;
+  path: string;
+}
+
+export type GraphMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
+
+/** `METHOD /path` with `{name}` placeholders, e.g. `'GET /me/messages/{message-id}'`. */
+export type GraphRequestSpec = `${GraphMethod} /${string}`;
+
+/** The Graph requests a command makes, in order (alternatives included), or `none` when it calls no Graph API. */
+export type GraphAnnotation = GraphRequest[] | 'none';
 
 export interface CommandNode {
   /** Dotted path of canonical names, e.g. `calendar.view`. */
@@ -54,6 +70,8 @@ export interface CommandNode {
   options: OptionNode[];
   /** Ancestor group paths, outermost first (`[]` for a top-level leaf). */
   groups: string[];
+  /** Graph requests declared with `graph()`; absent when the command is not annotated. */
+  graph?: GraphAnnotation;
 }
 
 export interface CommandTree {
@@ -85,6 +103,47 @@ function serializable(value: unknown): unknown {
   return undefined;
 }
 
+/** Allowed items of options created by `listChoicesOption` (Commander has no slot for list choices). */
+const LIST_CHOICES = new WeakMap<Option, string[]>();
+
+/** Split a comma-separated option value into its trimmed, non-empty items. */
+export function listItems(value: string): string[] {
+  return value.split(',').map(t => t.trim()).filter(t => t !== '');
+}
+
+/**
+ * Option taking a comma-separated list whose items must all come from `choices`. Commander rejects other
+ * values locally (`Allowed choices …`); the command tree carries the set as `listChoices`, so remote
+ * validation and generated skills see it. The parsed value stays the raw string.
+ */
+export function listChoicesOption(flags: string, description: string, choices: string[]): Option {
+  const opt = new Option(flags, description).argParser((value: string) => {
+    const items = listItems(value);
+    if (items.length === 0 || items.some(t => !choices.includes(t))) {
+      throw new InvalidArgumentError(`Allowed choices (comma-separated) are ${choices.join(', ')}.`);
+    }
+    return value;
+  });
+  LIST_CHOICES.set(opt, [...choices]);
+  return opt;
+}
+
+/** Graph requests declared per command with `graph()` (Commander has no metadata slot). */
+const GRAPH = new WeakMap<Command, GraphAnnotation>();
+
+/**
+ * Declare the Graph requests `cmd` makes, in order: every lookup, alternative (e.g. small upload vs upload
+ * session) and follow-up request, or `'none'` for commands that call no Graph API. `buildCommandTree` exposes
+ * the annotation as `CommandNode.graph`; `ms365 schema` builds its catalog from it. Returns `cmd` for chaining.
+ */
+export function graph<T extends Command>(cmd: T, requests: GraphRequestSpec[] | 'none'): T {
+  GRAPH.set(cmd, requests === 'none' ? 'none' : requests.map(spec => {
+    const space = spec.indexOf(' ');
+    return { method: spec.slice(0, space) as GraphMethod, path: spec.slice(space + 1) };
+  }));
+  return cmd;
+}
+
 function argumentNode(arg: Argument): ArgumentNode {
   const node: ArgumentNode = {
     name: arg.name(),
@@ -113,6 +172,8 @@ function optionNode(opt: Option): OptionNode {
   if (opt.long) node.long = opt.long;
   if (opt.short) node.short = opt.short;
   if (opt.argChoices) node.choices = [...opt.argChoices];
+  const listChoices = LIST_CHOICES.get(opt);
+  if (listChoices) node.listChoices = [...listChoices];
   if (def !== undefined) node.default = def;
   return node;
 }
@@ -136,7 +197,7 @@ export function buildCommandTree(program: Command): CommandTree {
       for (const child of children) visit(child, names, [...groups, path]);
       return;
     }
-    tree.leaves.push({
+    const leaf: CommandNode = {
       path,
       names,
       aliases: [...cmd.aliases()],
@@ -144,7 +205,10 @@ export function buildCommandTree(program: Command): CommandTree {
       arguments: cmd.registeredArguments.map(argumentNode),
       options: cmd.options.map(optionNode),
       groups,
-    });
+    };
+    const annotation = GRAPH.get(cmd);
+    if (annotation) leaf.graph = annotation === 'none' ? 'none' : annotation.map(r => ({ ...r }));
+    tree.leaves.push(leaf);
   };
 
   for (const cmd of program.commands) {
@@ -219,6 +283,14 @@ export function validateInvocation(node: CommandNode, invocation: Invocation): s
     if (valued.choices) {
       const bad = values.filter(v => !valued.choices!.includes(String(v)));
       if (bad.length > 0) problems.push(`option ${key} must be one of: ${valued.choices.join(', ')}`);
+    }
+    if (valued.listChoices) {
+      const allowed = valued.listChoices;
+      const ok = values.every(v => {
+        const items = listItems(String(v));
+        return items.length > 0 && items.every(t => allowed.includes(t));
+      });
+      if (!ok) problems.push(`option ${key} must be a comma-separated list of: ${allowed.join(', ')}`);
     }
   }
 

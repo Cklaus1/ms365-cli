@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { GraphClient, type GraphRequestOptions } from '../graph-client.js';
+import { graph } from '../command-tree.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { drivePath } from '../graph-helpers.js';
 import { listRequest, paginationOptions, type ListOptions } from '../list.js';
@@ -36,16 +37,14 @@ export function registerSharePointCommands(program: Command, getClient: () => Gr
   const sp = program.command('sharepoint').alias('sp').description('SharePoint (requires --org-mode)');
   const sitePath = (siteId: string) => `/sites/${encodeURIComponent(siteId)}`;
 
-  paginationOptions(sp
-    .command('search <query>')
+  paginationOptions(graph(sp.command('search <query>'), ['GET /sites'])
     .description('Search SharePoint sites'))
     .addOption(outputOption())
     .action(handleErrors(async (query: string, opts: ListOptions) => {
       await listRequest(getClient(), '/sites', { queryParams: { search: query } }, opts);
     }));
 
-  sp
-    .command('site <siteId>')
+  graph(sp.command('site <siteId>'), ['GET /sites/{site-id}'])
     .description('Get site details')
     .addOption(outputOption())
     .action(handleErrors(async (siteId: string, opts: OutputOpts) => {
@@ -53,8 +52,7 @@ export function registerSharePointCommands(program: Command, getClient: () => Gr
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  sp
-    .command('site-by-path <hostname> <path>')
+  graph(sp.command('site-by-path <hostname> <path>'), ['GET /sites/{hostname}:/{path}', 'GET /sites/{hostname}'])
     .description('Get site by hostname and path (e.g. contoso.sharepoint.com /sites/marketing)')
     .addOption(outputOption())
     .action(handleErrors(async (hostname: string, serverRelativePath: string, opts: OutputOpts) => {
@@ -63,16 +61,14 @@ export function registerSharePointCommands(program: Command, getClient: () => Gr
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  paginationOptions(sp
-    .command('drives <siteId>')
+  paginationOptions(graph(sp.command('drives <siteId>'), ['GET /sites/{site-id}/drives'])
     .description('List site drives (document libraries)'))
     .addOption(outputOption())
     .action(handleErrors(async (siteId: string, opts: ListOptions) => {
       await listRequest(getClient(), `${sitePath(siteId)}/drives`, {}, opts);
     }));
 
-  sp
-    .command('drive <siteId> <driveId>')
+  graph(sp.command('drive <siteId> <driveId>'), ['GET /sites/{site-id}/drives/{drive-id}'])
     .description('Get a specific site drive')
     .addOption(outputOption())
     .action(handleErrors(async (siteId: string, driveId: string, opts: OutputOpts) => {
@@ -80,16 +76,14 @@ export function registerSharePointCommands(program: Command, getClient: () => Gr
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  paginationOptions(sp
-    .command('lists <siteId>')
+  paginationOptions(graph(sp.command('lists <siteId>'), ['GET /sites/{site-id}/lists'])
     .description('List site lists'))
     .addOption(outputOption())
     .action(handleErrors(async (siteId: string, opts: ListOptions) => {
       await listRequest(getClient(), `${sitePath(siteId)}/lists`, {}, opts);
     }));
 
-  sp
-    .command('list <siteId> <listId>')
+  graph(sp.command('list <siteId> <listId>'), ['GET /sites/{site-id}/lists/{list-id}'])
     .description('Get a specific SharePoint list')
     .addOption(outputOption())
     .action(handleErrors(async (siteId: string, listId: string, opts: OutputOpts) => {
@@ -97,8 +91,7 @@ export function registerSharePointCommands(program: Command, getClient: () => Gr
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  paginationOptions(sp
-    .command('list-items <siteId> <listId>')
+  paginationOptions(graph(sp.command('list-items <siteId> <listId>'), ['GET /sites/{site-id}/lists/{list-id}/items'])
     .description('List items in a SharePoint list')
     .option('--filter <filter>', 'OData filter')
     .option('--expand <fields>', 'Fields to expand'))
@@ -110,8 +103,7 @@ export function registerSharePointCommands(program: Command, getClient: () => Gr
       await listRequest(getClient(), `${sitePath(siteId)}/lists/${encodeURIComponent(listId)}/items`, { queryParams }, opts);
     }));
 
-  sp
-    .command('list-item <siteId> <listId> <itemId>')
+  graph(sp.command('list-item <siteId> <listId> <itemId>'), ['GET /sites/{site-id}/lists/{list-id}/items/{item-id}'])
     .description('Get a specific list item')
     .addOption(outputOption())
     .action(handleErrors(async (siteId: string, listId: string, itemId: string, opts: OutputOpts) => {
@@ -121,8 +113,7 @@ export function registerSharePointCommands(program: Command, getClient: () => Gr
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  sp
-    .command('item <siteId> <itemId>')
+  graph(sp.command('item <siteId> <itemId>'), ['GET /sites/{site-id}/items/{item-id}'])
     .description('Get one item by ID through the site\'s non-enumerable items relationship (addressing only, no listing)')
     .addOption(outputOption())
     .action(handleErrors(async (siteId: string, itemId: string, opts: OutputOpts) => {
@@ -130,8 +121,7 @@ export function registerSharePointCommands(program: Command, getClient: () => Gr
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  paginationOptions(sp
-    .command('delta')
+  paginationOptions(graph(sp.command('delta'), ['GET /sites/delta()', 'GET /sites/delta'])
     .description('Get changed sites (delta sync). Prints { value, nextLink | deltaLink }: pass nextLink back via --delta-link to continue, deltaLink to get later changes. --all drains the round.')
     .option('--delta-link <url>', 'Resume from the nextLink or deltaLink of a previous run'))
     .addOption(outputOption())

@@ -1,12 +1,14 @@
 import { Command } from 'commander';
+import { buildCommandTree, findCommand, graph, type CommandTree, type GraphRequest } from '../command-tree.js';
 import { handleErrors } from '../errors.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { outputOption } from '../utils.js';
+import { introspectionProgram } from './registry.js';
 
 /**
- * Endpoint catalog with parameter schemas for introspection.
- * This is a curated, static catalog — not fetched from OpenAPI at runtime
- * (Graph's OpenAPI spec is 50MB+, impractical for CLI).
+ * Endpoint catalog for introspection, generated from the command tree: every leaf annotated with `graph()`
+ * requests is an entry keyed by its command path (`mail.send`). Parameter/response detail is hand-written
+ * below for some entries (Graph's OpenAPI spec is 50MB+, impractical for a CLI).
  */
 interface ParamDef {
   name: string;
@@ -16,6 +18,7 @@ interface ParamDef {
   description: string;
 }
 
+/** Hand-written detail; `method`/`path` name the documented request, one of the command's annotated requests. */
 interface EndpointSchema {
   method: string;
   path: string;
@@ -190,6 +193,7 @@ const ENDPOINTS: Record<string, EndpointSchema> = {
       { name: 'chat-id', type: 'string', location: 'path', required: true, description: 'Chat ID' },
       { name: 'body', type: 'object', location: 'body', required: true, description: '{ contentType: "text"|"html", content: string }' },
     ],
+    responseHint: 'chatMessage (created message, printed on stdout)',
   },
   'planner.tasks': {
     method: 'GET', path: '/planner/plans/{plan-id}/tasks',
@@ -332,6 +336,7 @@ const ENDPOINTS: Record<string, EndpointSchema> = {
       { name: 'messageIds', type: 'array', location: 'body', required: true, description: '[<message-id>]' },
       { name: 'replyMessage', type: 'object', location: 'body', required: true, description: '{ body: { contentType: "text"|"html", content: string } }' },
     ],
+    responseHint: 'chatMessage (created message, printed on stdout)',
   },
   'user.set-ooo': {
     method: 'PATCH', path: '/me/mailboxSettings',
@@ -377,9 +382,53 @@ const ENDPOINTS: Record<string, EndpointSchema> = {
   },
 };
 
-/** Endpoint keys with a schema (`mail.list`, …). */
-export function endpointKeys(): string[] {
-  return Object.keys(ENDPOINTS);
+/** One catalog entry: a leaf command that calls Graph. */
+export interface SchemaEntry {
+  /** Canonical command path, e.g. `mail.send`. */
+  endpoint: string;
+  description: string;
+  /** Every annotated request, in order. */
+  requests: GraphRequest[];
+  detail?: EndpointSchema;
+}
+
+/** Every leaf of `tree` annotated with Graph requests (`none` leaves excluded), hand-written detail merged in. */
+export function schemaCatalog(tree: CommandTree): SchemaEntry[] {
+  return tree.leaves.flatMap(leaf => {
+    if (!Array.isArray(leaf.graph) || leaf.graph.length === 0) return [];
+    const detail = Object.hasOwn(ENDPOINTS, leaf.path) ? ENDPOINTS[leaf.path] : undefined;
+    const entry: SchemaEntry = { endpoint: leaf.path, description: detail?.description ?? leaf.description, requests: leaf.graph };
+    if (detail) entry.detail = detail;
+    return [entry];
+  });
+}
+
+/**
+ * `ms365 schema <endpoint>` output. Hand-written detail documents one request (its description names any
+ * others); otherwise the annotated request, or `requests` when the command makes several.
+ */
+function entryOutput(entry: SchemaEntry): Record<string, unknown> {
+  const { detail } = entry;
+  if (!detail) {
+    const [only, ...more] = entry.requests;
+    return more.length === 0
+      ? { httpMethod: only.method, path: only.path, description: entry.description }
+      : { description: entry.description, requests: entry.requests.map(r => ({ httpMethod: r.method, path: r.path })) };
+  }
+  const output: Record<string, unknown> = {
+    httpMethod: detail.method,
+    path: detail.path,
+    description: detail.description,
+    scopes: detail.scopes,
+    parameters: Object.fromEntries(detail.parameters.map(p => [p.name, {
+      type: p.type,
+      required: p.required,
+      location: p.location,
+      description: p.description,
+    }])),
+  };
+  if (detail.responseHint) output.response = detail.responseHint;
+  return output;
 }
 
 function editDistance(a: string, b: string): number {
@@ -395,8 +444,7 @@ function editDistance(a: string, b: string): number {
 }
 
 /** Keys of the same service, else keys within a small edit distance. */
-function suggestEndpoints(endpoint: string): string[] {
-  const keys = endpointKeys();
+function suggestEndpoints(keys: string[], endpoint: string): string[] {
   const service = endpoint.split('.')[0];
   const sameService = keys.filter(k => k.split('.')[0] === service);
   if (sameService.length > 0) return sameService;
@@ -404,46 +452,31 @@ function suggestEndpoints(endpoint: string): string[] {
 }
 
 export function registerSchemaCommands(program: Command): void {
-  program
-    .command('schema [endpoint]')
+  graph(program.command('schema [endpoint]'), 'none')
     .description('Introspect API schema for an endpoint (e.g. mail.list, calendar.create)')
-    .option('--list', 'List all available endpoint schemas')
+    .option('--list', 'List all available endpoint schemas (one row per Graph request)')
     .addOption(outputOption('json'))
     .action(handleErrors(async (endpoint: string | undefined, opts: { list?: boolean; output: OutputFormat }) => {
+      const tree = buildCommandTree(introspectionProgram());
+      const catalog = schemaCatalog(tree);
       if (opts.list || endpoint === 'list') {
-        const list = Object.entries(ENDPOINTS).map(([key, val]) => ({
-          endpoint: key,
-          method: val.method,
-          path: val.path,
-          description: val.description,
-        }));
+        const list = catalog.flatMap(e =>
+          e.requests.map(r => ({ endpoint: e.endpoint, method: r.method, path: r.path, description: e.description })));
         console.log(formatOutput(list, opts.output));
         return;
       }
 
       if (!endpoint) throw new Error('Specify an endpoint (e.g. ms365 schema mail.list) or run: ms365 schema --list');
 
-      const schema = ENDPOINTS[endpoint];
-      if (!schema) {
-        const suggestions = suggestEndpoints(endpoint);
+      // Group and command aliases are accepted (`cal.view` → `calendar.view`).
+      const canonical = findCommand(tree, endpoint)?.path;
+      const entry = catalog.find(e => e.endpoint === canonical);
+      if (!entry) {
+        const suggestions = suggestEndpoints(catalog.map(e => e.endpoint), endpoint);
         const hint = suggestions.length > 0 ? `\nDid you mean: ${suggestions.join(', ')}` : '';
         throw new Error(`Unknown endpoint: ${endpoint}${hint}\nRun: ms365 schema --list`);
       }
 
-      const output: Record<string, unknown> = {
-        httpMethod: schema.method,
-        path: schema.path,
-        description: schema.description,
-        scopes: schema.scopes,
-        parameters: Object.fromEntries(schema.parameters.map(p => [p.name, {
-          type: p.type,
-          required: p.required,
-          location: p.location,
-          description: p.description,
-        }])),
-      };
-      if (schema.responseHint) output.response = schema.responseHint;
-
-      console.log(formatOutput(output, opts.output));
+      console.log(formatOutput(entryOutput(entry), opts.output));
     }));
 }

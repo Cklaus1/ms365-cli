@@ -2,9 +2,10 @@ import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
-import { outputOption, confirm, info } from '../utils.js';
+import { outputOption, confirm, done } from '../utils.js';
 import { paginationOptions, listRequest, type ListOptions } from '../list.js';
 import { searchQuote } from '../graph-helpers.js';
+import { graph } from '../command-tree.js';
 
 interface ContactListOptions extends ListOptions {
   filter?: string;
@@ -27,8 +28,7 @@ export function registerContactsCommands(program: Command, getClient: () => Grap
   const contacts = program.command('contacts').description('Outlook contacts');
 
   paginationOptions(
-    contacts
-      .command('list')
+    graph(contacts.command('list'), ['GET /me/contacts'])
       .description('List contacts')
       .option('--filter <filter>', 'OData filter')
       .option('--orderby <field>', 'Order results by field')
@@ -45,8 +45,7 @@ export function registerContactsCommands(program: Command, getClient: () => Grap
       await listRequest(getClient(), '/me/contacts', { queryParams }, opts);
     }));
 
-  contacts
-    .command('get <contactId>')
+  graph(contacts.command('get <contactId>'), ['GET /me/contacts/{contact-id}'])
     .description('Get a specific contact')
     .addOption(outputOption())
     .action(handleErrors(async (contactId: string, opts) => {
@@ -55,8 +54,7 @@ export function registerContactsCommands(program: Command, getClient: () => Grap
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  contacts
-    .command('create')
+  graph(contacts.command('create'), ['POST /me/contacts'])
     .description('Create a contact')
     .requiredOption('--given-name <name>', 'First name')
     .option('--surname <name>', 'Last name')
@@ -83,8 +81,7 @@ export function registerContactsCommands(program: Command, getClient: () => Grap
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  contacts
-    .command('update <contactId>')
+  graph(contacts.command('update <contactId>'), ['GET /me/contacts/{contact-id}', 'PATCH /me/contacts/{contact-id}'])
     .description('Update a contact')
     .option('--given-name <name>', 'First name')
     .option('--surname <name>', 'Last name')
@@ -126,20 +123,16 @@ export function registerContactsCommands(program: Command, getClient: () => Grap
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  contacts
-    .command('delete <contactId>')
+  graph(contacts.command('delete <contactId>'), ['DELETE /me/contacts/{contact-id}'])
     .description('Delete a contact')
     .action(handleErrors(async (contactId: string) => {
       await confirm(`Delete contact ${contactId.substring(0, 16)}...?`);
-      const client = getClient();
-      await client.request(`/me/contacts/${encodeURIComponent(contactId)}`, { method: 'DELETE' });
-      info('Contact deleted.');
+      done(await getClient().request(`/me/contacts/${encodeURIComponent(contactId)}`, { method: 'DELETE' }), 'Contact deleted.');
     }));
 
   // ── Contact folders ─────────────────────────────────────────
   paginationOptions(
-    contacts
-      .command('folders')
+    graph(contacts.command('folders'), ['GET /me/contactFolders'])
       .description('List contact folders'),
   )
     .addOption(outputOption())
@@ -147,8 +140,10 @@ export function registerContactsCommands(program: Command, getClient: () => Grap
       await listRequest(getClient(), '/me/contactFolders', {}, opts);
     }));
 
-  contacts
-    .command('create-folder')
+  graph(contacts.command('create-folder'), [
+    'POST /me/contactFolders',
+    'POST /me/contactFolders/{folder-id}/childFolders',
+  ])
     .description('Create a contact folder')
     .requiredOption('--name <name>', 'Folder display name')
     .option('--parent <folderId>', 'Parent folder ID')
@@ -166,8 +161,7 @@ export function registerContactsCommands(program: Command, getClient: () => Grap
     }));
 
 
-  contacts
-    .command('update-folder <folderId>')
+  graph(contacts.command('update-folder <folderId>'), ['PATCH /me/contactFolders/{folder-id}'])
     .description('Rename a contact folder (use "[ARCHIVED] Name" to archive)')
     .requiredOption('--name <name>', 'New display name')
     .addOption(outputOption())
@@ -181,8 +175,7 @@ export function registerContactsCommands(program: Command, getClient: () => Grap
     }));
 
   paginationOptions(
-    contacts
-      .command('folder-contacts <folderId>')
+    graph(contacts.command('folder-contacts <folderId>'), ['GET /me/contactFolders/{folder-id}/contacts'])
       .description('List contacts in a specific folder')
       .option('--filter <filter>', 'OData filter')
       .option('--orderby <field>', 'Order results by field'),
