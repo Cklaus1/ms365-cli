@@ -49,7 +49,8 @@ Confidence: `[verified]` reproduced; `[code]` read from source, unambiguous; `[g
   - `todo.ts:131` (delete)
   - `workflow.ts:428` (file-announce; prints `Announced "undefined"` [INFERENCE])
 - Related: `drive.ts:42` prints `Uploading …` before the preview; `workflow.ts:196` meeting-prep prints `No upcoming meetings in the next 24 hours.` in dry-run because the preview has no data.
-- **Fix:** one helper (e.g. `done(res, message)` in `src/utils.ts` or `src/graph-helpers.ts`) that calls `info()` only when the response was real (`status !== 0`). Apply it to all 28 lines and move `teams.ts` `post()` and the guarded `user.ts` lines onto it. Batch commands (`mail.ts:871,896`): under dry-run print nothing or `Would mark N message(s)…` — pick one rule and use it everywhere (§8 Q1). `drive upload`: skip the `Uploading` line under dry-run. Meeting-prep: under dry-run, skip the empty-state line.
+- **Fix:** one helper (e.g. `done(res, message)` in `src/utils.ts` or `src/graph-helpers.ts`) that calls `info()` only when the response was real (`status !== 0`). Apply it to all 28 lines and move `teams.ts` `post()` and the guarded `user.ts` lines onto it. `drive upload`: skip the `Uploading` line under dry-run. Meeting-prep: under dry-run, skip the empty-state line.
+- [REVISED: adversarial review] Batch commands (`mail batch-read`/`batch-move`, N requests, one aggregate line): under dry-run print no summary (Q1); gate on `client.isDryRun` and still run `failOnBatchErrors`.
 - **Accept:** one table-driven `--dry-run` e2e test covering at least `mail send`, `mail reply`, `mail flag`, `mail batch-move`, `calendar accept`, `drive upload`, `workflow file-announce`, `workflow meeting-prep`: stderr has the `[dry-run]` preview and none of the success/empty-state text; exit 0. Delete commands are refused by `confirm()` without a TTY, so they are covered by the shared helper rather than e2e. No source-text grep tests. README `252-253,847-850` updated.
 
 ### DRY-2 (P3) `workflow email-to-task --dry-run` without `--list` fails `[code]`
@@ -68,18 +69,19 @@ Confidence: `[verified]` reproduced; `[code]` read from source, unambiguous; `[g
 
 ### CAL-3 (P3) `calendar free-busy --interval` unvalidated `[code]`
 - `calendar.ts:289,300`: `parseInt(opts.interval)`; `abc` → `NaN` → `null` in the body, `15x` → `15`.
-- **Fix:** integer option parser (CLEAN-1's exported `integer(min, max)`), range 5-1440 `[graph-doc]` (confirm bounds for `availabilityViewInterval` in the getSchedule docs).
-- **Accept:** `--interval abc`, `--interval 15x`, `--interval 0` exit 1 before any request; `--interval 15` sends `15`.
+- **Fix:** `integer(5, 1440)` (CLEAN-1); getSchedule documents `availabilityViewInterval` as Int32, default 30, min 5, max 1440 (learn.microsoft.com/en-us/graph/api/calendar-getschedule). [REVISED: adversarial review] The default becomes the number `30` (Commander does not run the parser over defaults; today's default is the string `'30'`); drop `parseInt`.
+- **Accept:** `--interval abc`, `--interval 15x`, `--interval 0`, `--interval 1441` exit 1 before any request; `--interval 15` sends `15`; no `--interval` sends the number `30`. Add `free-busy --interval` to `test/e2e/integer-options.test.ts`.
 
-### CAL-4 (P3) Inconsistent time zone defaults `[code]`
+### CAL-4 (P3) Inconsistent time zone defaults `[graph-doc]`
 - `calendar create --timezone` default `UTC` (`calendar.ts:104`), `update` falls back to `'UTC'` (`158-159`, help `147`), `free-busy` default `UTC` (`288`); `decline` uses `localTimeZone()` (`251`). README `451-452` documents the split.
-- **Fix (pending §8 Q2):** default every calendar `--timezone` to `localTimeZone()` (`src/graph-helpers.ts`), which already falls back to UTC when the runtime cannot name the zone.
-- **Accept:** with `TZ=America/New_York`, `--dry-run cal create … ` body has `timeZone: 'America/New_York'`; with `TZ=JST-9` it is `UTC`; explicit `--timezone` wins. README/CHANGELOG updated (interface change).
+- **Fix (decided Q2):** every calendar `--timezone` defaults to the local zone. [REVISED: adversarial review] No Commander default (it would be evaluated at registration and baked into the command tree, `/v1/capabilities` and generated skills); resolve `opts.timezone ?? <local>` in the action like `decline`, help text `(default: local time zone)`.
+- [REVISED: adversarial review] Graph only documents Windows zone names plus a fixed list of ~100 IANA "Additional time zones" (learn.microsoft.com/en-us/graph/api/resources/datetimetimezone); `Europe/Amsterdam`, `America/Toronto`, `Asia/Hong_Kong` are not on it. Add `graphTimeZone(): string | undefined` to `src/graph-helpers.ts`: the runtime IANA zone if it is on that documented list (embed the list from the doc page, with the URL in a comment), else `undefined`. When no explicit `--timezone` is given and `graphTimeZone()` is `undefined`, convert the wall-clock `--start/--end` to the UTC instant (via `Intl`) and send `timeZone: 'UTC'`. An explicit `--timezone` is sent as given.
+- **Accept:** with `TZ=America/New_York`, `--dry-run cal create --start 2026-10-07T09:00 …` body has `{dateTime:'2026-10-07T09:00…', timeZone:'America/New_York'}`; with `TZ=Europe/Amsterdam` it has `{dateTime:'2026-10-07T07:00…', timeZone:'UTC'}`; with `TZ=JST-9` the runtime has no name → UTC conversion; explicit `--timezone` wins; generated skills and `schema` output are machine-independent (no zone name as a default). README/CHANGELOG updated (interface change).
 
-### TZ-1 (P3) To Do and mail-flag dates written as UTC midnight `[code]`
+### TZ-1 (P3) To Do and mail-flag dates written as UTC midnight `[graph-doc]`
 - `todo.ts:84,109`, `workflow.ts:289`: `dueDateTime = { dateTime: '<date>T00:00:00', timeZone: 'UTC' }`; `mail.ts:617-618` (flag start/due) does the same. Clients east/west of UTC may show the previous/next day. Readers already compensate (`workflow.ts:69-79` `dueDay()`); planner writes local midnight (`planner.ts:48-52`).
-- **Fix (pending §8 Q3):** send `timeZone: localTimeZone()` with `T00:00:00` for all four writers; keep the reader tolerant of old UTC-midnight values.
-- **Accept:** with `TZ=Asia/Tokyo`, `todo create L1 --title t --due 2026-10-07` body has `{dateTime:'2026-10-07T00:00:00', timeZone:'Asia/Tokyo'}`; `workflow digest` still buckets an old `T00:00:00 UTC` task on its intended day.
+- **Fix (decided Q3):** send `{dateTime:'<date>T00:00:00', timeZone: graphTimeZone()}` for all four writers. [REVISED: adversarial review] When `graphTimeZone()` is `undefined`, keep today's `T00:00:00` + `UTC` (a converted instant would shift the date-only value). Keep the reader tolerant of old UTC-midnight values. `mail flag`'s default start (`today`, `mail.ts:615`, from `toISOString()`) becomes the local date (same helper as workflow's local date).
+- **Accept:** with `TZ=Asia/Tokyo`, `todo create L1 --title t --due 2026-10-07` body has `{dateTime:'2026-10-07T00:00:00', timeZone:'Asia/Tokyo'}`; with `TZ=Europe/Amsterdam` it is `UTC`; `mail flag --due` start date is the local today (fake clock or a zone where UTC and local dates differ); `workflow digest` still buckets an old `T00:00:00 UTC` task on its intended day. Migrate the `timeZone: 'UTC'` assertions in `test/commands/mail.test.ts` flag cases and the todo tests.
 
 ## 3. Input validation
 
@@ -90,11 +92,11 @@ Confidence: `[verified]` reproduced; `[code]` read from source, unambiguous; `[g
   - `drive share --type` (`drive.ts:162`): view, edit, embed; `--scope` (`163`): anonymous, organization, users
   - `mail create-rule --importance` (`mail.ts:758`, used `792`): low, normal, high
   - `excel create-chart --series-by` (`excel.ts:55`): auto, columns, rows
-  - `excel create-chart --type` (`excel.ts:53`): Graph chart-type enum `[graph-doc]` (full list not in code; §8 Q4)
+  - `excel create-chart --type` (`excel.ts:53`): [REVISED: adversarial review] Graph's chartcollection-add lists 12 types and ends with "etc."; the full list is Office JS `Excel.ChartType` (learn.microsoft.com/en-us/javascript/api/excel/excel.charttype). Choices = its ExcelApi 1.1 members except `Invalid` (75 values), spelled as in the enum (e.g. `ColumnClustered`); no preview-only `*Ex` or ExcelApi 1.9 types.
   - `search query --entity` (`search.ts:51`): comma list, validated at runtime by `entityTypes()` (`25-36`) but invisible to the command tree, so `ms365 serve` validation and generated skills don't see it.
 - Why it matters: `command-tree.ts:115` copies `argChoices`; remote validation rejects bad values (`command-tree.ts:219-222`); skills render `one of: …` (`generate-skills.ts:33`).
 - **Fix:** `new Option(...).choices([...])` for each fixed list (shared `CALENDAR_COLORS` for both calendar commands). For `--entity`, add a way for the command tree to carry a comma-list choice set (e.g. an `OptionNode.listChoices` read from a custom property on the Option) and validate it in `validateInvocation`; keep `entityTypes()` bucket rules.
-- **Accept:** each listed option rejects a bad value with exit 1 and `Allowed choices` before any request, locally and via `ms365-remote` against `ms365 serve` (400 `invalid_args`); generated skills list the values. README `404,446,490-491,649,665-666`.
+- **Accept:** [REVISED: adversarial review] each listed option rejects a bad value with exit 1 and `Allowed choices` before any request, locally and via `ms365-remote` (client-side, no HTTP request); a raw `POST /v1/execute` with a bad value returns 400 `invalid_args`; generated skills list the values. README `404,446,490-491,649,665-666`.
 
 ### USER-4 (P3) `user upload-photo` accepts any file as JPEG `[code]`
 - `user.ts:223-225`: private map for jpg/jpeg/png/gif; any other extension (e.g. `.pdf`) uploads as `image/jpeg`. Description says "(JPEG, PNG, GIF — max 4MB)" (`user.ts:215`).
@@ -124,19 +126,34 @@ Confidence: `[verified]` reproduced; `[code]` read from source, unambiguous; `[g
   - `groups owners` (`groups.ts:79-86`; `groups members` already pages, `69-76`)
   - `teams list/members/channels` (`teams.ts:22-59`)
   - `calendar rooms/room-lists` (beta, `calendar.ts:309-325`)
-- `mail rules` sends `$top` only when passed (`mail.ts:732-735`); Graph docs don't list `$top` for `messageRules`.
-- **Fix:** per endpoint, check the Graph docs for `$top` and `@odata.nextLink`. Where `nextLink` is possible, use `listRequest` with `--all`/`--page-limit`/`--page-delay` (following `nextLink` is safe even if Graph never sends one). Add `--top` only where `$top` is documented; otherwise expose a `paginationOptions` variant without `--top`. For `mail rules`: drop `--top` if undocumented.
-- **Accept:** each command with `--all` follows a two-page fake response and prints one combined JSON array; commands without documented `$top` reject `--top` as unknown option (exit 1). Record the doc link per endpoint in the commit/CHANGELOG. README `548-551,732`.
+- `mail rules` sends `$top` only when passed (`mail.ts:732-735`).
+- [REVISED: adversarial review] Doc facts per endpoint (graph-rest-1.0 method pages):
+
+| Command | Endpoint doc | `$top` | Paging | Decision |
+|---|---|---|---|---|
+| `planner plans`, `my-tasks`, `tasks`, `buckets`, `bucket-tasks` | planneruser-list-plans / -list-tasks, plannerplan-list-tasks / -list-buckets, plannerbucket-list-tasks | no | not stated | drain |
+| `excel worksheets` | workbook-list-worksheets (generic OData statement only) | not named | not stated | drain |
+| `drive permissions` | driveitem-list-permissions (`$select` only) | no | not stated | drain |
+| `teams list` | user-list-joinedteams ("doesn't currently support the OData query parameters") | no | not stated | drain |
+| `teams channels` | channel-list (`$filter`, `$select`; `@odata.nextLink` paging stated) | no | yes | drain |
+| `teams members` | team-list-members (`$top`; page sizes 100/999) | yes | yes | standard `paginationOptions` |
+| `groups owners` | group-list-owners (`$top` with advanced query, like members) | yes | yes | standard `paginationOptions`, same headers as `groups members` |
+| `calendar rooms`, `room-lists` | user-findrooms / -findroomlists (beta, deprecated; "up to the first 100 rooms") | no | no | unchanged (non-goal: Places API migration) |
+| `mail rules` | mailfolder-list-messagerules (generic OData statement) | unclear | not stated | unchanged (removing `--top` would be an unflagged break) |
+
+- **Fix:** "drain" = always follow `@odata.nextLink` through the shared list core (same retry, headers, `--page-delay` not needed) and print one combined result; no `--top`/`--all` flags (there is nothing to stop early on). Commands already using `paginationOptions` keep their flags. Commands that already accept `--top` where the table says drain: keep (no breaking removal) only if they already have it today; do not add new ones. Commands that gain `paginationOptions`: `teams members`, `groups owners` if not already.
+- **Accept:** each "drain" command prints one combined JSON array from a two-page fake response; each `paginationOptions` command honours `--top`/`--all` with a two-page fake; unchanged rows have no test churn. CHANGELOG lists the doc page per endpoint. README `548-551,732`.
 
 ### DRIVE-3 (P3) `drive download` takes a redundant parent ID `[code]`
 - `drive.ts:94,97`: `download <driveId> <itemId> <childId>` → `/items/{itemId}/children/{childId}/content`; `/drives/{d}/items/{childId}/content` is enough.
-- **Fix (pending §8 Q6, breaking):** `download <driveId> <itemId>` → `/drives/{d}/items/{i}/content`; remove the 3-argument form (clean cutover).
-- **Accept:** 2-arg form downloads byte-identical via fake Graph; 3-arg form exits 1 (`too many arguments`). README `482,942`, CHANGELOG "Breaking", capabilities unchanged (`drive.read`).
+- **Fix (decided Q6, breaking):** `download <driveId> <itemId>` → `/drives/{d}/items/{i}/content`; remove the 3-argument form (clean cutover). [REVISED: adversarial review] Commander 11 allows excess arguments by default, so call `.allowExcessArguments(false)` on `drive download`; otherwise `D P C` silently downloads the parent `P`.
+- **Accept:** 2-arg form downloads byte-identical via fake Graph; 3-arg form exits 1 (`too many arguments`) with no request. Migrate existing 3-arg callers: `test/commands/drive.test.ts:125-165`, `test/e2e/remote.test.ts:49,73-84`, `test/e2e/serve.test.ts:292,330-332`. README `482,942`, CHANGELOG "Breaking", capabilities unchanged (`drive.read`).
 
-### SP-3 (P3) `sp item` calls an undocumented endpoint `[graph-doc]`
-- `sharepoint.ts:124-131`: `GET /sites/{id}/items/{id}`; not in Graph v1.0 docs (same class as the removed `sp items`, SP-1).
-- **Fix (pending §8 Q7):** remove the command; point users at `sp list-items`/`drive` equivalents.
-- **Accept:** `sp item` exits 1 (unknown command), like the existing `sp items is gone` test; remove from `src/serve/capabilities.ts:101`, README `590`, CHANGELOG `16`; counts 175 → 174, sharepoint 11 → 10 (README `61,1027-1045`).
+### SP-3 (P3) `sp item` endpoint status `[graph-doc]`
+- `sharepoint.ts:124-131`: `GET /sites/{id}/items/{id}`.
+- [REVISED: adversarial review, decision Q7 reversed] The premise "undocumented" was wrong: the v1.0 site resource lists `items | Collection(baseItem) | Used to address any item contained in this site. This collection can't be enumerated.` (learn.microsoft.com/en-us/graph/api/resources/site). Enumerating (the removed `sp items`) is unsupported; addressing one item by ID is the documented use. No dedicated method page exists.
+- **Fix:** keep the command. README `590` and the command description say it addresses a single item through the site's non-enumerable `items` relationship (no listing).
+- **Accept:** README and `--help` text match; no behaviour change, no test churn.
 
 ## 6. Hygiene and metadata
 
@@ -144,7 +161,7 @@ Confidence: `[verified]` reproduced; `[code]` read from source, unambiguous; `[g
 - Integer parsers: `list.ts:14-22` `integer(min)` (private), `search.ts:38-43` `size()`, inline `--sequence` parser (`mail.ts:760-763`), `serve.ts:19-29` `port()`/`seconds()`.
 - Field narrowing: `drive.ts:54-56` `field()`, `graph-client.ts:516-520` `stringField()`, inline at `planner.ts:29`; similar `values()`/`collectionItems` in `workflow.ts:85`, `graph-client.ts:511-513`, `list.ts:80`, `sharepoint.ts:148`.
 - **Fix:** export `integer(min, max?)` from `src/list.ts` (or a new `src/options.ts`) and use it for all five; one `field()`/`stringField()`/`items()` set in `src/graph-helpers.ts`, replacing the local copies. Behaviour-preserving.
-- **Accept:** existing tests pass unchanged; error messages for bad integers identical across commands (one parametrized test over `--top`, `search --size`, `serve --port`, `create-rule --sequence`, `free-busy --interval`).
+- **Accept:** existing tests pass unchanged; error messages for bad integers identical across commands (one parametrized test over `--top`, `search query --top`, `serve --port`, `serve --timeout`, `create-rule --sequence`; CAL-3 adds `free-busy --interval`). [REVISED: adversarial review; built that way in T0.]
 
 ### META-2 (P3) Version hard-coded in four places `[code]`
 - `package.json:3` is the source; copies at `src/index.ts:38`, `src/remote.ts:49`, `src/commands/generate-skills.ts:70,105` (SKILL.md front-matter).
@@ -153,8 +170,9 @@ Confidence: `[verified]` reproduced; `[code]` read from source, unambiguous; `[g
 
 ### SCHEMA-2 (P3) `ms365 schema` covers 35 of 175 commands `[code]`
 - `src/commands/schema.ts:28-378` has 35 hand-written entries; the command tree has 175 group leaves (+ schema, generate-skills, serve). Only guard: `generate-skills.test.ts:54-58` checks hints point at existing keys.
-- **Fix (pending §8 Q8):** generate the catalog from the command tree (method/path come from a per-command annotation on the Commander command, e.g. `.endpoint('GET', '/me/messages')` stored as metadata), keep hand-written parameter/response detail where it exists; `schema --list` then covers every leaf.
-- **Accept:** a test that every leaf has a schema entry and every entry is a leaf; `ms365 schema mail.send` output unchanged for the existing 35.
+- **Fix (decided Q8):** generate the catalog from the command tree; method/path come from a per-command annotation stored as Commander metadata. [REVISED: adversarial review] The annotation takes a list of `{method, path}` (multi-request commands: workflow, `create-rule`, `format-range`, planner ETag update/delete, `drive upload`/`cp`) or `none` (no Graph call: `auth *`, `setup`, `schema`, `generate-skills`, `serve`). Hand-written parameter/response detail stays where it exists. `schema --list` covers every annotated leaf.
+- [REVISED: adversarial review] `generate-skills` today emits one `ms365 schema <key>` hint per key (`generate-skills.ts:66,226`); with full coverage this becomes one pointer line per group skill (`Endpoint details: ms365 schema <group>.<command>`).
+- **Accept:** a test that every leaf is annotated, every non-`none` leaf has a schema entry, and every entry is a leaf; `ms365 schema mail.send` output unchanged for the existing 35; generated SKILL.md carries the pointer line.
 
 ## 7. Remote access
 
@@ -167,8 +185,11 @@ Confidence: `[verified]` reproduced; `[code]` read from source, unambiguous; `[g
 ### REMOTE-5 (P3) Transfers buffered in memory, capped at 25 MB `[code]`
 - Upload: `readBody` concatenates the whole body (`server.ts:75-86`), parsed with `new Request(…).formData()` (`114`).
 - Download: `collectOutputs` reads each file and base64-encodes it into the JSON reply (`server.ts:161-173,205`); `remote.ts:213` decodes in memory. A 25 MB file is ~34 MB of JSON. README `957` documents `files: [{name, contentType, size, base64}]`.
-- **Fix (pending §8 Q9, wire-protocol change):** downloads: `/v1/execute` returns `files: [{name, contentType, size, url}]` where `url` is a one-time `GET /v1/files/{request_id}/{name}` streamed from the child's temp dir, deleted after first read or a TTL; uploads: stream the multipart body to a temp file with a size cap instead of buffering. Keep capability checks on the file endpoint (same caller identity as the execute request).
-- **Accept:** a 100 MB fake download round-trips byte-identical through `ms365-remote` with server RSS growth well under the file size; the file URL is single-use and refused for a different caller; upload over the cap → 413 without buffering the body. README/CHANGELOG (protocol version note).
+- **Fix (decided Q9, wire-protocol change):** downloads: `/v1/execute` returns `files: [{name, contentType, size, url}]` where `url` is a one-time `GET /v1/files/{token}` streamed from the child's temp dir, deleted after first read or a TTL. Keep capability checks on the file endpoint.
+- [REVISED: adversarial review] Caller identity: the server has none beyond the capability header (`agent` label defaults to `unknown`). File URLs therefore carry an unguessable token (≥128-bit, `randomBytes`) and `GET /v1/files/{token}` additionally requires the capability the producing command needed. "Different caller" in tests = a header lacking that capability → 403; a second GET → 404.
+- [REVISED: adversarial review] Uploads, no new dependency: `ms365-remote` sends each local file as a raw-body `PUT /v1/uploads` (no multipart), streamed to a temp file and aborted with 413 as soon as `--max-file-mb` is exceeded; the reply is a single-use token (≥128-bit, 10-minute TTL); `/v1/execute` references tokens instead of embedding bodies. Uploading requires a grant with at least one capability.
+- [REVISED: adversarial review] Caps: `--max-file-mb` (REMOTE-4, default 25) still bounds per-request files, now enforced while streaming.
+- **Accept:** with `serve --max-file-mb 200`, a 100 MB fake download round-trips byte-identical through `ms365-remote` and the serve process's peak RSS (`VmHWM` from `/proc/<pid>/status`, Linux only, skipped elsewhere) grows by < 64 MB; the file URL is single-use and refused for a header lacking the capability; an upload over the cap → 413 and the temp file is gone. README/CHANGELOG (protocol version note).
 
 ### REMOTE-2 later: Tailscale Service (`svc:ms365`) — opportunity #1
 Unchanged from hardening spec §7. Blocked on a live test that `Tailscale-App-Capabilities` reaches `svc:` grants. Not built in this run.
@@ -183,10 +204,10 @@ Unchanged from hardening spec §7 (`src/serve/capabilities.ts:13` grants are all
 | Q1 | DRY-1: what do write commands print under `--dry-run`? | nothing beyond the preview / `Would …` line | **Nothing**: the `[dry-run]` preview already says what would happen |
 | Q2 | CAL-4: calendar `--timezone` default | local zone everywhere / UTC everywhere / keep split | **Local everywhere** (matches reads and decline) |
 | Q3 | TZ-1: To Do / mail-flag date time zone | local zone / keep UTC | **Local zone** |
-| Q4 | CHOICE-1: `excel create-chart --type` | full Graph enum as choices / leave free text | **Full enum** from Graph docs `[graph-doc]` |
+| Q4 | CHOICE-1: `excel create-chart --type` | full Graph enum as choices / leave free text | **Full enum**: [REVISED] `Excel.ChartType` ExcelApi 1.1 members except `Invalid` (75), since Graph's own page is partial |
 | Q5 | USER-4: accepted photo types | jpeg/png/gif only / any `image/*` | **jpeg/png/gif** (documented set) |
 | Q6 | DRIVE-3: change `drive download` arguments (breaking) | 2-arg cutover / keep 3-arg | **2-arg cutover**, CHANGELOG "Breaking" |
-| Q7 | SP-3: `sp item` | remove / keep undocumented | **Remove** |
+| Q7 | SP-3: `sp item` | remove / keep | [REVISED 2026-10-07: **Keep**] The recommendation to remove rested on "undocumented"; the site resource documents addressing single items via `items`. Keeping is the non-breaking choice. |
 | Q8 | SCHEMA-2: catalog source | per-command annotation / generated from code paths / test-only guard | **Per-command annotation** |
 | Q9 | REMOTE-5: transfer design | one-time file URLs + streamed upload / chunked binary in execute reply / keep 25 MB base64 | **One-time file URLs** |
 | Q10 | REMOTE-2/3 in scope? | build now / keep later | **Keep later** (needs live Tailscale test) |
@@ -194,13 +215,13 @@ Unchanged from hardening spec §7 (`src/serve/capabilities.ts:13` grants are all
 ## 9. Sequencing
 
 1. CLEAN-1 (shared `integer()` + field helpers) — CAL-3 and REMOTE-4 use it.
-2. DRY-1 helper, then in parallel by file ownership: mail (DRY-1 mail lines, MAIL-9, MAIL-10, TZ-1 flag) · cal/wf/todo (DRY-1, DRY-2, CAL-3, CAL-4, TZ-1) · files (DRIVE-3, SP-3, PAGE-2 planner/excel/drive) · org (OUT-1, USER-4, PAGE-2 teams/groups).
+2. DRY-1 helper, then in parallel by file ownership [REVISED: adversarial review, every touched file has one owner]: mail (DRY-1 mail lines incl. batch, MAIL-9, MAIL-10, TZ-1 flag) · cal/wf/todo (DRY-1 calendar/todo/workflow lines, DRY-2, CAL-3, CAL-4, TZ-1 todo/workflow, `graphTimeZone()`) · files (DRIVE-3, SP-3, PAGE-2 planner/excel/drive, DRY-1 drive/planner lines) · org (OUT-1, USER-4, PAGE-2 teams/groups, DRY-1 contacts). Slices report README/CHANGELOG facts; main applies them in step 6.
 3. CHOICE-1 after the slices (touches `command-tree.ts` and several command files).
 4. META-2, SCHEMA-2.
 5. REMOTE-4, then REMOTE-5.
 6. README/CHANGELOG, full gate, built-binary smoke (hardening `tasks/build-loop.md` steps 1-4 plus: `--dry-run mail send` prints no success line; `chat send -o json` with fake Graph prints the message).
 
 ## 10. Non-goals
-- New Graph features.
+- New Graph features (including migrating `calendar rooms`/`room-lists` from the deprecated beta findRooms to the v1.0 Places API).
 - A `--yes` flag for destructive operations (agent-safety stance unchanged).
 - Live-tenant verification beyond reading Microsoft docs for `[graph-doc]` items.
