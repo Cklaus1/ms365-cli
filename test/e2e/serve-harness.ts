@@ -81,7 +81,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
   const ready = Promise.withResolvers<string>();
   proc.stderr!.setEncoding('utf8').on('data', (d) => {
     stderr += d;
-    const m = /listening on (\S+)/.exec(stderr);
+    const m = /listening on (\S+)\n/.exec(stderr); // the whole line: a chunk may end mid-path
     if (m) ready.resolve(m[1]);
   });
   void exited.then(({ code }) => ready.reject(new Error(`serve exited (${code}) before listening:\n${stderr}`)));

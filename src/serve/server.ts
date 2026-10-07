@@ -220,6 +220,8 @@ class RemoteServer {
   private readonly audit: AuditLog;
   private readonly uploads = new FileTokens<StoredFile>();
   private readonly downloads = new FileTokens<Download>();
+  /** Requests whose refused upload body is still being discarded; cut off at shutdown. */
+  private readonly discarding = new Set<http.IncomingMessage>();
 
   constructor(private readonly options: ServeOptions) {
     this.executor = new Executor(options.executor);
@@ -297,7 +299,7 @@ class RemoteServer {
       const caller = this.caller(req, entry);
       return this.execute(caller, await parseBody(req), entry);
     }
-    if (req.method === 'PUT' && url && pathname === '/v1/uploads') return this.upload(req, res, url, entry);
+    if (req.method === 'PUT' && url && pathname === '/v1/uploads') return this.upload(req, url, entry);
     const file = req.method === 'GET' ? FILE_PATH.exec(pathname) : null;
     if (file) {
       await this.sendFile(req, res, file[1], entry);
@@ -310,16 +312,22 @@ class RemoteServer {
    * `PUT /v1/uploads?name=<file name>`: the raw body streamed to a temp file, refused with 413 as soon as it passes
    * `maxFileBytes`. Replies with a single-use token for `{"$upload": "<token>"}`.
    */
-  private async upload(req: http.IncomingMessage, res: http.ServerResponse, url: URL, entry: AuditEntry): Promise<Record<string, unknown>> {
+  private async upload(req: http.IncomingMessage, url: URL, entry: AuditEntry): Promise<Record<string, unknown>> {
     // Any usable grant: parseAppCapabilities refuses grants without a capability.
     this.caller(req, entry);
     const max = this.options.maxFileBytes;
-    const tooLarge = () => {
-      // Close instead of reading the rest of an oversized body.
-      res.setHeader('connection', 'close');
-      return new ApiError(413, 'invalid_args', `Upload exceeds the ${megabytes(max)} file limit`);
+    const tooLarge = () => new ApiError(413, 'invalid_args', `Upload exceeds the ${megabytes(max)} file limit`);
+    // A refused body is read to its end and discarded, never stored, while the error reply goes out at once.
+    // Closing instead would reset the connection under a client still sending: it would see a network error, not
+    // the 413. A 'data' listener keeps the stream flowing once the iterator below has let go of it.
+    const discardRest = () => {
+      this.discarding.add(req);
+      req.on('data', () => {}).once('close', () => this.discarding.delete(req));
     };
-    if (Number(req.headers['content-length']) > max) throw tooLarge();
+    if (Number(req.headers['content-length']) > max) {
+      discardRest();
+      throw tooLarge();
+    }
 
     const name = safeName(url.searchParams.get('name') ?? '', 'upload');
     const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'ms365-serve-up-'));
@@ -338,6 +346,7 @@ class RemoteServer {
         await fh.close();
       }
     } catch (err) {
+      discardRest();
       await removeDir(dir);
       throw err;
     }
@@ -464,8 +473,10 @@ class RemoteServer {
     return files;
   }
 
-  idle(): Promise<void> {
-    return this.executor.idle();
+  /** Resolves once no child is running; then cuts off refused uploads still sending, which hold their connection. */
+  async idle(): Promise<void> {
+    await this.executor.idle();
+    for (const req of this.discarding) req.socket.destroy();
   }
 
   /** Close the audit log and remove every upload and output file nobody fetched. */
@@ -554,6 +565,13 @@ export async function serve(options: ServeOptions): Promise<void> {
     throw err;
   }
 
+  // Handlers go in before the listening line: a supervisor may signal as soon as it reads it, and an unhandled
+  // SIGTERM kills the process without the graceful stop.
+  const signal = Promise.withResolvers<NodeJS.Signals>();
+  const onSignal = (sig: NodeJS.Signals) => signal.resolve(sig);
+  process.once('SIGTERM', onSignal);
+  process.once('SIGINT', onSignal);
+
   if (socket) {
     fs.chmodSync(socket, 0o600);
     lifecycle(`ms365 serve listening on unix:${socket}`);
@@ -567,10 +585,6 @@ export async function serve(options: ServeOptions): Promise<void> {
     lifecycle(`ms365 serve listening on http://${hostPart}:${address.port}`);
   }
 
-  const signal = Promise.withResolvers<NodeJS.Signals>();
-  const onSignal = (sig: NodeJS.Signals) => signal.resolve(sig);
-  process.once('SIGTERM', onSignal);
-  process.once('SIGINT', onSignal);
   const received = await signal.promise;
   process.off('SIGTERM', onSignal);
   process.off('SIGINT', onSignal);
