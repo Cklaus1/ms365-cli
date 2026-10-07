@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Command, Option } from 'commander';
 import {
-  buildArgv, buildCommandTree, findCommand, InvalidInvocationError, listChoicesOption, validateInvocation, type CommandNode,
+  buildArgv, buildCommandTree, findCommand, graph, InvalidInvocationError, listChoicesOption, validateInvocation, type CommandNode,
 } from '../src/command-tree.js';
 import { introspectionProgram } from '../src/commands/registry.js';
 
@@ -194,5 +194,49 @@ describe('SKILLS-1 buildArgv', () => {
     const parsed = await parseLeaf(program, leaf, buildArgv(leaf, { positionals, args }));
     expect(parsed.args.slice(0, positionals.length)).toEqual(positionals);
     expect(parsed.opts).toMatchObject(args);
+  });
+});
+
+describe('SCHEMA-2 graph() annotations', () => {
+  it('exposes the declared requests, or none, on the leaf', () => {
+    const program = new Command('ms365');
+    const mail = program.command('mail');
+    graph(mail.command('move <id>'), ['GET /me/mailFolders', 'POST /me/messages/{message-id}/move']).action(() => {});
+    graph(mail.command('local'), 'none').action(() => {});
+    mail.command('bare').action(() => {});
+    const tree = buildCommandTree(program);
+    expect(findCommand(tree, 'mail.move')?.graph).toEqual([
+      { method: 'GET', path: '/me/mailFolders' },
+      { method: 'POST', path: '/me/messages/{message-id}/move' },
+    ]);
+    expect(findCommand(tree, 'mail.local')?.graph).toBe('none');
+    expect(findCommand(tree, 'mail.bare')).not.toHaveProperty('graph');
+    expect(JSON.parse(JSON.stringify(tree))).toEqual(tree);
+  });
+
+  const real = buildCommandTree(introspectionProgram());
+
+  it('every leaf of the CLI is annotated', () => {
+    expect(real.leaves.filter(l => l.graph === undefined).map(l => l.path)).toEqual([]);
+  });
+
+  it('only commands without Graph calls are none', () => {
+    const none = real.leaves.filter(l => l.graph === 'none').map(l => l.path);
+    const local = real.leaves.filter(l => l.path.startsWith('auth.')).map(l => l.path);
+    expect(none.sort()).toEqual([...local, 'generate-skills', 'schema', 'serve'].sort());
+  });
+
+  it('requests are non-empty, distinct, absolute paths with {kebab-case} placeholders', () => {
+    const bad: string[] = [];
+    for (const leaf of real.leaves) {
+      if (!Array.isArray(leaf.graph)) continue;
+      const specs = leaf.graph.map(r => `${r.method} ${r.path}`);
+      if (specs.length === 0 || new Set(specs).size !== specs.length) bad.push(`${leaf.path}: ${specs.join(', ')}`);
+      for (const r of leaf.graph) {
+        const unplaced = r.path.replace(/\{[a-z]+(?:-[a-z]+)*\}/g, '');
+        if (!/^\/\S+$/.test(r.path) || /[{}]/.test(unplaced)) bad.push(`${leaf.path}: ${r.path}`);
+      }
+    }
+    expect(bad).toEqual([]);
   });
 });

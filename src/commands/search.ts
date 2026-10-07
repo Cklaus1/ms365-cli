@@ -5,7 +5,7 @@ import { searchQuote } from '../graph-helpers.js';
 import { integer, listRequest, paginationOptions, type ListOptions } from '../list.js';
 import { outputOption } from '../utils.js';
 import { handleErrors } from '../errors.js';
-import { listChoicesOption, listItems } from '../command-tree.js';
+import { graph, listChoicesOption, listItems } from '../command-tree.js';
 
 interface QueryOpts { entity: string; top: number; output: string }
 
@@ -36,8 +36,7 @@ function entityTypes(value: string): string[] {
 export function registerSearchCommands(program: Command, getClient: () => GraphClient): void {
   const search = program.command('search').description('Microsoft 365 search');
 
-  search
-    .command('query <query>')
+  graph(search.command('query <query>'), ['POST /search/query'])
     .description('Search across Microsoft 365 (KQL query string)')
     .addOption(
       listChoicesOption(
@@ -65,8 +64,7 @@ export function registerSearchCommands(program: Command, getClient: () => GraphC
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  paginationOptions(search
-    .command('people [query]')
+  paginationOptions(graph(search.command('people [query]'), ['GET /me/people'])
     .description('Search people relevant to you'), 10)
     .addOption(outputOption())
     .action(handleErrors(async (query: string | undefined, opts: ListOptions) => {

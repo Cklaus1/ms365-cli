@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
+import { graph } from '../command-tree.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { saveOrStream } from '../files.js';
 import { listRequest, paginationOptions, type ListOptions } from '../list.js';
@@ -12,32 +13,28 @@ interface CreatePageOpts { title: string; content: string; output: string }
 export function registerOneNoteCommands(program: Command, getClient: () => GraphClient): void {
   const onenote = program.command('onenote').description('OneNote notebooks');
 
-  paginationOptions(onenote
-    .command('notebooks')
+  paginationOptions(graph(onenote.command('notebooks'), ['GET /me/onenote/notebooks'])
     .description('List notebooks'))
     .addOption(outputOption())
     .action(handleErrors(async (opts: ListOptions) => {
       await listRequest(getClient(), '/me/onenote/notebooks', {}, opts);
     }));
 
-  paginationOptions(onenote
-    .command('sections <notebookId>')
+  paginationOptions(graph(onenote.command('sections <notebookId>'), ['GET /me/onenote/notebooks/{notebook-id}/sections'])
     .description('List sections in a notebook'))
     .addOption(outputOption())
     .action(handleErrors(async (notebookId: string, opts: ListOptions) => {
       await listRequest(getClient(), `/me/onenote/notebooks/${encodeURIComponent(notebookId)}/sections`, {}, opts);
     }));
 
-  paginationOptions(onenote
-    .command('pages <sectionId>')
+  paginationOptions(graph(onenote.command('pages <sectionId>'), ['GET /me/onenote/sections/{section-id}/pages'])
     .description('List pages in a section (Graph returns 20 per page by default)'))
     .addOption(outputOption())
     .action(handleErrors(async (sectionId: string, opts: ListOptions) => {
       await listRequest(getClient(), `/me/onenote/sections/${encodeURIComponent(sectionId)}/pages`, {}, opts);
     }));
 
-  onenote
-    .command('page <pageId>')
+  graph(onenote.command('page <pageId>'), ['GET /me/onenote/pages/{page-id}/content'])
     .description('Get page content as raw HTML (to stdout or --out)')
     .option('--out <path>', 'Save the HTML to a file instead of stdout')
     .option('--force', 'Overwrite an existing --out file')
@@ -47,8 +44,7 @@ export function registerOneNoteCommands(program: Command, getClient: () => Graph
       if (saved.path) info(`Saved to ${saved.path} (${saved.bytes} bytes)`);
     }));
 
-  onenote
-    .command('create-page <sectionId>')
+  graph(onenote.command('create-page <sectionId>'), ['POST /me/onenote/sections/{section-id}/pages'])
     .description('Create a page in a section')
     .requiredOption('--title <title>', 'Page title')
     .requiredOption('--content <html>', 'Page content (HTML)')

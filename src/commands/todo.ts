@@ -5,6 +5,7 @@ import { handleErrors } from '../errors.js';
 import { outputOption, confirm, done } from '../utils.js';
 import { dateOnly } from '../graph-helpers.js';
 import { paginationOptions, listRequest, type ListOptions } from '../list.js';
+import { graph } from '../command-tree.js';
 
 const IMPORTANCE = ['low', 'normal', 'high'];
 const STATUS = ['notStarted', 'inProgress', 'completed', 'waitingOnOthers', 'deferred'];
@@ -27,8 +28,7 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
   const todo = program.command('todo').description('Microsoft To Do tasks');
 
   paginationOptions(
-    todo
-      .command('lists')
+    graph(todo.command('lists'), ['GET /me/todo/lists'])
       .description('List task lists'),
   )
     .addOption(outputOption())
@@ -37,8 +37,7 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
     }));
 
   paginationOptions(
-    todo
-      .command('tasks <listId>')
+    graph(todo.command('tasks <listId>'), ['GET /me/todo/lists/{list-id}/tasks'])
       .description('List tasks in a list')
       .option('--filter <filter>', 'OData filter')
       .option('--orderby <field>', 'Order results by field'),
@@ -51,8 +50,7 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
       await listRequest(getClient(), `/me/todo/lists/${encodeURIComponent(listId)}/tasks`, { queryParams }, opts);
     }));
 
-  todo
-    .command('get <listId> <taskId>')
+  graph(todo.command('get <listId> <taskId>'), ['GET /me/todo/lists/{list-id}/tasks/{task-id}'])
     .description('Get a specific task')
     .addOption(outputOption())
     .action(handleErrors(async (listId: string, taskId: string, opts) => {
@@ -63,8 +61,7 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  todo
-    .command('create <listId>')
+  graph(todo.command('create <listId>'), ['POST /me/todo/lists/{list-id}/tasks'])
     .description('Create a task')
     .requiredOption('--title <title>', 'Task title')
     .option('--body <body>', 'Task body/notes')
@@ -91,8 +88,7 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  todo
-    .command('update <listId> <taskId>')
+  graph(todo.command('update <listId> <taskId>'), ['PATCH /me/todo/lists/{list-id}/tasks/{task-id}'])
     .description('Update a task')
     .option('--title <title>', 'Task title')
     .option('--body <body>', 'Task body')
@@ -118,8 +114,7 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  todo
-    .command('delete <listId> <taskId>')
+  graph(todo.command('delete <listId> <taskId>'), ['DELETE /me/todo/lists/{list-id}/tasks/{task-id}'])
     .description('Delete a task')
     .action(handleErrors(async (listId: string, taskId: string) => {
       await confirm(`Delete task ${taskId.substring(0, 16)}...?`);
@@ -132,8 +127,7 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
     }));
 
   // ── List management ─────────────────────────────────────────
-  todo
-    .command('create-list')
+  graph(todo.command('create-list'), ['POST /me/todo/lists'])
     .description('Create a new task list')
     .requiredOption('--name <name>', 'List display name')
     .addOption(outputOption())
@@ -146,8 +140,7 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  todo
-    .command('update-list <listId>')
+  graph(todo.command('update-list <listId>'), ['PATCH /me/todo/lists/{list-id}'])
     .description('Rename a task list')
     .requiredOption('--name <name>', 'New display name')
     .addOption(outputOption())

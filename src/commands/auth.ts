@@ -1,12 +1,12 @@
 import { Command } from 'commander';
 import { AuthManager } from '../auth.js';
 import { handleErrors } from '../errors.js';
+import { graph } from '../command-tree.js';
 
 export function registerAuthCommands(program: Command, getAuth: () => AuthManager): void {
   const auth = program.command('auth').description('Authentication management');
 
-  auth
-    .command('login')
+  graph(auth.command('login'), 'none')
     .description('Login using device code flow')
     .action(handleErrors(async () => {
       const authManager = getAuth();
@@ -20,8 +20,7 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
       }
     }));
 
-  auth
-    .command('logout')
+  graph(auth.command('logout'), 'none')
     .description('Log out and clear saved credentials')
     .action(handleErrors(async () => {
       const authManager = getAuth();
@@ -30,8 +29,7 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
       console.log('Logged out successfully.');
     }));
 
-  auth
-    .command('status')
+  graph(auth.command('status'), 'none')
     .description('Verify current login status')
     .action(handleErrors(async () => {
       const authManager = getAuth();
@@ -41,8 +39,7 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
       console.log(`Logged in as ${user.displayName} (${user.email})`);
     }));
 
-  auth
-    .command('accounts')
+  graph(auth.command('accounts'), 'none')
     .description('List all cached accounts')
     .action(handleErrors(async () => {
       const authManager = getAuth();
@@ -62,8 +59,7 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
       }
     }));
 
-  auth
-    .command('select <accountId>')
+  graph(auth.command('select <accountId>'), 'none')
     .description('Select an account by ID')
     .action(handleErrors(async (accountId: string) => {
       const authManager = getAuth();
@@ -72,8 +68,7 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
       console.log('Account selected.');
     }));
 
-  auth
-    .command('remove <accountId>')
+  graph(auth.command('remove <accountId>'), 'none')
     .description('Remove a cached account')
     .action(handleErrors(async (accountId: string) => {
       const authManager = getAuth();
