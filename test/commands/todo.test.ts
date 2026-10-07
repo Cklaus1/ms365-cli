@@ -58,3 +58,23 @@ describe('todo lists (PAGE-1, CORE-4)', () => {
     expect(JSON.parse(r.stdout)).toEqual([]);
   });
 });
+
+describe('todo due dates (TZ-1)', () => {
+  it.each([
+    ['Asia/Tokyo', 'Asia/Tokyo'],
+    ['Europe/Amsterdam', 'UTC'],
+  ])('TZ=%s: --due is local midnight in %s (create, update)', async (tz, zone) => {
+    const env = { ...ENV, TZ: tz };
+    const due = { dateTime: '2026-10-07T00:00:00', timeZone: zone };
+    const created = await runCli(['todo', 'create', 'L1', '--title', 't', '--due', '2026-10-07', '-o', 'json'], {
+      env, routes: [{ match: '/me/todo/lists/L1/tasks$', method: 'POST', status: 201, body: { id: 'T1' } }],
+    });
+    expect(created.code).toBe(0);
+    expect(JSON.parse(created.requests[0].body!).dueDateTime).toEqual(due);
+    const updated = await runCli(['todo', 'update', 'L1', 'T1', '--due', '2026-10-07', '-o', 'json'], {
+      env, routes: [{ match: '/me/todo/lists/L1/tasks/T1$', method: 'PATCH', body: { id: 'T1' } }],
+    });
+    expect(updated.code).toBe(0);
+    expect(JSON.parse(updated.requests[0].body!)).toEqual({ dueDateTime: due });
+  });
+});

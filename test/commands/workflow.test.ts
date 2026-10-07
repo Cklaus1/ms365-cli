@@ -249,6 +249,22 @@ describe('workflow email-to-task (MISC-1, WF-3)', () => {
     expect(r.stderr).toContain('[dry-run] POST https://graph.microsoft.com/v1.0/me/todo/lists/L1/tasks');
     expect(r.stderr).toContain('"title":"[Email] <subject>"');
   });
+
+  it.each([
+    ['Asia/Tokyo', 'Asia/Tokyo'],
+    ['Europe/Amsterdam', 'UTC'],
+  ])('TZ=%s: --due is local midnight in %s (TZ-1)', async (tz, zone) => {
+    const r = await runCli(['workflow', 'email-to-task', 'M1', '--list', 'L1', '--due', '2026-10-07', '-o', 'json'], {
+      env: { ...ENV, TZ: tz },
+      routes: [
+        { match: '/me/messages/M1', method: 'GET', body: { subject: 'Hi' } },
+        { match: '/me/todo/lists/L1/tasks', method: 'POST', status: 201, body: { id: 'T1' } },
+      ],
+    });
+    expect(r.code).toBe(0);
+    const post = r.requests.find((q) => q.method === 'POST')!;
+    expect(JSON.parse(post.body!).dueDateTime).toEqual({ dateTime: '2026-10-07T00:00:00', timeZone: zone });
+  });
 });
 
 describe('workflow focus-time (MISC-1)', () => {

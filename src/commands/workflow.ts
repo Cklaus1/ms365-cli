@@ -3,7 +3,7 @@ import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
 import { outputOption, info, done } from '../utils.js';
-import { calendarDate, collectionItems, preferTimezone } from '../graph-helpers.js';
+import { calendarDate, collectionItems, dateOnly, localDate, preferTimezone } from '../graph-helpers.js';
 
 type Item = Record<string, unknown>;
 
@@ -60,14 +60,9 @@ function eventStartDay(ev: Item): Date {
   return eventInstant(start);
 }
 
-/** `YYYY-MM-DD` of `d` in the local zone. */
-function localDate(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
 /**
  * The local `YYYY-MM-DD` of a To Do `dueDateTime`. Graph stores a due date as midnight in the zone it
- * was set in (Outlook in Berlin: `2026-10-06T22:00:00` UTC for Oct 7; `todo --due`: `T00:00:00` UTC),
+ * was set in (Outlook in Berlin: `2026-10-06T22:00:00` UTC for Oct 7; `todo --due` before TZ-1: `T00:00:00` UTC),
  * or returns local midnight when the Prefer zone is honoured. The instant is rounded to the nearest
  * local midnight, which is that day whenever the setting zone is within 12 hours of the local one.
  */
@@ -289,7 +284,7 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
           ].filter(Boolean).join('\n'),
         },
       };
-      if (due) task.dueDateTime = { dateTime: `${due}T00:00:00`, timeZone: 'UTC' };
+      if (due) task.dueDateTime = dateOnly(due);
 
       const taskRes = await client.request(`/me/todo/lists/${encodeURIComponent(listId)}/tasks`, {
         method: 'POST',
