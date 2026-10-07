@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { Command, InvalidArgumentError } from 'commander';
+import { Command, InvalidArgumentError, Option } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
@@ -758,7 +758,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .option('--forward-to <addresses>', 'Comma-separated addresses to forward to')
     .option('--delete', 'Delete matching messages')
     .option('--mark-read', 'Mark matching messages as read')
-    .option('--importance <level>', 'Set importance: low, normal, high')
+    .addOption(new Option('--importance <level>', 'Set importance').choices(['low', 'normal', 'high']))
     .option('--stop-processing', 'Stop processing subsequent rules')
     .option('--sequence <n>', 'Rule order, lowest runs first (default: after the last existing rule)', integer(0))
     .option('--enabled', 'Create the rule enabled (default)')
