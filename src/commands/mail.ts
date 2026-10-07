@@ -1,13 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { Command, InvalidArgumentError } from 'commander';
+import { Command, InvalidArgumentError, Option } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
 import { saveOrStream } from '../files.js';
-import { calendarDate, odataQuote, searchQuote } from '../graph-helpers.js';
+import { calendarDate, dateOnly, localDate, odataQuote, searchQuote } from '../graph-helpers.js';
 import { integer, listRequest, paginationOptions } from '../list.js';
-import { truncate, parseRecipients, formatSize, outputOption, confirm, info } from '../utils.js';
+import { truncate, parseRecipients, formatSize, outputOption, confirm, done, info } from '../utils.js';
 
 // Well-known folder names that Graph API supports directly
 const WELL_KNOWN_FOLDERS = [
@@ -292,12 +292,12 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         message.bccRecipients = parseRecipients(opts.bcc);
       }
 
-      await client.request('/me/sendMail', {
+      const res = await client.request('/me/sendMail', {
         method: 'POST',
         body: JSON.stringify({ message, saveToSentItems: true }),
       });
 
-      info('Email sent successfully.');
+      done(res, 'Email sent successfully.');
     }));
 
   mail
@@ -306,8 +306,8 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .action(handleErrors(async (messageId: string) => {
       await confirm(`Delete message ${messageId.substring(0, 16)}...?`);
       const client = getClient();
-      await client.request(`/me/messages/${encodeURIComponent(messageId)}`, { method: 'DELETE' });
-      info('Message deleted.');
+      const res = await client.request(`/me/messages/${encodeURIComponent(messageId)}`, { method: 'DELETE' });
+      done(res, 'Message deleted.');
     }));
 
   mail
@@ -317,20 +317,20 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .action(handleErrors(async (messageId: string, opts) => {
       const client = getClient();
       const destinationId = await resolveFolder(client, opts.folder);
-      await client.request(`/me/messages/${encodeURIComponent(messageId)}/move`, {
+      const res = await client.request(`/me/messages/${encodeURIComponent(messageId)}/move`, {
         method: 'POST',
         body: JSON.stringify({ destinationId }),
       });
-      info('Message moved.');
+      done(res, 'Message moved.');
     }));
 
   paginationOptions(mail.command('folders').description('List mail folders'), 100)
-    .option('--parent <folderId>', 'List child folders of this folder')
+    .option('--parent <name>', 'List child folders of this folder (name or ID, e.g. "Inbox")')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();
       const endpoint = opts.parent
-        ? `/me/mailFolders/${encodeURIComponent(opts.parent)}/childFolders`
+        ? `/me/mailFolders/${encodeURIComponent(await resolveFolder(client, opts.parent))}/childFolders`
         : '/me/mailFolders';
       await listRequest(client, endpoint, {
         queryParams: { '$select': 'id,displayName,parentFolderId,childFolderCount,totalItemCount,unreadItemCount' },
@@ -352,12 +352,12 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .command('create-folder')
     .description('Create a mail folder')
     .requiredOption('--name <name>', 'Folder display name')
-    .option('--parent <parentFolderId>', 'Parent folder ID (default: root)')
+    .option('--parent <name>', 'Parent folder name or ID (default: root)')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();
       const endpoint = opts.parent
-        ? `/me/mailFolders/${encodeURIComponent(opts.parent)}/childFolders`
+        ? `/me/mailFolders/${encodeURIComponent(await resolveFolder(client, opts.parent))}/childFolders`
         : '/me/mailFolders';
       const response = await client.request(endpoint, {
         method: 'POST',
@@ -398,7 +398,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         body: JSON.stringify(message),
       });
 
-      info('Draft created.');
+      done(response, 'Draft created.');
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
@@ -450,16 +450,19 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .description('Send an existing draft')
     .action(handleErrors(async (messageId: string) => {
       const client = getClient();
-      await client.request(`/me/messages/${encodeURIComponent(messageId)}/send`, {
+      const res = await client.request(`/me/messages/${encodeURIComponent(messageId)}/send`, {
         method: 'POST',
       });
-      info('Draft sent.');
+      done(res, 'Draft sent.');
     }));
 
   paginationOptions(mail.command('attachments <messageId>').description('List attachments for a message'))
     .addOption(outputOption())
     .action(handleErrors(async (messageId: string, opts) => {
-      await listRequest(getClient(), `/me/messages/${encodeURIComponent(messageId)}/attachments`, {}, opts);
+      // Metadata only: without $select Graph returns every fileAttachment's contentBytes.
+      await listRequest(getClient(), `/me/messages/${encodeURIComponent(messageId)}/attachments`, {
+        queryParams: { '$select': 'id,name,contentType,size,isInline,lastModifiedDateTime' },
+      }, opts);
     }));
 
   mail
@@ -504,11 +507,11 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .action(handleErrors(async (messageId: string, attachmentId: string) => {
       await confirm(`Delete attachment ${attachmentId.substring(0, 16)}...?`);
       const client = getClient();
-      await client.request(
+      const res = await client.request(
         `/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`,
         { method: 'DELETE' }
       );
-      info('Attachment deleted.');
+      done(res, 'Attachment deleted.');
     }));
 
   mail
@@ -553,11 +556,11 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       const payload = opts.html
         ? { message: { body: { contentType: 'HTML', content: opts.body } } }
         : { comment: opts.body };
-      await client.request(`/me/messages/${encodeURIComponent(messageId)}/${action}`, {
+      const res = await client.request(`/me/messages/${encodeURIComponent(messageId)}/${action}`, {
         method: 'POST',
         body: JSON.stringify(payload),
       });
-      info('Reply sent.');
+      done(res, 'Reply sent.');
     }));
 
   // ── Forward ──────────────────────────────────────────────────
@@ -569,11 +572,11 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .action(handleErrors(async (messageId: string, opts) => {
       const client = getClient();
       const toRecipients = parseRecipients(opts.to);
-      await client.request(`/me/messages/${encodeURIComponent(messageId)}/forward`, {
+      const res = await client.request(`/me/messages/${encodeURIComponent(messageId)}/forward`, {
         method: 'POST',
         body: JSON.stringify({ comment: opts.comment || '', toRecipients }),
       });
-      info('Message forwarded.');
+      done(res, 'Message forwarded.');
     }));
 
   // ── Mark read/unread ────────────────────────────────────────
@@ -582,11 +585,11 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .description('Mark a message as read')
     .action(handleErrors(async (messageId: string) => {
       const client = getClient();
-      await client.request(`/me/messages/${encodeURIComponent(messageId)}`, {
+      const res = await client.request(`/me/messages/${encodeURIComponent(messageId)}`, {
         method: 'PATCH',
         body: JSON.stringify({ isRead: true }),
       });
-      info('Marked as read.');
+      done(res, 'Marked as read.');
     }));
 
   mail
@@ -594,11 +597,11 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .description('Mark a message as unread')
     .action(handleErrors(async (messageId: string) => {
       const client = getClient();
-      await client.request(`/me/messages/${encodeURIComponent(messageId)}`, {
+      const res = await client.request(`/me/messages/${encodeURIComponent(messageId)}`, {
         method: 'PATCH',
         body: JSON.stringify({ isRead: false }),
       });
-      info('Marked as unread.');
+      done(res, 'Marked as unread.');
     }));
 
   // ── Flag / unflag ───────────────────────────────────────────
@@ -606,21 +609,21 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .command('flag <messageId>')
     .description('Set follow-up flag on a message')
     .option('--due <date>', 'Due date (YYYY-MM-DD)')
-    .option('--start <date>', 'Start date (YYYY-MM-DD; with --due default: today, or the due date if earlier)')
+    .option('--start <date>', 'Start date (YYYY-MM-DD; with --due default: local today, or the due date if earlier)')
     .action(handleErrors(async (messageId: string, opts) => {
       const client = getClient();
       const flag: Record<string, unknown> = { flagStatus: 'flagged' };
       const due = opts.due ? calendarDate(opts.due) : undefined;
       // Graph rejects a dueDateTime without a startDateTime (400).
-      const today = new Date().toISOString().slice(0, 10);
+      const today = localDate();
       const start = opts.start ? calendarDate(opts.start) : due && (due < today ? due : today);
-      if (start) flag.startDateTime = { dateTime: `${start}T00:00:00`, timeZone: 'UTC' };
-      if (due) flag.dueDateTime = { dateTime: `${due}T00:00:00`, timeZone: 'UTC' };
-      await client.request(`/me/messages/${encodeURIComponent(messageId)}`, {
+      if (start) flag.startDateTime = dateOnly(start);
+      if (due) flag.dueDateTime = dateOnly(due);
+      const res = await client.request(`/me/messages/${encodeURIComponent(messageId)}`, {
         method: 'PATCH',
         body: JSON.stringify({ flag }),
       });
-      info('Message flagged.');
+      done(res, 'Message flagged.');
     }));
 
   mail
@@ -628,11 +631,11 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .description('Remove follow-up flag from a message')
     .action(handleErrors(async (messageId: string) => {
       const client = getClient();
-      await client.request(`/me/messages/${encodeURIComponent(messageId)}`, {
+      const res = await client.request(`/me/messages/${encodeURIComponent(messageId)}`, {
         method: 'PATCH',
         body: JSON.stringify({ flag: { flagStatus: 'notFlagged' } }),
       });
-      info('Flag removed.');
+      done(res, 'Flag removed.');
     }));
 
   mail
@@ -640,11 +643,11 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .description('Mark a flagged message as complete')
     .action(handleErrors(async (messageId: string) => {
       const client = getClient();
-      await client.request(`/me/messages/${encodeURIComponent(messageId)}`, {
+      const res = await client.request(`/me/messages/${encodeURIComponent(messageId)}`, {
         method: 'PATCH',
         body: JSON.stringify({ flag: { flagStatus: 'complete' } }),
       });
-      info('Flag marked complete.');
+      done(res, 'Flag marked complete.');
     }));
 
   // ── Categories ──────────────────────────────────────────────
@@ -655,11 +658,11 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .action(handleErrors(async (messageId: string, opts) => {
       const client = getClient();
       const categories = opts.categories.split(',').map((c: string) => c.trim());
-      await client.request(`/me/messages/${encodeURIComponent(messageId)}`, {
+      const res = await client.request(`/me/messages/${encodeURIComponent(messageId)}`, {
         method: 'PATCH',
         body: JSON.stringify({ categories }),
       });
-      info(`Categories set: ${categories.join(', ')}`);
+      done(res, `Categories set: ${categories.join(', ')}`);
     }));
 
   // Shared mailbox commands (require --org-mode)
@@ -714,7 +717,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       const client = getClient();
       const toRecipients = parseRecipients(opts.to);
 
-      await client.request(`/users/${encodeURIComponent(userId)}/sendMail`, {
+      const res = await client.request(`/users/${encodeURIComponent(userId)}/sendMail`, {
         method: 'POST',
         body: JSON.stringify({
           message: {
@@ -725,7 +728,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
           saveToSentItems: true,
         }),
       });
-      info('Email sent from shared mailbox.');
+      done(res, 'Email sent from shared mailbox.');
     }));
 
   // ── Inbox rules ─────────────────────────────────────────────
@@ -751,11 +754,11 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .requiredOption('--name <name>', 'Rule display name')
     .option('--from <addresses>', 'Comma-separated sender addresses to match (exact addresses)')
     .option('--subject-contains <words>', 'Comma-separated words to match in subject')
-    .option('--move-to <folderId>', 'Move matching messages to folder ID')
+    .option('--move-to <name>', 'Move matching messages to this folder (name or ID, e.g. "Archive")')
     .option('--forward-to <addresses>', 'Comma-separated addresses to forward to')
     .option('--delete', 'Delete matching messages')
     .option('--mark-read', 'Mark matching messages as read')
-    .option('--importance <level>', 'Set importance: low, normal, high')
+    .addOption(new Option('--importance <level>', 'Set importance').choices(['low', 'normal', 'high']))
     .option('--stop-processing', 'Stop processing subsequent rules')
     .option('--sequence <n>', 'Rule order, lowest runs first (default: after the last existing rule)', integer(0))
     .option('--enabled', 'Create the rule enabled (default)')
@@ -796,6 +799,16 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       }
       if (Object.keys(conditions).length === 0) {
         await confirm(`Rule "${opts.name}" has no conditions and applies to every incoming message. Create it?`);
+      }
+      if (opts.moveTo) {
+        // moveToFolder needs a real folder ID; Graph resolves well-known names only in URL paths.
+        const folder = await resolveFolder(client, opts.moveTo);
+        if (WELL_KNOWN_FOLDERS.includes(folder)) {
+          const res = await client.request(`/me/mailFolders/${folder}`, { queryParams: { '$select': 'id' } });
+          actions.moveToFolder = res.status === 0 ? folder : (res.data as MailFolder).id;
+        } else {
+          actions.moveToFolder = folder;
+        }
       }
 
       let sequence: number | undefined = opts.sequence;
@@ -865,7 +878,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
           failed.push({ id, error: (err as Error).message });
         }
       }
-      info(`Marked ${succeeded} message(s) as read.`);
+      if (!client.isDryRun) info(`Marked ${succeeded} message(s) as read.`);
       failOnBatchErrors(failed, ids.length);
     }));
 
@@ -890,7 +903,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
           failed.push({ id, error: (err as Error).message });
         }
       }
-      info(`Moved ${succeeded} message(s).`);
+      if (!client.isDryRun) info(`Moved ${succeeded} message(s).`);
       failOnBatchErrors(failed, ids.length);
     }));
 }
