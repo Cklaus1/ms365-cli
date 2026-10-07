@@ -11,9 +11,18 @@ describe('SEARCH-1 entity type combinations', () => {
     expect(r.requests).toHaveLength(0);
   });
 
-  it('rejects unknown entity types', async () => {
+  it('CHOICE-1 rejects unknown entity types with the allowed choices', async () => {
     const r = await runCli(['search', 'query', 'x', '--entity', 'mail'], { env: ENV, routes: [] });
     expect(r.code).toBe(1);
+    expect(r.stderr).toContain('Allowed choices');
+    expect(r.stderr).toContain('driveItem');
+    expect(r.requests).toHaveLength(0);
+  });
+
+  it('CHOICE-1 rejects an empty entity list', async () => {
+    const r = await runCli(['search', 'query', 'x', '--entity', ' , '], { env: ENV, routes: [] });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('Allowed choices');
     expect(r.requests).toHaveLength(0);
   });
 

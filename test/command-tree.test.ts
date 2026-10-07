@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Command, Option } from 'commander';
 import {
-  buildArgv, buildCommandTree, findCommand, InvalidInvocationError, validateInvocation, type CommandNode,
+  buildArgv, buildCommandTree, findCommand, InvalidInvocationError, listChoicesOption, validateInvocation, type CommandNode,
 } from '../src/command-tree.js';
 import { introspectionProgram } from '../src/commands/registry.js';
 
@@ -114,6 +114,40 @@ describe('SKILLS-1 validateInvocation', () => {
 
   it('buildArgv throws InvalidInvocationError listing the problems', () => {
     expect(() => buildArgv(read, { positionals: [] })).toThrow(InvalidInvocationError);
+  });
+});
+
+describe('CHOICE-1 comma-list choices', () => {
+  function listProgram(): Command {
+    const program = new Command('ms365').exitOverride();
+    program
+      .command('find')
+      .addOption(listChoicesOption('--kind <kinds>', 'Kinds', ['a', 'b', 'c']).default('a'))
+      .action(() => {});
+    program.commands.forEach(c => c.exitOverride());
+    return program;
+  }
+  const find = findCommand(buildCommandTree(listProgram()), 'find')!;
+
+  it('carries the allowed values on the option node (serializable)', () => {
+    const kind = find.options.find(o => o.attribute === 'kind')!;
+    expect(kind.listChoices).toEqual(['a', 'b', 'c']);
+    expect(kind.choices).toBeUndefined();
+    expect(JSON.parse(JSON.stringify(kind))).toEqual(kind);
+  });
+
+  it('validateInvocation accepts lists of allowed values and rejects others', () => {
+    expect(validateInvocation(find, { args: { kind: 'a' } })).toEqual([]);
+    expect(validateInvocation(find, { args: { kind: 'a, c' } })).toEqual([]);
+    expect(validateInvocation(find, { args: { kind: 'a,x' } })).toEqual(['option kind must be a comma-separated list of: a, b, c']);
+    expect(validateInvocation(find, { args: { kind: ' , ' } })).toEqual(['option kind must be a comma-separated list of: a, b, c']);
+  });
+
+  it('Commander rejects a bad value with the allowed choices and passes a valid one through', async () => {
+    await expect(listProgram().parseAsync(['find', '--kind', 'a,x'], { from: 'user' })).rejects.toThrow(/Allowed choices.*a, b, c/);
+    const program = listProgram();
+    await program.parseAsync(['find', '--kind', 'b,c'], { from: 'user' });
+    expect(program.commands[0].opts().kind).toBe('b,c');
   });
 });
 

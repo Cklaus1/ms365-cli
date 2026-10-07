@@ -32,6 +32,7 @@ function optionLine(opt: OptionNode): string {
   const notes: string[] = [];
   if (opt.required) notes.push('required');
   if (opt.choices) notes.push(`one of: ${opt.choices.join(', ')}`);
+  if (opt.listChoices) notes.push(`comma-separated list of: ${opt.listChoices.join(', ')}`);
   if (opt.long === '--output' && opt.default === defaultFormat) notes.push('default: table on a TTY, json when piped');
   else if (opt.default !== undefined && !opt.negate) notes.push(`default: ${JSON.stringify(opt.default)}`);
   const suffix = notes.length > 0 ? ` (${notes.join('; ')})` : '';

@@ -51,6 +51,10 @@ describe('SKILLS-1 generate-skills derives the catalog from the command tree', (
     expect(files['ms365-calendar/SKILL.md']).toContain('Alias: `ms365 cal`');
   });
 
+  it('CHOICE-1 lists the values of a comma-list option', () => {
+    expect(files['ms365-search/SKILL.md']).toMatch(/`--entity <types>`.*comma-separated list of: driveItem, drive, list, listItem, site, externalItem, message, event, chatMessage, person, acronym, bookmark, qna/);
+  });
+
   it('emits schema hints only for endpoints that exist', () => {
     const keys = new Set(endpointKeys());
     const hints = [...all.matchAll(/ms365 schema ([a-z][\w.-]*)/g)].map(m => m[1]);

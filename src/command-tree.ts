@@ -1,4 +1,4 @@
-import type { Argument, Command, Option } from 'commander';
+import { InvalidArgumentError, Option, type Argument, type Command } from 'commander';
 
 /**
  * Serializable view of a Commander program: every leaf command with its arguments and options.
@@ -31,6 +31,8 @@ export interface OptionNode {
   /** `--no-x` form; sets `attribute` to false. */
   negate: boolean;
   choices?: string[];
+  /** Comma-separated list option: every item must be one of these (see `listChoicesOption`). */
+  listChoices?: string[];
   default?: unknown;
 }
 
@@ -85,6 +87,31 @@ function serializable(value: unknown): unknown {
   return undefined;
 }
 
+/** Allowed items of options created by `listChoicesOption` (Commander has no slot for list choices). */
+const LIST_CHOICES = new WeakMap<Option, string[]>();
+
+/** Split a comma-separated option value into its trimmed, non-empty items. */
+export function listItems(value: string): string[] {
+  return value.split(',').map(t => t.trim()).filter(t => t !== '');
+}
+
+/**
+ * Option taking a comma-separated list whose items must all come from `choices`. Commander rejects other
+ * values locally (`Allowed choices …`); the command tree carries the set as `listChoices`, so remote
+ * validation and generated skills see it. The parsed value stays the raw string.
+ */
+export function listChoicesOption(flags: string, description: string, choices: string[]): Option {
+  const opt = new Option(flags, description).argParser((value: string) => {
+    const items = listItems(value);
+    if (items.length === 0 || items.some(t => !choices.includes(t))) {
+      throw new InvalidArgumentError(`Allowed choices (comma-separated) are ${choices.join(', ')}.`);
+    }
+    return value;
+  });
+  LIST_CHOICES.set(opt, [...choices]);
+  return opt;
+}
+
 function argumentNode(arg: Argument): ArgumentNode {
   const node: ArgumentNode = {
     name: arg.name(),
@@ -113,6 +140,8 @@ function optionNode(opt: Option): OptionNode {
   if (opt.long) node.long = opt.long;
   if (opt.short) node.short = opt.short;
   if (opt.argChoices) node.choices = [...opt.argChoices];
+  const listChoices = LIST_CHOICES.get(opt);
+  if (listChoices) node.listChoices = [...listChoices];
   if (def !== undefined) node.default = def;
   return node;
 }
@@ -219,6 +248,14 @@ export function validateInvocation(node: CommandNode, invocation: Invocation): s
     if (valued.choices) {
       const bad = values.filter(v => !valued.choices!.includes(String(v)));
       if (bad.length > 0) problems.push(`option ${key} must be one of: ${valued.choices.join(', ')}`);
+    }
+    if (valued.listChoices) {
+      const allowed = valued.listChoices;
+      const ok = values.every(v => {
+        const items = listItems(String(v));
+        return items.length > 0 && items.every(t => allowed.includes(t));
+      });
+      if (!ok) problems.push(`option ${key} must be a comma-separated list of: ${allowed.join(', ')}`);
     }
   }
 
