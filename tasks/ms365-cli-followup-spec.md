@@ -1,7 +1,7 @@
 # ms365-cli — Follow-up Spec (deferred opportunities)
 
-Status: DRAFT (not adversarially reviewed; open questions in §8). Date: 2026-10-06.
-Source: all 25 rows of `tasks/opportunities.md`, each re-checked against branch `build/ms365-cli-hardening` at `bb72388` (static read; file:line anchors are current). Consumable by `/build-loop tasks/ms365-cli-followup-spec.md` once §8 is resolved.
+Status: DECIDED 2026-10-07 (all §8 questions resolved with the recommended option, user instruction "do your recommendations"); adversarial review pending. Date: 2026-10-06.
+Source: all 25 rows of `tasks/opportunities.md`, each re-checked against branch `build/ms365-cli-hardening` at `bb72388` (static read; file:line anchors are current). Consumable by `/build-loop tasks/ms365-cli-followup-spec.md`. Branch: `build/ms365-cli-followup`.
 Builds on `tasks/ms365-cli-hardening-spec.md` (same priority scale, confidence tags and conventions: exits through `handleErrors`, stdout carries data only, global flags before the subcommand, tests via the built binary + fake Graph in `test/e2e/run-cli.ts`).
 
 Priority: **P0** data loss / security / wrong-target or duplicate writes. **P1** documented feature broken. **P2** wrong edge behavior / UX / scripting contract. **P3** cleanup, docs.
@@ -176,9 +176,9 @@ Unchanged from hardening spec §7. Blocked on a live test that `Tailscale-App-Ca
 ### REMOTE-3 later: approval queue and per-agent rate limits — opportunity #2
 Unchanged from hardening spec §7 (`src/serve/capabilities.ts:13` grants are all-or-nothing; only global `executor.ts:60` concurrency). Not built in this run.
 
-## 8. Open questions
+## 8. Decisions (all resolved 2026-10-07: user accepted every recommendation)
 
-| ID | Question | Options | Recommendation |
+| ID | Question | Options | Decision |
 |---|---|---|---|
 | Q1 | DRY-1: what do write commands print under `--dry-run`? | nothing beyond the preview / `Would …` line | **Nothing**: the `[dry-run]` preview already says what would happen |
 | Q2 | CAL-4: calendar `--timezone` default | local zone everywhere / UTC everywhere / keep split | **Local everywhere** (matches reads and decline) |
