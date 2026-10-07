@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { runCli } from '../e2e/run-cli.js';
+import { REMOTE_ENTRY, runCli } from '../e2e/run-cli.js';
+import { call, capsHeader, startServer } from '../e2e/serve-harness.js';
 
 const ENV = { MS365_CLI_CLIENT_ID: '00000000-0000-0000-0000-000000000000', MS365_CLI_TOKEN: 'fake' };
 
@@ -24,6 +25,27 @@ describe('SEARCH-1 entity type combinations', () => {
     expect(r.code).toBe(1);
     expect(r.stderr).toContain('Allowed choices');
     expect(r.requests).toHaveLength(0);
+  });
+
+  it('CHOICE-1 ms365-remote rejects a bad entity client-side (no HTTP request)', async () => {
+    // Port 9 (discard) is never served: any request would fail with a connection error instead.
+    const r = await runCli(['search', 'query', 'x', '--entity', 'mail'], { entry: REMOTE_ENTRY, env: { MS365_REMOTE_URL: 'http://127.0.0.1:9' } });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain('Allowed choices');
+    expect(r.stderr).not.toMatch(/ECONNREFUSED|fetch failed/);
+  });
+
+  it('CHOICE-1 POST /v1/execute with a bad entity returns 400 invalid_args', async () => {
+    const server = await startServer({ routes: [] });
+    try {
+      const caps = capsHeader(['search.read']);
+      const bad = await call(server, { caps, body: { command: 'search.query', positionals: ['x'], args: { entity: 'driveItem,mail' } } });
+      expect(bad.status).toBe(400);
+      expect(bad.body.error).toMatchObject({ code: 'invalid_args', message: expect.stringContaining('entity must be a comma-separated list of') });
+    } finally {
+      await server.stop();
+    }
+    expect(server.requests()).toHaveLength(0);
   });
 
   it('accepts a SharePoint bucket (driveItem,site,listItem) and sends one request', async () => {
