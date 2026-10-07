@@ -7,16 +7,10 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { buildArgv, findCommand, InvalidInvocationError, type CommandNode, type CommandTree } from '../command-tree.js';
 import { detectMimeType } from '../mime.js';
-import { info } from '../utils.js';
 import { APP_CAPS_HEADER, CapsHeaderError, parseAppCapabilities, type Caller } from './app-caps.js';
 import { AuditLog, type AuditEntry } from './audit.js';
 import { CAPABILITIES, remotePolicy, type RemoteCommand } from './capabilities.js';
 import { Executor, type ExecutorOptions } from './executor.js';
-
-/** Total size of uploaded files per request, and of returned output files. */
-export const MAX_FILE_BYTES = 25 * 1024 * 1024;
-/** Request body limit: the file cap plus room for the JSON part and multipart framing. */
-const MAX_BODY_BYTES = MAX_FILE_BYTES + 1024 * 1024;
 
 const LOOPBACK_HOSTS = ['127.0.0.1', 'localhost', '::1'];
 
@@ -49,6 +43,8 @@ export interface ServeOptions {
   appCap: string;
   auditLog: string;
   tree: CommandTree;
+  /** Total size of uploaded files per request, and of returned output files (`--max-file-mb`). */
+  maxFileBytes: number;
   executor: ExecutorOptions;
 }
 
@@ -71,21 +67,23 @@ function json(res: http.ServerResponse, status: number, body: unknown): void {
   res.end(text);
 }
 
-/** Read the whole body, rejecting with 413 past `MAX_BODY_BYTES`. */
-async function readBody(req: http.IncomingMessage): Promise<Buffer<ArrayBuffer>> {
+/** Read the whole body, rejecting with 413 past the file cap plus room for the JSON part and multipart framing. */
+async function readBody(req: http.IncomingMessage, maxFileBytes: number): Promise<Buffer<ArrayBuffer>> {
+  const maxBodyBytes = maxFileBytes + 1024 * 1024;
   const declared = Number(req.headers['content-length']);
-  if (declared > MAX_BODY_BYTES) throw tooLarge();
+  if (declared > maxBodyBytes) throw tooLarge(maxFileBytes);
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req as AsyncIterable<Buffer>) {
     size += chunk.byteLength;
-    if (size <= MAX_BODY_BYTES) chunks.push(chunk);
+    if (size <= maxBodyBytes) chunks.push(chunk);
   }
-  if (size > MAX_BODY_BYTES) throw tooLarge();
+  if (size > maxBodyBytes) throw tooLarge(maxFileBytes);
   return Buffer.concat(chunks);
 }
 
-const tooLarge = () => new ApiError(413, 'invalid_args', `Request exceeds the ${MAX_FILE_BYTES / 1024 / 1024} MB file limit`);
+const megabytes = (bytes: number) => `${bytes / 1024 / 1024} MB`;
+const tooLarge = (maxFileBytes: number) => new ApiError(413, 'invalid_args', `Request exceeds the ${megabytes(maxFileBytes)} file limit`);
 
 function parseExecuteRequest(value: unknown): ExecuteRequest {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -103,8 +101,8 @@ function parseExecuteRequest(value: unknown): ExecuteRequest {
 }
 
 /** JSON body, or multipart/form-data with a `request` JSON part plus file parts referenced as `{"$file": "<part>"}`. */
-async function parseBody(req: http.IncomingMessage): Promise<{ request: ExecuteRequest; files: Map<string, File> }> {
-  const body = await readBody(req);
+async function parseBody(req: http.IncomingMessage, maxFileBytes: number): Promise<{ request: ExecuteRequest; files: Map<string, File> }> {
+  const body = await readBody(req, maxFileBytes);
   const contentType = req.headers['content-type'] ?? 'application/json';
   const files = new Map<string, File>();
   let requestText: string;
@@ -124,7 +122,7 @@ async function parseBody(req: http.IncomingMessage): Promise<{ request: ExecuteR
       files.set(name, value);
       total += value.size;
     }
-    if (total > MAX_FILE_BYTES) throw tooLarge();
+    if (total > maxFileBytes) throw tooLarge(maxFileBytes);
   } else if (contentType.startsWith('application/json')) {
     requestText = body.toString('utf8');
   } else {
@@ -157,12 +155,12 @@ function parseStdout(stdout: Buffer): unknown {
 }
 
 /** Returned output files; sizes are checked with `stat` first, so an oversized file is never read into memory. */
-async function collectOutputs(dir: string): Promise<OutputFile[]> {
+async function collectOutputs(dir: string, maxFileBytes: number): Promise<OutputFile[]> {
   const entries = (await fsp.readdir(dir, { withFileTypes: true })).filter(e => e.isFile());
   let total = 0;
   for (const entry of entries) total += (await fsp.stat(path.join(dir, entry.name))).size;
-  if (total > MAX_FILE_BYTES) {
-    throw new ApiError(502, 'command_failed', `Output file exceeds the ${MAX_FILE_BYTES / 1024 / 1024} MB remote limit`);
+  if (total > maxFileBytes) {
+    throw new ApiError(502, 'command_failed', `Output file exceeds the ${megabytes(maxFileBytes)} remote limit`);
   }
   const files: OutputFile[] = [];
   for (const entry of entries) {
@@ -240,7 +238,7 @@ class RemoteServer {
     }
     if (req.method === 'POST' && pathname === '/v1/execute') {
       const caller = this.caller(req, entry);
-      const { request, files } = await parseBody(req);
+      const { request, files } = await parseBody(req, this.options.maxFileBytes);
       return this.execute(caller, request, files, entry);
     }
     throw new ApiError(404, 'not_found', `No route for ${req.method} ${pathname}`);
@@ -288,7 +286,7 @@ class RemoteServer {
       if (result.status === 'failed') throw new ApiError(502, 'command_failed', result.message);
 
       const body: Record<string, unknown> = { data: parseStdout(result.stdout) };
-      if (policy.output) body.files = await collectOutputs(outDir);
+      if (policy.output) body.files = await collectOutputs(outDir, this.options.maxFileBytes);
       if (result.stderr.trim() !== '') body.stderr = result.stderr;
       return body;
     } finally {
@@ -356,6 +354,11 @@ export function checkTransport(options: { socket?: string; port?: number; host?:
   if (options.port !== undefined && options.socket !== undefined) throw new Error('Use either --socket or --port, not both');
 }
 
+/** Service log line (listening, signal, stopped): always on stderr; `-q` only silences confirmations. */
+function lifecycle(message: string): void {
+  console.error(message);
+}
+
 /**
  * Run the server until SIGTERM/SIGINT, then shut down gracefully: stop accepting, let running and queued
  * requests finish, remove the socket file. Resolves once everything is closed.
@@ -407,7 +410,7 @@ export async function serve(options: ServeOptions): Promise<void> {
 
   if (socket) {
     fs.chmodSync(socket, 0o600);
-    info(`ms365 serve listening on unix:${socket}`);
+    lifecycle(`ms365 serve listening on unix:${socket}`);
   } else {
     const address = server.address() as net.AddressInfo;
     const hostPart = address.family === 'IPv6' ? `[${address.address}]` : address.address;
@@ -415,7 +418,7 @@ export async function serve(options: ServeOptions): Promise<void> {
       `Warning: bound to TCP ${hostPart}:${address.port}. Every local process can connect and send its own ` +
       `${APP_CAPS_HEADER} header; prefer --socket.`,
     );
-    info(`ms365 serve listening on http://${hostPart}:${address.port}`);
+    lifecycle(`ms365 serve listening on http://${hostPart}:${address.port}`);
   }
 
   const signal = Promise.withResolvers<NodeJS.Signals>();
@@ -426,7 +429,7 @@ export async function serve(options: ServeOptions): Promise<void> {
   process.off('SIGTERM', onSignal);
   process.off('SIGINT', onSignal);
 
-  info(`Received ${received}; finishing ${inflight.size} request(s)`);
+  lifecycle(`Received ${received}; finishing ${inflight.size} request(s)`);
   stopping = true;
   const closed = Promise.withResolvers<void>();
   server.close(() => closed.resolve());
@@ -436,5 +439,5 @@ export async function serve(options: ServeOptions): Promise<void> {
   await closed.promise;
   if (socket) fs.rmSync(socket, { force: true });
   app.close();
-  info('ms365 serve stopped');
+  lifecycle('ms365 serve stopped');
 }

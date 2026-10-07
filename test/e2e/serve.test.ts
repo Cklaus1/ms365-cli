@@ -337,3 +337,62 @@ describe('REMOTE-1c files over the API', () => {
     await server.stop();
   }, 20_000);
 });
+
+describe('REMOTE-4 serve operability', () => {
+  let home: string;
+  beforeAll(async () => {
+    home = await loginHome();
+  });
+
+  it('prints lifecycle lines on stderr even with -q', async () => {
+    const server = await startServer({ globals: ['-q'] });
+    expect(server.stderr()).toContain(`ms365 serve listening on unix:${server.socket}`);
+    expect(await server.stop('SIGTERM')).toEqual({ code: 0, signal: null });
+    expect(server.stderr()).toContain('Received SIGTERM; finishing 0 request(s)');
+    expect(server.stderr()).toContain('ms365 serve stopped');
+  });
+
+  it('rejects --concurrency outside 1-64 and non-integer limits with exit 1', async () => {
+    for (const args of [['--concurrency', '0'], ['--concurrency', '65'], ['--max-file-mb', '0'], ['--max-stdout-mb', '1.5']]) {
+      const r = await runCli(['serve', '--app-cap', APP_CAP, '--port', '0', ...args]);
+      expect(r.code, args.join(' ')).toBe(1);
+      expect(r.stderr, args.join(' ')).toMatch(/Expected an integer/);
+    }
+  });
+
+  it('--concurrency 1 serializes two slow requests', async () => {
+    const server = await startServer({ home, args: ['--concurrency', '1'], routes: [{ ...MESSAGES, delayMs: 500 }] });
+    const caps = capsHeader(['mail.read']);
+    const results = await Promise.all([1, 2].map(() => call(server, { caps, body: { command: 'mail.list' } })));
+    await server.stop();
+    expect(results.map(r => r.status)).toEqual([200, 200]);
+    expect(childStarts(server.procs(), server.proc.pid)).toBe(2);
+    expect(maxAlive(server.procs(), server.proc.pid)).toBe(1);
+  });
+
+  it('--max-stdout-mb bounds command output: 502 with the configured figure', async () => {
+    const big = { match: '/me/messages', method: 'GET', body: { value: [{ id: 'm1', subject: 'x'.repeat(2 * 1024 * 1024) }] } };
+    const server = await startServer({ home, args: ['--max-stdout-mb', '1'], routes: [big] });
+    const res = await call(server, { caps: capsHeader(['mail.read']), body: { command: 'mail.list' } });
+    await server.stop();
+    expect(res.status).toBe(502);
+    expect(res.body.error).toEqual({ code: 'command_failed', message: 'Command output exceeds the 1 MB limit' });
+  });
+
+  it('--max-file-mb 1: a 2 MB upload is refused with 413 naming 1 MB', async () => {
+    const server = await startServer({ home, args: ['--max-file-mb', '1'] });
+    const form = new FormData();
+    form.append('request', JSON.stringify({ command: 'drive.upload', positionals: ['d1', 'p1', { $file: 'f' }] }));
+    form.append('f', new Blob([Buffer.alloc(2 * 1024 * 1024)]), 'a.bin');
+    const encoded = new Response(form);
+    const res = await call(server, {
+      caps: capsHeader(['drive.write']),
+      headers: { 'content-type': encoded.headers.get('content-type')! },
+      raw: Buffer.from(await encoded.arrayBuffer()),
+    });
+    await server.stop();
+    expect(res.status).toBe(413);
+    expect(res.body.error).toEqual({ code: 'invalid_args', message: 'Request exceeds the 1 MB file limit' });
+    expect(childStarts(server.procs(), server.proc.pid)).toBe(0);
+  });
+});
