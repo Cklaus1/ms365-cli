@@ -1,34 +1,30 @@
-import type { AccountInfo, Configuration } from '@azure/msal-node';
+import type { AccountInfo, Configuration, ICachePlugin, TokenCacheContext } from '@azure/msal-node';
 import { PublicClientApplication } from '@azure/msal-node';
-import keytar from 'keytar';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import crypto from 'crypto';
+import { CliError, ExitCode } from './errors.js';
 
 // Detect headless Linux where keytar hangs indefinitely trying to access GNOME Keyring.
-// Skip keytar entirely in this case — use file-based fallback instead.
 const isHeadless = process.platform === 'linux' && !process.env.DISPLAY && !process.env.DBUS_SESSION_BUS_ADDRESS;
-
-/** Wrap keytar calls with a timeout — keytar hangs on headless Linux without a keyring */
-function withTimeout<T>(promise: Promise<T>, ms: number = 2000): Promise<T | null> {
-  if (isHeadless) return Promise.resolve(null);
-  return Promise.race([
-    promise,
-    new Promise<null>((resolve) => {
-      const timer = setTimeout(() => resolve(null), ms);
-      // Don't let this timer keep the event loop alive
-      if (timer.unref) timer.unref();
-    }),
-  ]);
-}
 
 const SERVICE_NAME = 'ms365-cli';
 const TOKEN_CACHE_ACCOUNT = 'msal-token-cache';
 const SELECTED_ACCOUNT_KEY = 'selected-account';
 
-const CONFIG_DIR = path.join(os.homedir(), '.config', 'ms365-cli');
-const FALLBACK_TOKEN_PATH = path.join(CONFIG_DIR, 'token-cache.json');
-const SELECTED_ACCOUNT_PATH = path.join(CONFIG_DIR, 'selected-account.json');
+/** Silent token requests use .default: the token carries whatever the user consented to at login. */
+export const GRAPH_DEFAULT_SCOPE = 'https://graph.microsoft.com/.default';
+
+/** Treat access tokens as expired this long before they actually expire. */
+const EXPIRY_SKEW_MS = 5 * 60 * 1000;
+
+export function configDir(): string {
+  return process.env.MS365_CLI_CONFIG_DIR || path.join(os.homedir(), '.config', 'ms365-cli');
+}
+const tokenCachePath = () => path.join(configDir(), 'token-cache.json');
+const selectedAccountPath = () => path.join(configDir(), 'selected-account.json');
+const deviceCodePath = () => path.join(configDir(), 'device-code.txt');
 
 const SCOPE_HIERARCHY: Record<string, string[]> = {
   'Mail.ReadWrite': ['Mail.Read'],
@@ -69,12 +65,11 @@ const ORG_SCOPES = [
   'User.Read.All',
   'Group.Read.All',
   'Calendars.Read.Shared',
+  'Place.Read.All',
 ];
 
 function ensureConfigDir(): void {
-  if (!fs.existsSync(CONFIG_DIR)) {
-    fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
-  }
+  fs.mkdirSync(configDir(), { recursive: true, mode: 0o700 });
 }
 
 export function buildScopes(orgMode: boolean): string[] {
@@ -96,6 +91,148 @@ export function buildScopes(orgMode: boolean): string[] {
   return Array.from(scopeSet);
 }
 
+// ── File persistence with cross-process locking ─────────────────────
+
+const LOCK_TIMEOUT_MS = 10_000;
+const LOCK_STALE_MS = 30_000;
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** Run fn while holding an O_EXCL lock file next to `target`. Stale locks are broken. */
+export function withFileLock<T>(target: string, fn: () => T): T {
+  const lock = `${target}.lock`;
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  let fd: number | null = null;
+  while (fd === null) {
+    try {
+      fd = fs.openSync(lock, 'wx', 0o600);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      try {
+        if (Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS) fs.unlinkSync(lock);
+      } catch { /* lock released meanwhile */ }
+      if (Date.now() > deadline) throw new CliError(`Timed out waiting for lock ${lock}`, { code: 'lock_timeout' });
+      sleepSync(10 + Math.floor(Math.random() * 20));
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    fs.closeSync(fd);
+    try { fs.unlinkSync(lock); } catch { /* already gone */ }
+  }
+}
+
+/** Atomically replace `target` (unique temp file + rename) under a cross-process lock. */
+export function writeFileAtomic(target: string, data: string): void {
+  ensureConfigDir();
+  withFileLock(target, () => {
+    const tmp = `${target}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+    try {
+      fs.writeFileSync(tmp, data, { mode: 0o600 });
+      fs.renameSync(tmp, target);
+    } catch (err) {
+      try { fs.unlinkSync(tmp); } catch { /* not created */ }
+      throw err;
+    }
+  });
+}
+
+function readFileIfExists(p: string): string | undefined {
+  try {
+    const data = fs.readFileSync(p, 'utf8');
+    return data || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// ── keytar: optional, used only to migrate entries written by older versions ──
+
+type Keytar = {
+  getPassword(service: string, account: string): Promise<string | null>;
+  deletePassword(service: string, account: string): Promise<boolean>;
+};
+let keytarPromise: Promise<Keytar | null> | null = null;
+
+/** Load keytar at most once per process; null when unavailable or on headless Linux. */
+function loadKeytar(): Promise<Keytar | null> {
+  if (!keytarPromise) {
+    keytarPromise = isHeadless || process.env.MS365_CLI_NO_KEYRING === '1'
+      ? Promise.resolve(null)
+      : import('keytar').then(m => (m.default ?? m) as Keytar).catch(() => null);
+  }
+  return keytarPromise;
+}
+
+/** Resolve the promise, or null after `ms` (keytar can hang without a keyring). */
+function withTimeout<T>(promise: Promise<T>, ms = 2000): Promise<T | null> {
+  return Promise.race([
+    promise,
+    new Promise<null>((resolve) => {
+      const timer = setTimeout(() => resolve(null), ms);
+      timer.unref?.();
+    }),
+  ]);
+}
+
+async function keytarGet(account: string): Promise<string | undefined> {
+  const keytar = await loadKeytar();
+  if (!keytar) return undefined;
+  try {
+    return (await withTimeout(keytar.getPassword(SERVICE_NAME, account))) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Delete a keytar entry; returns false only when keytar exists but the delete failed or hung. */
+async function keytarDelete(account: string): Promise<boolean> {
+  const keytar = await loadKeytar();
+  if (!keytar) return true;
+  try {
+    return (await withTimeout(keytar.deletePassword(SERVICE_NAME, account))) !== null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * MSAL cache plugin backed by a 0600 file. MSAL calls afterCacheAccess after every token
+ * operation and sets cacheHasChanged when a token was fetched from the network, so silent
+ * refreshes (and rotated refresh tokens) are persisted without extra code paths.
+ */
+export class FileTokenCachePlugin implements ICachePlugin {
+  async beforeCacheAccess(ctx: TokenCacheContext): Promise<void> {
+    let data = readFileIfExists(tokenCachePath());
+    if (!data) {
+      // One-time migration from the OS keyring used by older versions.
+      data = await keytarGet(TOKEN_CACHE_ACCOUNT);
+      if (data) writeFileAtomic(tokenCachePath(), data);
+    }
+    if (data) {
+      try {
+        ctx.tokenCache.deserialize(data);
+      } catch {
+        // Corrupt cache file: start empty (next login rewrites it).
+      }
+    }
+  }
+
+  async afterCacheAccess(ctx: TokenCacheContext): Promise<void> {
+    if (ctx.cacheHasChanged) {
+      writeFileAtomic(tokenCachePath(), ctx.tokenCache.serialize());
+    }
+  }
+}
+
+export interface AuthManagerOptions {
+  clientId?: string;
+  tenantId?: string;
+}
+
 export class AuthManager {
   private msalApp: PublicClientApplication;
   private scopes: string[];
@@ -104,17 +241,21 @@ export class AuthManager {
   private selectedAccountId: string | null = null;
   private tokenRefreshPromise: Promise<string> | null = null;
 
-  constructor(scopes: string[]) {
+  /** @param scopes scopes requested (and consented) at login */
+  constructor(scopes: string[], options: AuthManagerOptions = {}) {
     this.scopes = scopes;
     // Accept both MS365_CLI_* and MS365_MCP_* env var names (MCP server compat)
-    const clientId = process.env.MS365_CLI_CLIENT_ID
+    const clientId = options.clientId
+      || process.env.MS365_CLI_CLIENT_ID
       || process.env.MS365_MCP_CLIENT_ID;
     if (!clientId) {
-      throw new Error(
-        'No client ID configured. Set MS365_CLI_CLIENT_ID in your .env file or run: ms365 auth setup'
+      throw new CliError(
+        'No client ID configured. Set MS365_CLI_CLIENT_ID in your .env file or run: ms365 auth setup',
+        { code: 'no_client_id', exitCode: ExitCode.AUTH, fix: 'ms365 auth setup' },
       );
     }
-    const tenantId = process.env.MS365_CLI_TENANT_ID
+    const tenantId = options.tenantId
+      || process.env.MS365_CLI_TENANT_ID
       || process.env.MS365_MCP_TENANT_ID
       || 'common';
     const config: Configuration = {
@@ -122,94 +263,34 @@ export class AuthManager {
         clientId,
         authority: `https://login.microsoftonline.com/${tenantId}`,
       },
+      cache: { cachePlugin: new FileTokenCachePlugin() },
     };
     this.msalApp = new PublicClientApplication(config);
   }
 
   async initialize(): Promise<void> {
-    await this.loadTokenCache();
     await this.loadSelectedAccount();
   }
 
-  private async loadTokenCache(): Promise<void> {
-    try {
-      let cacheData: string | undefined;
-
-      // Try file fallback first — avoids keytar which hangs on some Linux setups
-      if (fs.existsSync(FALLBACK_TOKEN_PATH)) {
-        cacheData = fs.readFileSync(FALLBACK_TOKEN_PATH, 'utf8');
-      }
-
-      // Only try keytar if no file cache exists
-      if (!cacheData) {
-        try {
-          const data = await withTimeout(keytar.getPassword(SERVICE_NAME, TOKEN_CACHE_ACCOUNT));
-          if (data) cacheData = data;
-        } catch {
-          // keytar failed
-        }
-      }
-
-      if (cacheData) {
-        this.msalApp.getTokenCache().deserialize(cacheData);
-      }
-    } catch {
-      // ignore cache load errors
-    }
-  }
-
-  private async saveTokenCache(): Promise<void> {
-    ensureConfigDir();
-    const cacheData = this.msalApp.getTokenCache().serialize();
-    // Always write the file — loadTokenCache reads it first, and withTimeout resolves
-    // null (not throws) when keytar hangs, so a keytar-only save would leave it stale.
-    // Atomic write: write to temp file then rename to prevent corruption
-    const tmpPath = FALLBACK_TOKEN_PATH + '.tmp';
-    fs.writeFileSync(tmpPath, cacheData, { mode: 0o600 });
-    fs.renameSync(tmpPath, FALLBACK_TOKEN_PATH);
-    try {
-      await withTimeout(keytar.setPassword(SERVICE_NAME, TOKEN_CACHE_ACCOUNT, cacheData));
-    } catch {
-      // keytar unavailable — file cache is authoritative
-    }
-  }
-
   private async loadSelectedAccount(): Promise<void> {
+    let data = readFileIfExists(selectedAccountPath());
+    if (!data) {
+      data = await keytarGet(SELECTED_ACCOUNT_KEY);
+      if (data) writeFileAtomic(selectedAccountPath(), data);
+    }
     try {
-      let data: string | undefined;
-
-      // Try file fallback first — avoids keytar which hangs on some Linux setups
-      if (fs.existsSync(SELECTED_ACCOUNT_PATH)) {
-        data = fs.readFileSync(SELECTED_ACCOUNT_PATH, 'utf8');
-      }
-
-      // Only try keytar if no file exists
-      if (!data) {
-        try {
-          const d = await withTimeout(keytar.getPassword(SERVICE_NAME, SELECTED_ACCOUNT_KEY));
-          if (d) data = d;
-        } catch {
-          // keytar failed
-        }
-      }
-
-      if (data) {
-        this.selectedAccountId = JSON.parse(data).accountId;
-      }
+      if (data) this.selectedAccountId = JSON.parse(data).accountId ?? null;
     } catch {
-      // ignore
+      this.selectedAccountId = null;
     }
   }
 
-  private async saveSelectedAccount(): Promise<void> {
-    ensureConfigDir();
-    const data = JSON.stringify({ accountId: this.selectedAccountId });
-    try {
-      await withTimeout(keytar.setPassword(SERVICE_NAME, SELECTED_ACCOUNT_KEY, data));
-    } catch {
-      const tmpPath = SELECTED_ACCOUNT_PATH + '.tmp';
-      fs.writeFileSync(tmpPath, data, { mode: 0o600 });
-      fs.renameSync(tmpPath, SELECTED_ACCOUNT_PATH);
+  /** The selected account ID is not a secret: it lives in a plain 0600 file only. */
+  private saveSelectedAccount(): void {
+    if (this.selectedAccountId) {
+      writeFileAtomic(selectedAccountPath(), JSON.stringify({ accountId: this.selectedAccountId }));
+    } else {
+      try { fs.unlinkSync(selectedAccountPath()); } catch { /* none */ }
     }
   }
 
@@ -218,7 +299,7 @@ export class AuthManager {
     const envToken = process.env.MS365_CLI_TOKEN || process.env.MS365_MCP_OAUTH_TOKEN;
     if (envToken) return envToken;
 
-    if (this.accessToken && this.tokenExpiry && this.tokenExpiry > Date.now() && !forceRefresh) {
+    if (!forceRefresh && this.accessToken && this.tokenExpiry && this.tokenExpiry - EXPIRY_SKEW_MS > Date.now()) {
       return this.accessToken;
     }
 
@@ -227,7 +308,7 @@ export class AuthManager {
       return this.tokenRefreshPromise;
     }
 
-    this.tokenRefreshPromise = this.doTokenRefresh();
+    this.tokenRefreshPromise = this.doTokenRefresh(forceRefresh);
     try {
       return await this.tokenRefreshPromise;
     } finally {
@@ -235,15 +316,16 @@ export class AuthManager {
     }
   }
 
-  private async doTokenRefresh(): Promise<string> {
+  private async doTokenRefresh(forceRefresh: boolean): Promise<string> {
     const account = await this.getCurrentAccount();
     if (!account) {
-      throw new Error('Not logged in. Run: ms365 auth login');
+      throw new CliError('Not logged in. Run: ms365 auth login', { code: 'auth_required', exitCode: ExitCode.AUTH, fix: 'ms365 auth login' });
     }
 
     const response = await this.msalApp.acquireTokenSilent({
       account,
-      scopes: this.scopes,
+      scopes: [GRAPH_DEFAULT_SCOPE],
+      forceRefresh,
     });
 
     this.accessToken = response.accessToken;
@@ -271,24 +353,28 @@ export class AuthManager {
         process.stderr.write('\n' + resp.message + '\n\n');
         try {
           ensureConfigDir();
-          fs.writeFileSync(path.join(CONFIG_DIR, 'device-code.txt'), resp.message + '\n', { mode: 0o600 });
-        } catch {}
+          fs.writeFileSync(deviceCodePath(), resp.message + '\n', { mode: 0o600 });
+        } catch { /* best effort */ }
       },
     });
+    try { fs.unlinkSync(deviceCodePath()); } catch { /* not written */ }
 
-    this.accessToken = response?.accessToken || null;
-    this.tokenExpiry = response?.expiresOn ? new Date(response.expiresOn).getTime() : null;
-
-    if (!this.selectedAccountId && response?.account) {
-      this.selectedAccountId = response.account.homeAccountId;
-      await this.saveSelectedAccount();
+    if (!response?.accessToken) {
+      throw new CliError('Login did not return an access token.', { code: 'login_failed', exitCode: ExitCode.AUTH });
     }
+    this.accessToken = response.accessToken;
+    this.tokenExpiry = response.expiresOn ? new Date(response.expiresOn).getTime() : null;
 
-    await this.saveTokenCache();
-    return this.accessToken!;
+    // The account that just signed in becomes the active one.
+    if (response.account) {
+      this.selectedAccountId = response.account.homeAccountId;
+      this.saveSelectedAccount();
+    }
+    return this.accessToken;
   }
 
-  async logout(): Promise<void> {
+  /** Remove every account, the cache files, and any legacy keyring entries. Returns warnings. */
+  async logout(): Promise<string[]> {
     const accounts = await this.msalApp.getTokenCache().getAllAccounts();
     for (const account of accounts) {
       await this.msalApp.getTokenCache().removeAccount(account);
@@ -297,16 +383,22 @@ export class AuthManager {
     this.tokenExpiry = null;
     this.selectedAccountId = null;
 
-    try {
-      await withTimeout(keytar.deletePassword(SERVICE_NAME, TOKEN_CACHE_ACCOUNT));
-      await withTimeout(keytar.deletePassword(SERVICE_NAME, SELECTED_ACCOUNT_KEY));
-    } catch {
-      // ignore keytar errors
+    // Files first, so a hanging keyring can't leave the file cache behind.
+    const dir = configDir();
+    const names = fs.existsSync(dir) ? fs.readdirSync(dir) : [];
+    for (const name of names) {
+      if (/^(token-cache\.json|selected-account\.json|device-code\.txt)(\..*\.tmp|\.tmp|\.lock)?$/.test(name)) {
+        try { fs.unlinkSync(path.join(dir, name)); } catch { /* already gone */ }
+      }
     }
 
-    for (const p of [FALLBACK_TOKEN_PATH, SELECTED_ACCOUNT_PATH]) {
-      if (fs.existsSync(p)) fs.unlinkSync(p);
+    const warnings: string[] = [];
+    for (const key of [TOKEN_CACHE_ACCOUNT, SELECTED_ACCOUNT_KEY]) {
+      if (!(await keytarDelete(key))) {
+        warnings.push(`Could not remove the "${key}" entry from the OS keyring; remove "${SERVICE_NAME}" entries manually.`);
+      }
     }
+    return warnings;
   }
 
   async listAccounts(): Promise<AccountInfo[]> {
@@ -321,7 +413,7 @@ export class AuthManager {
     this.selectedAccountId = accountId;
     this.accessToken = null;
     this.tokenExpiry = null;
-    await this.saveSelectedAccount();
+    this.saveSelectedAccount();
     return true;
   }
 
@@ -335,9 +427,8 @@ export class AuthManager {
       this.selectedAccountId = null;
       this.accessToken = null;
       this.tokenExpiry = null;
-      await this.saveSelectedAccount();
+      this.saveSelectedAccount();
     }
-    await this.saveTokenCache();
     return true;
   }
 
