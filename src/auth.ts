@@ -1,5 +1,4 @@
-import type { AccountInfo, Configuration, ICachePlugin, TokenCacheContext } from '@azure/msal-node';
-import { PublicClientApplication } from '@azure/msal-node';
+import type { AccountInfo, Configuration, ICachePlugin, PublicClientApplication, TokenCacheContext } from '@azure/msal-node';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -244,7 +243,8 @@ export interface LoginOptions {
 }
 
 export class AuthManager {
-  private msalApp: PublicClientApplication;
+  private msalConfig: Configuration;
+  private appP?: Promise<PublicClientApplication>;
   private scopes: string[];
   private accessToken: string | null = null;
   private tokenExpiry: number | null = null;
@@ -267,14 +267,19 @@ export class AuthManager {
     const tenantId = options.tenantId
       || process.env.MS365_CLI_TENANT_ID
       || 'common';
-    const config: Configuration = {
+    this.msalConfig = {
       auth: {
         clientId,
         authority: `https://login.microsoftonline.com/${tenantId}`,
       },
       cache: { cachePlugin: new FileTokenCachePlugin() },
     };
-    this.msalApp = new PublicClientApplication(config);
+  }
+
+  /** MSAL costs ~45 ms to import, so it loads on first real use, not for --help/describe/dry-run (X-1). */
+  private app(): Promise<PublicClientApplication> {
+    this.appP ??= import('@azure/msal-node').then(m => new m.PublicClientApplication(this.msalConfig));
+    return this.appP;
   }
 
   async initialize(): Promise<void> {
@@ -327,7 +332,7 @@ export class AuthManager {
       throw new CliError('Not logged in. Run: ms365 auth login', { code: 'auth_required', exitCode: ExitCode.AUTH, fix: 'ms365 auth login' });
     }
 
-    const response = await this.msalApp.acquireTokenSilent({
+    const response = await (await this.app()).acquireTokenSilent({
       account,
       scopes: [GRAPH_DEFAULT_SCOPE],
       forceRefresh,
@@ -339,7 +344,7 @@ export class AuthManager {
   }
 
   async getCurrentAccount(): Promise<AccountInfo | null> {
-    const accounts = await this.msalApp.getTokenCache().getAllAccounts();
+    const accounts = await (await this.app()).getTokenCache().getAllAccounts();
     if (this.accountOverride) {
       const wanted = this.accountOverride;
       const match = accounts.find(a => a.homeAccountId === wanted || a.username.toLowerCase() === wanted.toLowerCase());
@@ -366,7 +371,7 @@ export class AuthManager {
 
   async login(options: LoginOptions = {}): Promise<string> {
     const response = options.openBrowser
-      ? await this.msalApp.acquireTokenInteractive({
+      ? await (await this.app()).acquireTokenInteractive({
         scopes: this.scopes,
         openBrowser: options.openBrowser,
         successTemplate: LOGIN_SUCCESS_HTML,
@@ -389,7 +394,7 @@ export class AuthManager {
   }
 
   private async deviceCodeLogin() {
-    const response = await this.msalApp.acquireTokenByDeviceCode({
+    const response = await (await this.app()).acquireTokenByDeviceCode({
       scopes: this.scopes,
       deviceCodeCallback: (resp) => {
         // Write to stderr AND a file in user config dir so device code is always visible
@@ -406,9 +411,9 @@ export class AuthManager {
 
   /** Remove every account and all cache, selection, device-code, temp and lock files. */
   async logout(): Promise<void> {
-    const accounts = await this.msalApp.getTokenCache().getAllAccounts();
-    for (const account of accounts) {
-      await this.msalApp.getTokenCache().removeAccount(account);
+    const cache = (await this.app()).getTokenCache();
+    for (const account of await cache.getAllAccounts()) {
+      await cache.removeAccount(account);
     }
     this.accessToken = null;
     this.tokenExpiry = null;
@@ -424,7 +429,7 @@ export class AuthManager {
   }
 
   async listAccounts(): Promise<AccountInfo[]> {
-    return this.msalApp.getTokenCache().getAllAccounts();
+    return (await this.app()).getTokenCache().getAllAccounts();
   }
 
   async selectAccount(accountId: string): Promise<boolean> {
@@ -444,7 +449,7 @@ export class AuthManager {
     const account = accounts.find(a => a.homeAccountId === accountId);
     if (!account) return false;
 
-    await this.msalApp.getTokenCache().removeAccount(account);
+    await (await this.app()).getTokenCache().removeAccount(account);
     if (this.selectedAccountId === accountId) {
       this.selectedAccountId = null;
       this.accessToken = null;

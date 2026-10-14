@@ -91,3 +91,38 @@ describe('Wave A wiring (T30, T37, T39 pre-flight)', () => {
     expect(a.stdout.trim()).toMatch(/audit\.log$/);
   }, 30_000);
 });
+
+describe('lazy MSAL import (X-1)', () => {
+  // A resolve hook (module.register) that writes a marker to stderr whenever anything resolves
+  // @azure/msal-node. Registered after tsx, so it runs first in the hook chain.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ms365-probe-'));
+  const hooks = 'export async function resolve(s, c, next) {\n'
+    + "  if (s === '@azure/msal-node' || s.startsWith('@azure/msal-node/')) "
+    + "(await import('node:fs')).writeSync(2, '[probe] msal-node loaded\\n');\n"
+    + '  return next(s, c);\n}\n';
+  fs.writeFileSync(path.join(dir, 'hooks.mjs'), hooks);
+  const probe = path.join(dir, 'probe.mjs');
+  fs.writeFileSync(probe, "import { register } from 'node:module';\n"
+    + `register(${JSON.stringify(new URL('file://' + path.join(dir, 'hooks.mjs')).href)});\n`);
+  const tsxLoader = path.join(root, 'node_modules', 'tsx', 'dist', 'esm', 'index.mjs');
+  function probed(args: string[]) {
+    return spawnSync(process.execPath, ['--import', tsxLoader, '--import', probe, path.join(root, 'src/index.ts'), ...args], {
+      cwd: home, encoding: 'utf8', timeout: 30_000, input: '',
+      env: { ...process.env, HOME: home, MS365_CLI_CONFIG_DIR: path.join(home, 'cfg'), MS365_CLI_TOKEN: '',
+        MS365_CLI_CLIENT_ID: '00000000-0000-0000-0000-000000000000', MS365_CLI_API_VERSION: '' },
+    });
+  }
+
+  it.each([['--help'], ['--version'], ['describe', '--json'], ['--dry-run', 'mail', 'list'], ['completion', 'bash'],
+    ['schema', '--list']])('%s does not load @azure/msal-node', (...args) => {
+    const r = probed(args);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).not.toContain('[probe] msal-node loaded');
+  }, 30_000);
+
+  it('auth status loads @azure/msal-node (the probe works)', () => {
+    const r = probed(['auth', 'status']);
+    expect(r.stderr).toContain('[probe] msal-node loaded');
+    expect(r.status).toBe(3);
+  }, 30_000);
+});

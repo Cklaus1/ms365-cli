@@ -42,7 +42,8 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 const cacheFile = () => path.join(dir, 'token-cache.json');
-const msal = (m: AuthManager) => (m as unknown as { msalApp: { acquireTokenSilent: Function; acquireTokenByDeviceCode: Function } }).msalApp;
+// The PublicClientApplication is built on first use (X-1, lazy MSAL import).
+const msal = (m: AuthManager) => (m as unknown as { app(): Promise<{ acquireTokenSilent: Function; acquireTokenByDeviceCode: Function }> }).app();
 
 describe('token cache persistence [critical-path gate]', () => {
   it('round-trips: load → mutate → persist → a fresh manager sees exactly the persisted state', async () => {
@@ -120,7 +121,7 @@ describe('AuthManager behavior', () => {
     fs.writeFileSync(cacheFile(), cacheJson(1));
     const m = new AuthManager(['User.Read']);
     await m.initialize();
-    const spy = vi.spyOn(msal(m), 'acquireTokenSilent').mockResolvedValue({ accessToken: 'at', expiresOn: new Date(Date.now() + 3600e3) } as never);
+    const spy = vi.spyOn(await msal(m), 'acquireTokenSilent').mockResolvedValue({ accessToken: 'at', expiresOn: new Date(Date.now() + 3600e3) } as never);
     expect(await m.getToken()).toBe('at');
     expect(await m.getToken(true)).toBe('at');
     expect(spy).toHaveBeenNthCalledWith(1, expect.objectContaining({ scopes: [GRAPH_DEFAULT_SCOPE], forceRefresh: false }));
@@ -131,7 +132,7 @@ describe('AuthManager behavior', () => {
     fs.writeFileSync(cacheFile(), cacheJson(1));
     const m = new AuthManager(['User.Read']);
     await m.initialize();
-    const spy = vi.spyOn(msal(m), 'acquireTokenSilent')
+    const spy = vi.spyOn(await msal(m), 'acquireTokenSilent')
       .mockResolvedValueOnce({ accessToken: 'soon', expiresOn: new Date(Date.now() + 120e3) } as never)
       .mockResolvedValueOnce({ accessToken: 'fresh', expiresOn: new Date(Date.now() + 3600e3) } as never);
     expect(await m.getToken()).toBe('soon');
@@ -152,7 +153,7 @@ describe('AuthManager behavior', () => {
     fs.writeFileSync(path.join(dir, 'selected-account.json'), JSON.stringify({ accountId: 'uid1.utid' }));
     const m = new AuthManager(['User.Read']);
     await m.initialize();
-    vi.spyOn(msal(m), 'acquireTokenByDeviceCode').mockImplementation(async (req: { deviceCodeCallback: (r: { message: string }) => void }) => {
+    vi.spyOn(await msal(m), 'acquireTokenByDeviceCode').mockImplementation(async (req: { deviceCodeCallback: (r: { message: string }) => void }) => {
       vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
       req.deviceCodeCallback({ message: 'go to https://microsoft.com/devicelogin' });
       expect(fs.existsSync(path.join(dir, 'device-code.txt'))).toBe(true);
@@ -165,7 +166,7 @@ describe('AuthManager behavior', () => {
 
   it('login with no token response throws (C-17)', async () => {
     const m = new AuthManager(['User.Read']);
-    vi.spyOn(msal(m), 'acquireTokenByDeviceCode').mockResolvedValue(null as never);
+    vi.spyOn(await msal(m), 'acquireTokenByDeviceCode').mockResolvedValue(null as never);
     await expect(m.login()).rejects.toThrow(/did not return an access token/);
   });
 

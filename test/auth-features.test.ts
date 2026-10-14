@@ -49,7 +49,8 @@ function cacheJson(...ns: number[]): string {
 }
 
 type Msal = { acquireTokenSilent: Function; acquireTokenByDeviceCode: Function; acquireTokenInteractive: Function };
-const msal = (m: AuthManager) => (m as unknown as { msalApp: Msal }).msalApp;
+// The PublicClientApplication is built on first use (X-1, lazy MSAL import).
+const msal = (m: AuthManager) => (m as unknown as { app(): Promise<Msal> }).app();
 const register = (m: AuthManager) => (program: Command) => registerAuthCommands(program, () => m);
 
 let dir: string;
@@ -115,7 +116,7 @@ describe('T40: --account (PM-8, D21)', () => {
   async function tokenFor(account: string) {
     const m = new AuthManager(['User.Read'], { account });
     await m.initialize();
-    const silent = vi.spyOn(msal(m), 'acquireTokenSilent').mockResolvedValue({ accessToken: 'at', expiresOn: new Date(Date.now() + 3600e3) } as never);
+    const silent = vi.spyOn(await msal(m), 'acquireTokenSilent').mockResolvedValue({ accessToken: 'at', expiresOn: new Date(Date.now() + 3600e3) } as never);
     await m.getToken();
     return (silent.mock.calls[0][0] as { account: { homeAccountId: string } }).account.homeAccountId;
   }
@@ -211,19 +212,19 @@ describe('T40: profiles (PM-8, D21)', () => {
 describe('T41: auth login --browser (PM-2)', () => {
   const AUTH_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=x&redirect_uri=http%3A%2F%2Flocalhost%3A5000';
 
-  function setup() {
+  async function setup() {
     const m = new AuthManager(['User.Read', 'Mail.ReadWrite']);
     vi.spyOn(m, 'verifyLogin').mockResolvedValue({ success: true, user: { displayName: 'Ada', email: 'ada@contoso.com' } });
-    const interactive = vi.spyOn(msal(m), 'acquireTokenInteractive').mockImplementation(async (req: { openBrowser: (u: string) => Promise<void> }) => {
+    const interactive = vi.spyOn(await msal(m), 'acquireTokenInteractive').mockImplementation(async (req: { openBrowser: (u: string) => Promise<void> }) => {
       await req.openBrowser(AUTH_URL);
       return { accessToken: 'at', expiresOn: new Date(Date.now() + 3600e3), account: { homeAccountId: 'uid9.utid', username: 'ada@contoso.com' } };
     });
-    const device = vi.spyOn(msal(m), 'acquireTokenByDeviceCode').mockResolvedValue({ accessToken: 'at', account: { homeAccountId: 'uid8.utid' } } as never);
+    const device = vi.spyOn(await msal(m), 'acquireTokenByDeviceCode').mockResolvedValue({ accessToken: 'at', account: { homeAccountId: 'uid8.utid' } } as never);
     return { m, interactive, device };
   }
 
   it('uses acquireTokenInteractive with the login scopes and opens the system browser at the auth URL', async () => {
-    const { m, interactive, device } = setup();
+    const { m, interactive, device } = await setup();
     const r = await runCommand(register(m), ['auth', 'login', '--browser']);
     expect(r.exitCode, r.stderr).toBe(0);
     expect(device).not.toHaveBeenCalled();
@@ -237,14 +238,14 @@ describe('T41: auth login --browser (PM-2)', () => {
   });
 
   it('selects and saves the account that signed in', async () => {
-    const { m } = setup();
+    const { m } = await setup();
     await runCommand(register(m), ['auth', 'login', '--browser']);
     expect(m.getSelectedAccountId()).toBe('uid9.utid');
     expect(JSON.parse(fs.readFileSync(path.join(dir, 'selected-account.json'), 'utf8')).accountId).toBe('uid9.utid');
   });
 
   it('device code stays the default', async () => {
-    const { m, interactive, device } = setup();
+    const { m, interactive, device } = await setup();
     const r = await runCommand(register(m), ['auth', 'login']);
     expect(r.exitCode, r.stderr).toBe(0);
     expect(interactive).not.toHaveBeenCalled();
