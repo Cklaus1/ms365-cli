@@ -1,9 +1,9 @@
-import { Command } from 'commander';
+import { Command, InvalidArgumentError, Option } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { detectMimeType } from '../mime.js';
-import { formatSize, addListOptions, outputOption, confirm, info, encodePath, odataQuote, safeOutputPath } from '../utils.js';
+import { formatSize, addListOptions, outputOption, confirm, info, success, encodePath, odataQuote, safeOutputPath } from '../utils.js';
 import fs from 'fs';
 import path from 'path';
 import { Readable } from 'stream';
@@ -42,23 +42,28 @@ function shareToken(input: string): string {
     : encodeURIComponent(input);
 }
 
-async function readStdin(): Promise<string> {
+/** The --password-stdin secret. An MCP-spawned child has stdin on /dev/null, and an empty password is never meant (X-15). */
+async function readPasswordStdin(): Promise<string> {
+  const usage = (msg: string) => new CliError(msg, {
+    code: 'usage', exitCode: ExitCode.USAGE, fix: 'Pipe the password in, e.g. printf %s "$PW" | ms365 drive share … --password-stdin',
+  });
+  if (process.env.MS365_CLI_MCP) throw usage('--password-stdin is not available over MCP (stdin is not readable)');
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
-  return Buffer.concat(chunks).toString('utf8').replace(/\r?\n$/, '');
+  const password = Buffer.concat(chunks).toString('utf8').replace(/\r?\n$/, '');
+  if (!password) throw usage('--password-stdin read an empty password from stdin');
+  return password;
 }
 
 export function registerDriveCommands(program: Command, getClient: () => GraphClient): void {
   const drive = program.command('drive').description('OneDrive file operations');
 
-  drive
+  addListOptions(drive
     .command('list')
-    .description('List available drives')
+    .description('List available drives'))
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
-      const client = getClient();
-      const response = await client.request('/me/drives');
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(getClient(), '/me/drives', {}, opts);
     }));
 
   drive
@@ -107,7 +112,7 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
     .action(handleErrors(async (driveId: string, parentId: string, filePath: string, opts) => {
       const resolvedPath = path.resolve(filePath);
       if (!fs.existsSync(resolvedPath)) {
-        throw new Error(`File not found: ${resolvedPath}`);
+        throw new CliError(`File not found: ${resolvedPath}`, { code: 'usage', exitCode: ExitCode.USAGE });
       }
 
       const client = getClient();
@@ -133,7 +138,7 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
       await client.request(`/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}`, {
         method: 'DELETE',
       });
-      info('Item deleted.');
+      success('Item deleted.');
     }));
 
   drive
@@ -146,11 +151,10 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
       await download(getClient(), `/shares/${shareToken(shareId)}/driveItem/content`, target);
     }));
   // ── Search ───────────────────────────────────────────────────
-  drive
+  addListOptions(drive
     .command('search <query>')
     .description('Search files across OneDrive')
-    .option('--drive <driveId>', 'Limit to specific drive')
-    .option('--top <n>', 'Number of results', '25')
+    .option('--drive <driveId>', 'Limit to specific drive'), { description: 'Number of results', default: '25' })
     .addOption(outputOption())
     .action(handleErrors(async (query: string, opts) => {
       const client = getClient();
@@ -162,8 +166,7 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
         ? `/drives/${encodeURIComponent(opts.drive)}/root/search(q='${safeQuery}')`
         : `/me/drive/root/search(q='${safeQuery}')`;
 
-      const response = await client.request(endpoint, { queryParams });
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(client, endpoint, { queryParams }, opts);
     }));
 
   // ── Create folder ───────────────────────────────────────────
@@ -191,8 +194,8 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
   drive
     .command('share <driveId> <itemId>')
     .description('Create a sharing link for a file or folder')
-    .option('--type <type>', 'Link type: view, edit, embed', 'view')
-    .option('--scope <scope>', 'Link scope: anonymous, organization, users', 'organization')
+    .addOption(new Option('--type <type>', 'Link type').choices(['view', 'edit', 'embed']).default('view'))
+    .addOption(new Option('--scope <scope>', 'Link scope').choices(['anonymous', 'organization', 'users']).default('organization'))
     .option('--password-stdin', 'Password-protect the link; the password is read from stdin (never from argv)')
     .option('--expiry <datetime>', 'Expiration datetime (ISO 8601)')
     .addOption(outputOption())
@@ -203,7 +206,7 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
         scope: opts.scope,
       };
       if (opts.passwordStdin) {
-        body.password = await readStdin();
+        body.password = await readPasswordStdin();
       }
       if (opts.expiry) body.expirationDateTime = opts.expiry;
 
@@ -214,7 +217,7 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
 
       const data = response.data as Record<string, unknown>;
       const link = data.link as Record<string, unknown>;
-      if (link?.webUrl && opts.output !== 'json') {
+      if (link?.webUrl && opts.output === 'text') {
         console.log(`Sharing link (${opts.type}, ${opts.scope}):`);
         console.log(`  ${link.webUrl}`);
       } else {
@@ -223,16 +226,13 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
     }));
 
   // ── Permissions ─────────────────────────────────────────────
-  drive
+  addListOptions(drive
     .command('permissions <driveId> <itemId>')
-    .description('List sharing permissions on a file or folder')
+    .description('List sharing permissions on a file or folder'))
     .addOption(outputOption())
     .action(handleErrors(async (driveId: string, itemId: string, opts) => {
-      const client = getClient();
-      const response = await client.request(
-        `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}/permissions`
-      );
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      const endpoint = `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}/permissions`;
+      await printList(getClient(), endpoint, {}, opts);
     }));
 
   // ── Quota / storage usage ───────────────────────────────────
@@ -279,10 +279,9 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
     }));
 
   // ── Path-based shortcuts ──────────────────────────────────
-  drive
+  addListOptions(drive
     .command('ls [path]')
-    .description('List files by path (e.g. "/Documents", "/Documents/Reports")')
-    .option('--top <n>', 'Number of items')
+    .description('List files by path (e.g. "/Documents", "/Documents/Reports")'), { description: 'Number of items' })
     .addOption(outputOption())
     .action(handleErrors(async (drivePath: string | undefined, opts) => {
       const client = getClient();
@@ -292,8 +291,7 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
       const endpoint = drivePath
         ? `/me/drive/root:/${encodePath(drivePath.replace(/^\//, ''))}:/children`
         : '/me/drive/root/children';
-      const response = await client.request(endpoint, { queryParams });
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(client, endpoint, { queryParams }, opts);
     }));
 
   drive
@@ -309,13 +307,13 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
 
   drive
     .command('cp <localFile> <remotePath>')
-    .description('Upload a file by path (e.g. ./report.pdf /Documents/report.pdf)')
+    .description('Upload a local file by path (e.g. ./report.pdf /Documents/report.pdf); to copy a drive item server-side, see "drive copy"')
     .option('--content-type <mime>', 'Override MIME type')
     .addOption(outputOption())
     .action(handleErrors(async (localFile: string, remotePath: string, opts) => {
       const resolvedPath = path.resolve(localFile);
       if (!fs.existsSync(resolvedPath)) {
-        throw new Error(`File not found: ${resolvedPath}`);
+        throw new CliError(`File not found: ${resolvedPath}`, { code: 'usage', exitCode: ExitCode.USAGE });
       }
       const client = getClient();
       const contentType = opts.contentType || detectMimeType(path.basename(resolvedPath));
@@ -324,5 +322,54 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
       const response = await client.uploadFile(endpoint, resolvedPath, contentType);
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
-}
 
+  // ── Server-side copy ────────────────────────────────────────
+  drive
+    .command('copy <driveId> <itemId>')
+    .description('Copy a drive item server-side (Graph does the copy; an existing name fails, nothing is overwritten). To upload a local file, see "drive cp"')
+    .requiredOption('--to-parent <id>', 'Destination folder ID')
+    .option('--to-drive <id>', 'Destination drive ID (default: the source drive)')
+    .option('--name <name>', 'Name of the copy (default: the original name)')
+    .option('--wait', 'Wait for the copy to finish, then print the new item')
+    .option('--timeout <s>', 'Seconds --wait waits before giving up', (v: string) => {
+      if (!/^\d+$/.test(v) || Number(v) < 1) throw new InvalidArgumentError('must be an integer ≥ 1.');
+      return v;
+    }, '300')
+    .addOption(outputOption())
+    .action(handleErrors(async (driveId: string, itemId: string, opts) => {
+      const client = getClient();
+      const format = opts.output as OutputFormat;
+      const toDrive: string = opts.toDrive ?? driveId;
+      const body: Record<string, unknown> = { parentReference: { driveId: toDrive, id: opts.toParent } };
+      if (opts.name) body.name = opts.name;
+      // 202 Accepted + Location: a monitor URL for the async job †.
+      const response = await client.request(
+        `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}/copy`,
+        { method: 'POST', body: JSON.stringify(body) }
+      );
+      if (client.isPreview(response)) {
+        console.log(formatOutput(response.data, format));
+        return;
+      }
+      const monitorUrl = response.headers?.get('location');
+      if (!monitorUrl) {
+        throw new CliError('Graph accepted the copy but returned no monitor URL (Location header)', { code: 'copy_failed' });
+      }
+      if (!opts.wait) {
+        console.log(formatOutput({ status: 'accepted', monitorUrl }, format));
+        return;
+      }
+      const result = await client.pollMonitor(monitorUrl, Number(opts.timeout) * 1000);
+      if (result.status === 'failed') {
+        const error = result.body.error as { code?: string; message?: string } | undefined;
+        throw new CliError(`Copy failed: ${error?.message ?? error?.code ?? 'the monitor reported status "failed"'}`, { code: 'copy_failed' });
+      }
+      if (!result.resourceId) {
+        throw new CliError('Copy completed, but the monitor did not name the new item', {
+          code: 'copy_failed', fix: `List the destination: ms365 drive files ${toDrive} ${opts.toParent}`,
+        });
+      }
+      const item = await client.request(`/drives/${encodeURIComponent(toDrive)}/items/${encodeURIComponent(result.resourceId)}`);
+      console.log(formatOutput(item.data, format));
+    }));
+}

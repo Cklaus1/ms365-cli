@@ -7,16 +7,12 @@ import { handleErrors } from '../errors.js';
 export function registerSharePointCommands(program: Command, getClient: () => GraphClient): void {
   const sp = program.command('sharepoint').alias('sp').description('SharePoint (requires --org-mode)');
 
-  sp
+  addListOptions(sp
     .command('search <query>')
-    .description('Search SharePoint sites')
+    .description('Search SharePoint sites'))
     .addOption(outputOption())
     .action(handleErrors(async (query: string, opts) => {
-      const client = getClient();
-      const response = await client.request('/sites', {
-        queryParams: { search: query },
-      });
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(getClient(), '/sites', { queryParams: { search: query } }, opts);
     }));
 
   sp
@@ -43,14 +39,12 @@ export function registerSharePointCommands(program: Command, getClient: () => Gr
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  sp
+  addListOptions(sp
     .command('drives <siteId>')
-    .description('List site drives (document libraries)')
+    .description('List site drives (document libraries)'))
     .addOption(outputOption())
     .action(handleErrors(async (siteId: string, opts) => {
-      const client = getClient();
-      const response = await client.request(`/sites/${encodeURIComponent(siteId)}/drives`);
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(getClient(), `/sites/${encodeURIComponent(siteId)}/drives`, {}, opts);
     }));
 
   sp
@@ -65,14 +59,12 @@ export function registerSharePointCommands(program: Command, getClient: () => Gr
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  sp
+  addListOptions(sp
     .command('lists <siteId>')
-    .description('List site lists')
+    .description('List site lists'))
     .addOption(outputOption())
     .action(handleErrors(async (siteId: string, opts) => {
-      const client = getClient();
-      const response = await client.request(`/sites/${encodeURIComponent(siteId)}/lists`);
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(getClient(), `/sites/${encodeURIComponent(siteId)}/lists`, {}, opts);
     }));
 
   sp
@@ -140,11 +132,23 @@ export function registerSharePointCommands(program: Command, getClient: () => Gr
 
   sp
     .command('delta')
-    .description('Get changed sites (delta sync)')
+    .description('Get changed sites (delta sync): every page up to the deltaLink')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();
-      const response = await client.request('/sites/delta()');
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      let response = await client.request('/sites/delta()');
+      if (client.isPreview(response)) {
+        console.log(formatOutput(response.data, opts.output as OutputFormat));
+        return;
+      }
+      // A delta feed is only complete at its deltaLink: follow every nextLink before printing.
+      const value: unknown[] = [];
+      for (;;) {
+        value.push(...((response.data as { value?: unknown[] }).value ?? []));
+        if (!response.nextLink) break;
+        response = await client.request(response.nextLink);
+      }
+      const data = response.deltaLink ? { value, deltaLink: response.deltaLink } : { value };
+      console.log(formatOutput(data, opts.output as OutputFormat));
     }));
 }

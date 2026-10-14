@@ -92,3 +92,34 @@ describe('excel range address quoting (M-24)', () => {
     expect(s.calls[0].path).toBe(`${WS}/range(address='O''B!A1')/sort/apply`);
   });
 });
+
+describe('excel worksheets pages through printList (Q-8)', () => {
+  const prefix = '/drives/D/items/I/workbook/worksheets';
+  const routes = [['GET', prefix, (c: { url: string }) => /skiptoken=2/.test(c.url)
+    ? { value: [{ id: 'b' }] }
+    : { value: [{ id: 'a' }], '@odata.nextLink': `https://graph.microsoft.com/v1.0${prefix}?$skiptoken=2` }]] as never;
+
+  it('page 1 carries nextCursor; --all fetches both pages', async () => {
+    const r1 = await runCommand(registerExcelCommands, ['excel', 'worksheets', 'D', 'I', '-o', 'json'], { routes });
+    expect(JSON.parse(r1.stdout).nextCursor).toEqual(expect.any(String));
+    const r2 = await runCommand(registerExcelCommands, ['excel', 'worksheets', 'D', 'I', '--all', '-o', 'json'], { routes });
+    expect(JSON.parse(r2.stdout).value.map((v: { id: string }) => v.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('excel sort-range confirmation is silent under --dry-run (DR-1)', () => {
+  it('prints no "Range sorted." when nothing was sent', async () => {
+    const r = await runCommand(registerExcelCommands, ['excel', 'sort-range', 'D', 'I', 'S', 'A1:B2', '--fields', '[]'], { dryRun: true });
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).not.toContain('Range sorted.');
+  });
+});
+
+describe('excel create-chart --series-by choices (V-19)', () => {
+  it('rejects an unknown value with exit 2 before any request', async () => {
+    const r = await runCommand(registerExcelCommands, ['excel', 'create-chart', 'D', 'I', 'S', '--type', 'Pie', '--source', 'A1:B2', '--series-by', 'diagonal']);
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain('auto, columns, rows');
+    expect(r.calls).toHaveLength(0);
+  });
+});

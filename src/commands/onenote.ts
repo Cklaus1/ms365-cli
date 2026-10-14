@@ -1,44 +1,34 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
-import { formatOutput, type OutputFormat } from '../formatter.js';
-import { outputOption } from '../utils.js';
+import { formatOutput, type OutputFormat, printList } from '../formatter.js';
+import { addListOptions, outputOption } from '../utils.js';
 import { handleErrors } from '../errors.js';
 
 export function registerOneNoteCommands(program: Command, getClient: () => GraphClient): void {
   const onenote = program.command('onenote').description('OneNote notebooks');
 
-  onenote
+  addListOptions(onenote
     .command('notebooks')
-    .description('List notebooks')
+    .description('List notebooks'))
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
-      const client = getClient();
-      const response = await client.request('/me/onenote/notebooks');
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(getClient(), '/me/onenote/notebooks', {}, opts);
     }));
 
-  onenote
+  addListOptions(onenote
     .command('sections <notebookId>')
-    .description('List sections in a notebook')
+    .description('List sections in a notebook'))
     .addOption(outputOption())
     .action(handleErrors(async (notebookId: string, opts) => {
-      const client = getClient();
-      const response = await client.request(
-        `/me/onenote/notebooks/${encodeURIComponent(notebookId)}/sections`
-      );
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(getClient(), `/me/onenote/notebooks/${encodeURIComponent(notebookId)}/sections`, {}, opts);
     }));
 
-  onenote
+  addListOptions(onenote
     .command('pages <sectionId>')
-    .description('List pages in a section')
+    .description('List pages in a section'))
     .addOption(outputOption())
     .action(handleErrors(async (sectionId: string, opts) => {
-      const client = getClient();
-      const response = await client.request(
-        `/me/onenote/sections/${encodeURIComponent(sectionId)}/pages`
-      );
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(getClient(), `/me/onenote/sections/${encodeURIComponent(sectionId)}/pages`, {}, opts);
     }));
 
   onenote

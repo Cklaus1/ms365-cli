@@ -56,6 +56,15 @@ export interface BatchResult {
   headers?: Record<string, string>;
 }
 
+/** The end state of an async job polled by pollMonitor(). */
+export interface MonitorResult {
+  status: 'completed' | 'failed';
+  /** ID of the resource the job created, when the monitor names it. */
+  resourceId?: string;
+  /** The monitor's last JSON body ({} for a 303). */
+  body: Record<string, unknown>;
+}
+
 const BATCH_SIZE = 20;
 
 /** Methods that are safe to retry after a timeout or 5xx (the server may have processed them). */
@@ -565,6 +574,62 @@ export class GraphClient {
   }
 
   /**
+   * Poll an async-job monitor URL (the Location of a 202, e.g. from driveItem copy) until the job completes or fails.
+   * The URL is pre-authenticated and often not on the Graph host, so it is fetched WITHOUT the bearer token and without
+   * following redirects: a 303, or a 2xx body with status "completed", means done, and the new resource's ID is read
+   * from the body's resourceId or the Location's `/items/{id}` †. Backs off from 1 s to 5 s, honours Retry-After, and
+   * throws code 'timeout' (monitor URL in the fix) once waiting longer would pass `timeoutMs`.
+   */
+  async pollMonitor(monitorUrl: string, timeoutMs: number): Promise<MonitorResult> {
+    let protocol: string | undefined;
+    try { protocol = new URL(monitorUrl).protocol; } catch { /* reported below */ }
+    if (protocol !== 'https:') {
+      throw new CliError(`Refusing to poll a monitor URL that is not https: ${monitorUrl}`, { code: 'untrusted_url' });
+    }
+    const deadline = Date.now() + timeoutMs;
+    let backoffMs = 1000;
+    for (;;) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      let response: Response | undefined;
+      try {
+        response = await fetch(monitorUrl, { redirect: 'manual', signal: controller.signal });
+      } catch (err) {
+        logger.warn(`Monitor poll failed (${err instanceof Error ? err.message : String(err)}); retrying`);
+      } finally {
+        clearTimeout(timer);
+      }
+      if (response?.status === 303) {
+        await response.body?.cancel();
+        return { status: 'completed', resourceId: itemIdFromUrl(response.headers.get('location')), body: {} };
+      }
+      if (response?.ok) {
+        const body = await response.json().catch(() => ({})) as Record<string, unknown>;
+        if (body.status === 'completed') {
+          const resourceId = typeof body.resourceId === 'string' ? body.resourceId : itemIdFromUrl(response.headers.get('location'));
+          return { status: 'completed', resourceId, body };
+        }
+        if (body.status === 'failed') return { status: 'failed', body };
+      } else if (response && response.status !== 429 && response.status < 500) {
+        const text = await response.text();
+        let message = text;
+        try { message = JSON.parse(text).error?.message ?? text; } catch { /* plain text */ }
+        throw graphError(response.status, message, { requestId: response.headers.get('request-id') ?? undefined });
+      } else {
+        await response?.body?.cancel();
+      }
+      const waitMs = parseRetryAfter(response?.headers.get('retry-after') ?? null, backoffMs);
+      backoffMs = Math.min(backoffMs * 2, 5000);
+      if (Date.now() + waitMs > deadline) {
+        throw new CliError(`Timed out after ${Math.round(timeoutMs / 1000)}s waiting for the operation to finish`, {
+          code: 'timeout', fix: `It may still finish; its monitor URL (no auth needed): ${monitorUrl}`,
+        });
+      }
+      await sleep(waitMs);
+    }
+  }
+
+  /**
    * Send requests through JSON batching (POST /$batch, 20 per batch). Results come back in
    * input order. Items throttled with 429 — and 5xx on idempotent methods — are retried in a
    * new batch after the longest Retry-After, up to MAX_RETRIES rounds.
@@ -849,6 +914,12 @@ function parseJsonObject(text: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+/** The `{id}` of a `…/items/{id}` URL (a copy monitor's Location), if any. */
+function itemIdFromUrl(url: string | null): string | undefined {
+  const m = url?.match(/\/items\/([^/?#]+)/);
+  return m ? decodeURIComponent(m[1]) : undefined;
 }
 
 function sleep(ms: number): Promise<void> {

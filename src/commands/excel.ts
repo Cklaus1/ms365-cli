@@ -1,8 +1,8 @@
 import fs from 'fs';
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
-import { addListOptions, outputOption, odataQuote, info } from '../utils.js';
+import { addListOptions, outputOption, odataQuote, success } from '../utils.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 
 export function registerExcelCommands(program: Command, getClient: () => GraphClient): void {
@@ -17,14 +17,12 @@ export function registerExcelCommands(program: Command, getClient: () => GraphCl
   const rangePath = (driveId: string, itemId: string, worksheetId: string, address: string) =>
     `${wsPath(driveId, itemId, worksheetId)}/range(address='${encodeURIComponent(odataQuote(address))}')`;
 
-  excel
+  addListOptions(excel
     .command('worksheets <driveId> <itemId>')
-    .description('List worksheets in a workbook')
+    .description('List worksheets in a workbook'))
     .addOption(outputOption())
     .action(handleErrors(async (driveId: string, itemId: string, opts) => {
-      const client = getClient();
-      const response = await client.request(`${wbPath(driveId, itemId)}/worksheets`);
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(getClient(), `${wbPath(driveId, itemId)}/worksheets`, {}, opts);
     }));
 
   excel
@@ -42,7 +40,7 @@ export function registerExcelCommands(program: Command, getClient: () => GraphCl
     .description('Create a chart')
     .requiredOption('--type <type>', 'Chart type (e.g. ColumnClustered, Pie, Line)')
     .requiredOption('--source <range>', 'Source data range (e.g. A1:D10)')
-    .requiredOption('--series-by <by>', 'Series grouped by: auto, columns, rows')
+    .addOption(new Option('--series-by <by>', 'Series grouped by').choices(['auto', 'columns', 'rows']).makeOptionMandatory())
     .addOption(outputOption())
     .action(handleErrors(async (driveId: string, itemId: string, worksheetId: string, opts) => {
       const client = getClient();
@@ -124,7 +122,7 @@ export function registerExcelCommands(program: Command, getClient: () => GraphCl
           }),
         }
       );
-      info('Range sorted.');
+      success('Range sorted.');
     }));
 
   const tablePath = (driveId: string, itemId: string, table: string) =>

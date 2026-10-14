@@ -158,9 +158,213 @@ describe('drive share password (M-29)', () => {
     }
   });
 
+  const withStdin = async <T>(data: string, fn: () => Promise<T>): Promise<T> => {
+    const orig = Object.getOwnPropertyDescriptor(process, 'stdin')!;
+    Object.defineProperty(process, 'stdin', { value: Readable.from(data ? [Buffer.from(data)] : []), configurable: true });
+    try { return await fn(); } finally { Object.defineProperty(process, 'stdin', orig); }
+  };
+
+  it('--password-stdin with empty stdin (e.g. /dev/null) is a usage error, not an empty password (X-15)', async () => {
+    const r = await withStdin('', () => runCommand(registerDriveCommands, ['drive', 'share', 'D', 'I', '--password-stdin']));
+    expect(r.exitCode).toBe(2);
+    expect(r.calls).toHaveLength(0);
+  });
+
+  it('--password-stdin is refused under MCP (MS365_CLI_MCP set), even with data on stdin (X-15)', async () => {
+    const r = await withStdin('pw\n', () => runCommand(registerDriveCommands, ['drive', 'share', 'D', 'I', '--password-stdin'], { env: { MS365_CLI_MCP: '1' } }));
+    expect(r.exitCode).toBe(2);
+    expect(r.calls).toHaveLength(0);
+  });
+
   it('--password no longer exists: secrets never come from argv (D29)', async () => {
     const r = await runCommand(registerDriveCommands, ['drive', 'share', 'D', 'I', '--password', 'pw']);
     expect(r.exitCode).toBe(2);
     expect(r.calls).toHaveLength(0);
+  });
+});
+
+describe('single-request lists page through printList (Q-8)', () => {
+  const GRAPH = 'https://graph.microsoft.com/v1.0';
+  const cases: [string[], string][] = [
+    [['drive', 'list'], '/me/drives'],
+    [['drive', 'search', 'q'], "/me/drive/root/search(q='q')"],
+    [['drive', 'permissions', 'D', 'I'], '/drives/D/items/I/permissions'],
+    [['drive', 'ls', '/Photos'], '/me/drive/root:/Photos:/children'],
+    [['drive', 'ls'], '/me/drive/root/children'],
+  ];
+  const twoPages = (prefix: string) => [['GET', prefix, (c: { url: string }) => /skiptoken=2/.test(c.url)
+    ? { value: [{ id: 'b' }] }
+    : { value: [{ id: 'a' }], '@odata.nextLink': `${GRAPH}${prefix}?$skiptoken=2` }]] as never;
+
+  for (const [argv, prefix] of cases) {
+    it(`${argv.join(' ')}: page 1 carries nextCursor; --all fetches both pages`, async () => {
+      const r1 = await runCommand(registerDriveCommands, [...argv, '-o', 'json'], { routes: twoPages(prefix) });
+      expect(r1.exitCode).toBe(0);
+      expect(JSON.parse(r1.stdout).nextCursor).toEqual(expect.any(String));
+      const r2 = await runCommand(registerDriveCommands, [...argv, '--all', '-o', 'json'], { routes: twoPages(prefix) });
+      expect(r2.exitCode).toBe(0);
+      expect(JSON.parse(r2.stdout).value.map((v: { id: string }) => v.id)).toEqual(['a', 'b']);
+    });
+  }
+
+  it('drive search keeps its --top default of 25', async () => {
+    const r = await runCommand(registerDriveCommands, ['drive', 'search', 'q'], { routes: [['GET', '/me/', () => ({ value: [] })]] });
+    expect(r.calls[0].url).toContain('$top=25');
+  });
+});
+
+describe('drive delete confirmation is silent under --dry-run (DR-1)', () => {
+  it('prints no "Item deleted." when nothing was sent', async () => {
+    const r = await runCommand(registerDriveCommands, ['drive', 'delete', 'D', 'I'], { dryRun: true });
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).not.toContain('Item deleted.');
+    expect(r.stderr).toContain('[dry-run] DELETE');
+  });
+
+  it('still confirms a real delete', async () => {
+    const r = await runCommand(registerDriveCommands, ['drive', 'delete', 'D', 'I'], {
+      tty: true, answer: 'y', routes: [['DELETE', '/drives/D/items/I', () => new Response(null, { status: 204 })]],
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).toContain('Item deleted.');
+  });
+});
+
+describe('drive validation (V-18, V-19, V-21)', () => {
+  it('upload of a missing local file is a usage error (exit 2, no request)', async () => {
+    const r = await runCommand(registerDriveCommands, ['drive', 'upload', 'D', 'P', path.join(dir, 'missing.pdf')]);
+    expect(r.exitCode).toBe(2);
+    expect(r.calls).toHaveLength(0);
+  });
+
+  it('cp of a missing local file is a usage error (exit 2, no request)', async () => {
+    const r = await runCommand(registerDriveCommands, ['drive', 'cp', path.join(dir, 'missing.pdf'), '/x.pdf']);
+    expect(r.exitCode).toBe(2);
+    expect(r.calls).toHaveLength(0);
+  });
+
+  it('share rejects an unknown --type / --scope with exit 2 and lists the choices', async () => {
+    const t = await runCommand(registerDriveCommands, ['drive', 'share', 'D', 'I', '--type', 'read']);
+    expect(t.exitCode).toBe(2);
+    expect(t.stderr).toContain('view, edit, embed');
+    const s = await runCommand(registerDriveCommands, ['drive', 'share', 'D', 'I', '--scope', 'everyone']);
+    expect(s.exitCode).toBe(2);
+    expect(t.calls.length + s.calls.length).toBe(0);
+  });
+
+  const link = () => ({ id: 'P1', link: { webUrl: 'https://x/s', type: 'view', scope: 'organization' } });
+  it('share -o yaml prints YAML, not prose', async () => {
+    const r = await runCommand(registerDriveCommands, ['drive', 'share', 'D', 'I', '-o', 'yaml'], { routes: [['POST', '/drives/', link]] });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).not.toContain('Sharing link (');
+    expect(r.stdout).toContain('webUrl: "https://x/s"');
+  });
+
+  it('share -o text keeps the human summary', async () => {
+    const r = await runCommand(registerDriveCommands, ['drive', 'share', 'D', 'I', '-o', 'text'], { routes: [['POST', '/drives/', link]] });
+    expect(r.stdout).toContain('Sharing link (view, organization):');
+    expect(r.stdout).toContain('  https://x/s');
+  });
+});
+
+describe('drive copy: server-side copy with a monitor URL (X-7, F8)', () => {
+  const MONITOR = 'https://contoso-my.sharepoint.com/_api/v2.0/monitor/abc';
+  const accepted = () => new Response(null, { status: 202, headers: { Location: MONITOR } });
+  const monitorJson = (body: unknown, headers: Record<string, string> = {}) =>
+    new Response(JSON.stringify(body), { status: 202, headers: { 'content-type': 'application/json', ...headers } });
+
+  it('POSTs /copy with parentReference and name; without --wait prints {status:"accepted", monitorUrl}', async () => {
+    const r = await runCommand(registerDriveCommands, ['drive', 'copy', 'D', 'I', '--to-parent', 'P', '--name', 'b.txt', '-o', 'json'], {
+      routes: [['POST', '/drives/D/items/I/copy', accepted]],
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.calls).toHaveLength(1);
+    expect(r.calls[0].body).toEqual({ parentReference: { driveId: 'D', id: 'P' }, name: 'b.txt' });
+    expect(JSON.parse(r.stdout)).toEqual({ status: 'accepted', monitorUrl: MONITOR });
+  });
+
+  it('--wait polls the monitor without the bearer token, then GETs the new item from the destination drive', async () => {
+    let polls = 0;
+    const r = await runCommand(registerDriveCommands, ['drive', 'copy', 'D', 'I', '--to-parent', 'P', '--to-drive', 'D2', '--wait', '-o', 'json'], {
+      routes: [
+        ['POST', '/drives/D/items/I/copy', accepted],
+        ['GET', /\/monitor\/abc/, () => ++polls === 1
+          ? monitorJson({ status: 'inProgress', percentageComplete: 50 }, { 'Retry-After': '0' })
+          : monitorJson({ status: 'completed', resourceId: 'NEW' })],
+        ['GET', '/drives/D2/items/NEW', () => ({ id: 'NEW', name: 'a.txt' })],
+      ],
+    });
+    expect(r.exitCode).toBe(0);
+    expect((r.calls[0].body as { parentReference: unknown }).parentReference).toEqual({ driveId: 'D2', id: 'P' });
+    const monitorCalls = r.calls.filter((c) => c.url === MONITOR);
+    expect(monitorCalls).toHaveLength(2);
+    for (const c of monitorCalls) expect(Object.keys(c.headers).map((k) => k.toLowerCase())).not.toContain('authorization');
+    expect(r.calls.at(-1)!.path).toBe('/drives/D2/items/NEW');
+    expect(JSON.parse(r.stdout)).toMatchObject({ id: 'NEW' });
+  });
+
+  it('a 303 from the monitor counts as completed; the resource ID comes from its Location', async () => {
+    const r = await runCommand(registerDriveCommands, ['drive', 'copy', 'D', 'I', '--to-parent', 'P', '--wait', '-o', 'json'], {
+      routes: [
+        ['POST', '/drives/D/items/I/copy', accepted],
+        ['GET', /\/monitor\/abc/, () => new Response(null, { status: 303, headers: { Location: 'https://graph.microsoft.com/v1.0/drives/D/items/N3' } })],
+        ['GET', '/drives/D/items/N3', () => ({ id: 'N3' })],
+      ],
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.calls.filter((c) => c.url === MONITOR)).toHaveLength(1);
+    expect(JSON.parse(r.stdout).id).toBe('N3');
+  });
+
+  it('a failed copy raises copy_failed (exit 1)', async () => {
+    const r = await runCommand(registerDriveCommands, ['drive', 'copy', 'D', 'I', '--to-parent', 'P', '--wait'], {
+      routes: [
+        ['POST', '/drives/D/items/I/copy', accepted],
+        ['GET', /\/monitor\/abc/, () => monitorJson({ status: 'failed', error: { code: 'nameAlreadyExists', message: 'exists' } })],
+      ],
+    });
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain('exists');
+  });
+
+  it('times out with the monitor URL in the fix', async () => {
+    const r = await runCommand(registerDriveCommands, ['drive', 'copy', 'D', 'I', '--to-parent', 'P', '--wait', '--timeout', '1'], {
+      routes: [
+        ['POST', '/drives/D/items/I/copy', accepted],
+        ['GET', /\/monitor\/abc/, () => monitorJson({ status: 'inProgress' }, { 'Retry-After': '5' })],
+      ],
+    });
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain('Timed out');
+    expect(r.stderr).toContain(MONITOR);
+  });
+
+  it('refuses a non-https monitor URL', async () => {
+    const r = await runCommand(registerDriveCommands, ['drive', 'copy', 'D', 'I', '--to-parent', 'P', '--wait'], {
+      routes: [['POST', '/drives/D/items/I/copy', () => new Response(null, { status: 202, headers: { Location: 'http://evil/monitor/abc' } })]],
+    });
+    expect(r.exitCode).toBe(1);
+    expect(r.calls).toHaveLength(1);
+  });
+
+  it('--dry-run previews the POST and does not poll', async () => {
+    const r = await runCommand(registerDriveCommands, ['drive', 'copy', 'D', 'I', '--to-parent', 'P', '--wait', '-o', 'json'], { dryRun: true });
+    expect(r.exitCode).toBe(0);
+    expect(r.calls).toHaveLength(0);
+    expect(r.stderr).toContain('[dry-run] POST https://graph.microsoft.com/v1.0/drives/D/items/I/copy');
+    expect(JSON.parse(r.stdout).dryRun).toBe(true);
+  });
+
+  it('rejects a non-integer --timeout with exit 2', async () => {
+    const r = await runCommand(registerDriveCommands, ['drive', 'copy', 'D', 'I', '--to-parent', 'P', '--wait', '--timeout', 'soon']);
+    expect(r.exitCode).toBe(2);
+    expect(r.calls).toHaveLength(0);
+  });
+
+  it('help cross-references drive cp (upload), and cp points back at copy', async () => {
+    const copy = await runCommand(registerDriveCommands, ['drive', 'copy', '--help']);
+    expect(copy.stdout).toContain('drive cp');
+    const cp = await runCommand(registerDriveCommands, ['drive', 'cp', '--help']);
+    expect(cp.stdout).toContain('drive copy');
   });
 });

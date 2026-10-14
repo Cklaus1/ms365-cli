@@ -163,6 +163,7 @@ const COMMANDS: Record<string, Entry> = {
   'drive ls': 'read',
   'drive cat': 'read',
   'drive cp': 'update',
+  'drive copy': 'action',
 
   'todo lists': 'read',
   'todo tasks': 'read',
