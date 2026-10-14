@@ -162,3 +162,4 @@ DONE = all scheduled tasks DONE or BLOCKED-and-logged
 ```
 
 ## Divergence log
+- QP-7: folder listings add `childFolderCount` to `$select` so the BFS skips leaf folders (otherwise up to 500 requests). The QP-8 snapshot lines will include it. Follow-ups: QP-8 imports `WELL_KNOWN_FOLDERS` from resolve.ts; QP-9 adds Mail.Read (Mail.Read.Shared with `--user`) for mail-folder in the catalog.

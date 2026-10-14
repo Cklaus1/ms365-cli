@@ -4,15 +4,15 @@ Derived from commits. Waves are defined in tasks/build-loop.md.
 
 
 ## W1
-- [ ] XT1
-- [ ] VT1
+- [x] XT1
+- [x] VT1
 - [ ] RT-1
 - [ ] RT-3
 - [ ] RT-4
-- [ ] QP-7
-- [ ] RT-10
-- [ ] XT8
-- [ ] VT3
+- [x] QP-7
+- [x] RT-10
+- [x] XT8
+- [x] VT3
 
 ## W2
 - [ ] DR-T1
