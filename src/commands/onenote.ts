@@ -47,9 +47,10 @@ export function registerOneNoteCommands(program: Command, getClient: () => Graph
     .action(handleErrors(async (pageId: string) => {
       const client = getClient();
       const response = await client.request(
-        `/me/onenote/pages/${encodeURIComponent(pageId)}/content`
+        `/me/onenote/pages/${encodeURIComponent(pageId)}/content`,
+        { responseType: 'text' }
       );
-      console.log(formatOutput(response.data, 'json'));
+      console.log(response.data);
     }));
 
   onenote

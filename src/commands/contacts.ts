@@ -29,7 +29,7 @@ export function registerContactsCommands(program: Command, getClient: () => Grap
       if (opts.search) queryParams['$search'] = `"${opts.search}"`;
 
       const response = opts.all
-        ? await client.requestAllPages('/me/contacts', { queryParams })
+        ? await client.requestAllPages('/me/contacts', { queryParams }, opts.pageLimit ? parseInt(opts.pageLimit) : undefined, opts.pageDelay ? parseInt(opts.pageDelay) : undefined)
         : await client.request('/me/contacts', { queryParams });
 
       console.log(formatOutput(response.data, opts.output as OutputFormat));

@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
-import { outputOption } from '../utils.js';
+import { outputOption, encodePath } from '../utils.js';
 import { handleErrors } from '../errors.js';
 
 export function registerSharePointCommands(program: Command, getClient: () => GraphClient): void {
@@ -38,7 +38,7 @@ export function registerSharePointCommands(program: Command, getClient: () => Gr
       // Graph API format: /sites/{hostname}:/{server-relative-path}
       const normalizedPath = sitePath.startsWith('/') ? sitePath : `/${sitePath}`;
       const response = await client.request(
-        `/sites/${encodeURIComponent(hostname)}:${normalizedPath}`
+        `/sites/${encodeURIComponent(hostname)}:${encodePath(normalizedPath)}`
       );
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));

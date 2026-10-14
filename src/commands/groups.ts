@@ -33,7 +33,7 @@ export function registerGroupsCommands(program: Command, getClient: () => GraphC
       if (opts.search) headers['ConsistencyLevel'] = 'eventual';
 
       const response = opts.all
-        ? await client.requestAllPages('/groups', { queryParams, headers })
+        ? await client.requestAllPages('/groups', { queryParams, headers }, opts.pageLimit ? parseInt(opts.pageLimit) : undefined, opts.pageDelay ? parseInt(opts.pageDelay) : undefined)
         : await client.request('/groups', { queryParams, headers });
 
       console.log(formatOutput(response.data, opts.output as OutputFormat));
@@ -55,7 +55,7 @@ export function registerGroupsCommands(program: Command, getClient: () => GraphC
       if (opts.select) queryParams['$select'] = opts.select;
 
       const response = opts.all
-        ? await client.requestAllPages('/me/memberOf/microsoft.graph.group', { queryParams })
+        ? await client.requestAllPages('/me/memberOf/microsoft.graph.group', { queryParams }, opts.pageLimit ? parseInt(opts.pageLimit) : undefined, opts.pageDelay ? parseInt(opts.pageDelay) : undefined)
         : await client.request('/me/memberOf/microsoft.graph.group', { queryParams });
 
       console.log(formatOutput(response.data, opts.output as OutputFormat));
@@ -120,7 +120,7 @@ export function registerGroupsCommands(program: Command, getClient: () => GraphC
       if (opts.top) queryParams['$top'] = opts.top;
 
       const response = opts.all
-        ? await client.requestAllPages('/groups', { queryParams })
+        ? await client.requestAllPages('/groups', { queryParams }, opts.pageLimit ? parseInt(opts.pageLimit) : undefined, opts.pageDelay ? parseInt(opts.pageDelay) : undefined)
         : await client.request('/groups', { queryParams });
 
       console.log(formatOutput(response.data, opts.output as OutputFormat));
@@ -143,7 +143,7 @@ export function registerGroupsCommands(program: Command, getClient: () => GraphC
       if (opts.top) queryParams['$top'] = opts.top;
 
       const response = opts.all
-        ? await client.requestAllPages('/groups', { queryParams })
+        ? await client.requestAllPages('/groups', { queryParams }, opts.pageLimit ? parseInt(opts.pageLimit) : undefined, opts.pageDelay ? parseInt(opts.pageDelay) : undefined)
         : await client.request('/groups', { queryParams });
 
       console.log(formatOutput(response.data, opts.output as OutputFormat));
