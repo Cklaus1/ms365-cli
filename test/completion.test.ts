@@ -9,6 +9,7 @@ import type { GraphClient } from '../src/graph-client.js';
 
 function register(program: Command, getClient: () => GraphClient): void {
   program
+    .version('0.1.0')
     .option('--fields <list>', 'Only output these fields')
     .option('--api-version <version>', 'Graph API version')
     .option('--dry-run', 'Preview');
@@ -94,6 +95,28 @@ describe('ms365 completion', () => {
       // a free-form value falls back to file completion (empty reply)
       expect(bashComplete(src, 'ms365 mail list --fields ')).toEqual([]);
     });
+
+    it.runIf(has('bash'))('X-10: --version is offered only at the top level', async () => {
+      const src = await script('bash');
+      expect(bashComplete(src, 'ms365 --v')).toEqual(['--version']);
+      expect(bashComplete(src, 'ms365 mail list --v')).not.toContain('--version');
+      expect(bashComplete(src, 'ms365 mail --')).not.toContain('--version');
+      expect(bashComplete(src, 'ms365 mail list --')).toContain('--fields');
+    });
+
+    it.runIf(has('bash'))('X-11: completes --flag=value (= as its own word, and as one word)', async () => {
+      const src = await script('bash');
+      // default COMP_WORDBREAKS: bash splits "--output=t" into --output, =, t
+      expect(bashComplete(src, 'ms365 mail list --output = t')).toEqual(['table', 'text']);
+      expect(bashComplete(src, 'ms365 mail list --output =')).toEqual(['json', 'ndjson', 'table', 'csv', 'text', 'yaml']);
+      expect(bashComplete(src, 'ms365 --api-version = beta mail li')).toEqual(['list']);
+      expect(bashComplete(src, 'ms365 mail list --output = json --to')).toContain('--top');
+      // "=" removed from COMP_WORDBREAKS: one word
+      expect(bashComplete(src, 'ms365 mail list --output=t')).toEqual(['--output=table', '--output=text']);
+      expect(bashComplete(src, 'ms365 mail list --output=')).toEqual(['json', 'ndjson', 'table', 'csv', 'text', 'yaml'].map(v => `--output=${v}`));
+      expect(bashComplete(src, 'ms365 mail list --fields=i')).toEqual([]);
+      expect(bashComplete(src, 'ms365 mail list --output=json --to')).toContain('--top');
+    });
   });
 
   it('zsh has #compdef and the same tables', async () => {
@@ -101,6 +124,12 @@ describe('ms365 completion', () => {
     expect(src.startsWith('#compdef ms365')).toBe(true);
     expect(src).toContain("'mail|list'");
     expect(src).toContain('compdef _ms365 ms365');
+    // X-10: root-only flags live in their own table, looked up by the typed command path
+    expect(src).toContain('_ms365_rootopts "$cmdpath"');
+    expect(src).toContain("_ms365_rootopts() {\n  case \"$1\" in\n    '') REPLY='--version' ;;");
+    expect(src.split('_ms365_opts() {')[1].split('\n}')[0]).not.toContain('--version');
+    // X-11: --flag=value completes with the --flag= prefix
+    expect(src).toContain('$cur == --*=*');
     if (!has('zsh')) return;
     const r = spawnSync('zsh', ['-n'], { input: src, encoding: 'utf8' });
     expect(r.status, r.stderr).toBe(0);
@@ -110,6 +139,8 @@ describe('ms365 completion', () => {
     const src = await script('fish');
     expect(src).toContain('complete -c ms365');
     expect(src).toContain("case 'mail|list'");
+    expect(src).toContain('__ms365_rootopts "$cmdpath"');
+    expect(src).toContain("string match -q -- '--*=*' $cur");
     if (!has('fish')) return;
     const r = spawnSync('fish', ['--no-execute'], { input: src, encoding: 'utf8' });
     expect(r.status, r.stderr).toBe(0);
@@ -120,6 +151,9 @@ describe('ms365 completion', () => {
     expect(src).toContain('Register-ArgumentCompleter -Native -CommandName ms365');
     expect(src).toContain("$child['mail|list'] = 'mail list'");
     expect(src).toContain("'json', 'ndjson', 'table'");
+    expect(src).toContain("$rootopts[''] = @('--version')");
+    expect(src).not.toMatch(/\$opts\[''\] = @\([^)]*--version/);
+    expect(src).toContain('$wordToComplete -match');
   });
 
   it('includes commands registered after it (generated at action time)', async () => {

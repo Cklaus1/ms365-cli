@@ -15,6 +15,8 @@ interface Tables {
   subs: Map<string, string[]>;
   /** Flags offered for a path (root flags, --help among them, are global and offered everywhere). */
   opts: Map<string, string[]>;
+  /** Flags offered only when nothing but `ms365` is typed (--version); keyed "" alone. */
+  rootopts: Map<string, string[]>;
   /** "path|flag" → the flag's value choices, or ["*"] for a free-form value. */
   optarg: Map<string, string[]>;
   /** Choices for the first positional argument of a leaf. */
@@ -22,11 +24,16 @@ interface Tables {
 }
 
 function buildTables(program: Command): Tables {
-  const t: Tables = { child: new Map(), subs: new Map(), opts: new Map(), optarg: new Map(), posargs: new Map() };
+  const t: Tables = { child: new Map(), subs: new Map(), opts: new Map(), rootopts: new Map(), optarg: new Map(), posargs: new Map() };
+  const versionName = (program as unknown as { _versionOptionName?: string })._versionOptionName;
   const walk = (cmd: Command, path: string): void => {
     const flags = path ? [] : ['--help'];
     for (const o of cmd.options) {
       if (o.hidden) continue;
+      if (!path && versionName && o.attributeName() === versionName) {
+        t.rootopts.set('', [o.long ?? o.short!]);
+        continue;
+      }
       flags.push(o.long ?? o.short!);
       if (o.required || o.optional) {
         const value = o.argChoices ? [...o.argChoices] : ['*'];
@@ -51,7 +58,7 @@ function buildTables(program: Command): Tables {
   return t;
 }
 
-const TABLE_NAMES = ['child', 'subs', 'opts', 'optarg_key', 'posargs'] as const;
+const TABLE_NAMES = ['child', 'subs', 'opts', 'rootopts', 'optarg_key', 'posargs'] as const;
 const tableOf = (t: Tables, name: typeof TABLE_NAMES[number]): Map<string, string | string[]> =>
   name === 'optarg_key' ? t.optarg : t[name];
 
@@ -70,6 +77,7 @@ function posixTables(t: Tables): string {
 const POSIX_WALK = (words: string, from: number, to: string) => `
   for ((i = ${from}; i < ${to}; i++)); do
     w=\${${words}[i]}
+    [[ $w == '=' ]] && continue
     if [[ -n $pending ]]; then pending=''; continue; fi
     if [[ $w == -* ]]; then
       [[ $w == *=* ]] || { _ms365_optarg "$cmdpath" "$w"; pending=$REPLY; }
@@ -94,11 +102,18 @@ _ms365() {
   local cur=\${COMP_WORDS[COMP_CWORD]} cmdpath='' pending='' w i REPLY opts
   COMPREPLY=()${POSIX_WALK('COMP_WORDS', 1, 'COMP_CWORD')}
   if [[ -n $pending ]]; then
+    [[ $cur == '=' ]] && cur=''
     [[ $pending == '*' ]] || COMPREPLY=($(compgen -W "$pending" -- "$cur"))
+    return
+  fi
+  if [[ $cur == --*=* ]]; then
+    _ms365_optarg "$cmdpath" "\${cur%%=*}"
+    [[ -z $REPLY || $REPLY == '*' ]] || COMPREPLY=($(compgen -P "\${cur%%=*}=" -W "$REPLY" -- "\${cur#*=}"))
     return
   fi
   if [[ $cur == -* ]]; then
     _ms365_opts "$cmdpath"; opts=$REPLY
+    _ms365_rootopts "$cmdpath"; opts="$opts $REPLY"
     REPLY=''; [[ -z $cmdpath ]] || _ms365_opts ''
     COMPREPLY=($(compgen -W "$opts $REPLY" -- "$cur"))
     return
@@ -125,8 +140,16 @@ _ms365() {
     if [[ $pending == '*' ]]; then _files; else compadd -- \${=pending}; fi
     return
   fi
+  if [[ $cur == --*=* ]]; then
+    local flag=\${cur%%=*}
+    _ms365_optarg "$cmdpath" "$flag"
+    if [[ $REPLY == '*' ]]; then compset -P '*='; _files
+    elif [[ -n $REPLY ]]; then compadd -- \${\${=REPLY}/#/$flag=}; fi
+    return
+  fi
   if [[ $cur == -* ]]; then
     _ms365_opts "$cmdpath"; opts=$REPLY
+    _ms365_rootopts "$cmdpath"; opts="$opts $REPLY"
     REPLY=''; [[ -z $cmdpath ]] || _ms365_opts ''
     compadd -- \${=opts} \${=REPLY}
     return
@@ -189,8 +212,19 @@ function __ms365_complete
         end
         return
     end
+    if string match -q -- '--*=*' $cur
+        set -l flag (string split -m 1 = -- $cur)[1]
+        set -l values (__ms365_optarg "$cmdpath" $flag)
+        if test "$values" = '*'
+            printf '%s\n' "$flag="(__fish_complete_path (string split -m 1 = -- $cur)[2])
+        else if test -n "$values"
+            printf '%s\n' "$flag="$values
+        end
+        return
+    end
     if string match -q -- '-*' $cur
         __ms365_opts "$cmdpath"
+        __ms365_rootopts "$cmdpath"
         test -z "$cmdpath"; or __ms365_opts ''
         return
     end
@@ -241,8 +275,14 @@ ${tables}
     if ($pending) {
         if ($pending -contains '*') { return }
         $candidates = $pending
+    } elseif ($wordToComplete -match '^(--[^=]+)=') {
+        $flag = $Matches[1]
+        $values = $optarg["$cmdpath|$flag"]
+        if (-not $values) { $values = $optarg["|$flag"] }
+        if (-not $values -or $values -contains '*') { return }
+        $candidates = $values | ForEach-Object { "$flag=$_" }
     } elseif ($wordToComplete.StartsWith('-')) {
-        $candidates = @($opts[$cmdpath]) + @(if ($cmdpath) { $opts[''] })
+        $candidates = @($opts[$cmdpath]) + @($rootopts[$cmdpath]) + @(if ($cmdpath) { $opts[''] })
     } elseif ($subs[$cmdpath]) {
         $candidates = $subs[$cmdpath]
     } elseif ($posargs[$cmdpath]) {
