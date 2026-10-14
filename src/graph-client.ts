@@ -92,6 +92,11 @@ export class GraphClient {
     this.baseUrl = `https://graph.microsoft.com/${this.apiVersion}`;
   }
 
+  /** True when requests are previewed, not sent (--dry-run). */
+  isDryRun(): boolean {
+    return this.dryRun;
+  }
+
   buildUrl(endpoint: string, queryParams?: Record<string, string>): string {
     let url = /^https:\/\//.test(endpoint) ? endpoint : `${this.baseUrl}${endpoint}`;
 

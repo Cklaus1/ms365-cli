@@ -9,6 +9,7 @@ import {
   odataQuote, kqlQuote, safeOutputPath, resolveTimeZone, parseTime, toGraphDateTime,
 } from '../utils.js';
 import { detectMimeType } from '../mime.js';
+import { fingerprint, isDryRun, withIdempotency } from '../idempotency.js';
 import { addContentOptions, contentOptions, messageTransform, transformData, type BodyMode } from '../content.js';
 
 // Well-known folder names that Graph API supports directly
@@ -183,6 +184,32 @@ async function sendViaDraft(client: GraphClient, endpoint: string, body: unknown
   await addAttachments(client, draft.id as string, files);
   await client.request(`/me/messages/${encodeURIComponent(draft.id as string)}/send`, { method: 'POST' });
 }
+
+const IDEMPOTENCY_HELP = 'Retry-safe: if this key was used for the same request in the last 24 h, do not send again';
+
+/**
+ * Run `send` under --idempotency-key (D23). Returns false when the key replays an earlier send: the stored result is
+ * printed and Graph is not called. Dry-run never touches the ledger.
+ */
+async function idempotentSend(
+  client: GraphClient, key: string | undefined, command: string, request: unknown, send: () => Promise<void>,
+): Promise<boolean> {
+  if (!key || isDryRun(client)) {
+    await send();
+    return true;
+  }
+  const outcome = await withIdempotency(key, command, fingerprint(request), async () => {
+    await send();
+    return { sentAt: new Date().toISOString() };
+  });
+  if (outcome.status === 'done') return true;
+  info(`Already sent at ${outcome.ts}; not sent again.`);
+  console.log(formatOutput(outcome.result, 'json'));
+  return false;
+}
+
+/** Attachments enter a send's fingerprint by name and size (their bytes are not re-read for hashing). */
+const attachmentKeys = (files: FileToAttach[]) => files.map(f => ({ name: f.name, size: f.size }));
 
 export function registerMailCommands(program: Command, getClient: () => GraphClient): void {
   const mail = program.command('mail').description('Outlook mail operations');
@@ -411,6 +438,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .requiredOption('--body <body>', 'Email body')
     .option('--html', 'Send body as HTML')
     .option('--attach <path>', 'Attach a file (repeatable; over 3 MB total goes via a draft + upload session)', collect, [])
+    .option('--idempotency-key <key>', IDEMPOTENCY_HELP)
     .action(handleErrors(async (opts) => {
       const files = prepareAttachments(opts.attach);
       const client = getClient();
@@ -433,17 +461,20 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         message.bccRecipients = parseRecipients(opts.bcc);
       }
 
-      if (needsUploadSession(files)) {
-        await sendViaDraft(client, '/me/messages', message, files);
-      } else {
-        if (files.length > 0) message.attachments = files.map(inlineAttachment);
-        await client.request('/me/sendMail', {
-          method: 'POST',
-          body: JSON.stringify({ message, saveToSentItems: true }),
-        });
-      }
+      const request = { message, attachments: attachmentKeys(files) };
+      const sent = await idempotentSend(client, opts.idempotencyKey, 'mail send', request, async () => {
+        if (needsUploadSession(files)) {
+          await sendViaDraft(client, '/me/messages', message, files);
+        } else {
+          if (files.length > 0) message.attachments = files.map(inlineAttachment);
+          await client.request('/me/sendMail', {
+            method: 'POST',
+            body: JSON.stringify({ message, saveToSentItems: true }),
+          });
+        }
+      });
 
-      info('Email sent successfully.');
+      if (sent) info('Email sent successfully.');
     }));
 
   mail
@@ -630,12 +661,15 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
   mail
     .command('send-draft <messageId>')
     .description('Send an existing draft')
-    .action(handleErrors(async (messageId: string) => {
+    .option('--idempotency-key <key>', IDEMPOTENCY_HELP)
+    .action(handleErrors(async (messageId: string, opts) => {
       const client = getClient();
-      await client.request(`/me/messages/${encodeURIComponent(messageId)}/send`, {
-        method: 'POST',
+      const sent = await idempotentSend(client, opts.idempotencyKey, 'mail send-draft', { messageId }, async () => {
+        await client.request(`/me/messages/${encodeURIComponent(messageId)}/send`, {
+          method: 'POST',
+        });
       });
-      info('Draft sent.');
+      if (sent) info('Draft sent.');
     }));
 
   mail
@@ -745,18 +779,22 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .option('--html', 'Send body as HTML')
     .option('--reply-all', 'Reply to all recipients')
     .option('--attach <path>', 'Attach a file (repeatable; over 3 MB total goes via a draft + upload session)', collect, [])
+    .option('--idempotency-key <key>', IDEMPOTENCY_HELP)
     .action(handleErrors(async (messageId: string, opts) => {
       const files = prepareAttachments(opts.attach);
       const client = getClient();
       const base = `/me/messages/${encodeURIComponent(messageId)}`;
-      if (needsUploadSession(files)) {
-        await sendViaDraft(client, `${base}/${opts.replyAll ? 'createReplyAll' : 'createReply'}`, { comment: opts.body }, files);
-      } else {
-        const body: Record<string, unknown> = { comment: opts.body };
-        if (files.length > 0) body.message = { attachments: files.map(inlineAttachment) };
-        await client.request(`${base}/${opts.replyAll ? 'replyAll' : 'reply'}`, { method: 'POST', body: JSON.stringify(body) });
-      }
-      info('Reply sent.');
+      const request = { messageId, replyAll: !!opts.replyAll, comment: opts.body, attachments: attachmentKeys(files) };
+      const sent = await idempotentSend(client, opts.idempotencyKey, 'mail reply', request, async () => {
+        if (needsUploadSession(files)) {
+          await sendViaDraft(client, `${base}/${opts.replyAll ? 'createReplyAll' : 'createReply'}`, { comment: opts.body }, files);
+        } else {
+          const body: Record<string, unknown> = { comment: opts.body };
+          if (files.length > 0) body.message = { attachments: files.map(inlineAttachment) };
+          await client.request(`${base}/${opts.replyAll ? 'replyAll' : 'reply'}`, { method: 'POST', body: JSON.stringify(body) });
+        }
+      });
+      if (sent) info('Reply sent.');
     }));
 
   // ── Forward ──────────────────────────────────────────────────
@@ -766,19 +804,23 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .requiredOption('--to <addresses>', 'Comma-separated recipient emails')
     .option('--comment <text>', 'Comment to include with forward')
     .option('--attach <path>', 'Attach a file (repeatable; over 3 MB total goes via a draft + upload session)', collect, [])
+    .option('--idempotency-key <key>', IDEMPOTENCY_HELP)
     .action(handleErrors(async (messageId: string, opts) => {
       const files = prepareAttachments(opts.attach);
       const client = getClient();
       const toRecipients = parseRecipients(opts.to);
       const base = `/me/messages/${encodeURIComponent(messageId)}`;
       const body: Record<string, unknown> = { comment: opts.comment || '', toRecipients };
-      if (needsUploadSession(files)) {
-        await sendViaDraft(client, `${base}/createForward`, body, files);
-      } else {
-        if (files.length > 0) body.message = { attachments: files.map(inlineAttachment) };
-        await client.request(`${base}/forward`, { method: 'POST', body: JSON.stringify(body) });
-      }
-      info('Message forwarded.');
+      const request = { messageId, ...body, attachments: attachmentKeys(files) };
+      const sent = await idempotentSend(client, opts.idempotencyKey, 'mail forward', request, async () => {
+        if (needsUploadSession(files)) {
+          await sendViaDraft(client, `${base}/createForward`, body, files);
+        } else {
+          if (files.length > 0) body.message = { attachments: files.map(inlineAttachment) };
+          await client.request(`${base}/forward`, { method: 'POST', body: JSON.stringify(body) });
+        }
+      });
+      if (sent) info('Message forwarded.');
     }));
 
   // ── Mark read/unread ────────────────────────────────────────

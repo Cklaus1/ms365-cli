@@ -5,6 +5,7 @@ import {
   outputOption, confirm, info, validateEmail, resolveTimeZone, preferTimeZone, parseTime, parseGraphDateTime, toIsoWithOffset,
 } from '../utils.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
+import { fingerprint, isDryRun, withIdempotency } from '../idempotency.js';
 
 const TZ_HELP = 'IANA time zone (default: MS365_CLI_TIMEZONE or the local zone)';
 const TIME_HELP = 'ISO 8601 or natural ("tomorrow 15:00", "next mon 9:30", "+2h")';
@@ -137,6 +138,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     .option('--calendar <calendarId>', 'Calendar ID')
     .option('--html', 'Body is HTML')
     .option('--teams', 'Make it a Teams online meeting (adds a join link)')
+    .option('--idempotency-key <key>', 'Retry-safe: sent as the event transactionId; a repeat within 24 h returns the first event')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const tz = resolveTimeZone(opts.timezone);
@@ -168,12 +170,26 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
         ? `/me/calendars/${encodeURIComponent(opts.calendar)}/events`
         : '/me/events';
 
-      const response = await client.request(endpoint, {
-        method: 'POST',
-        body: JSON.stringify(event),
+      const create = () => client.request(endpoint, { method: 'POST', body: JSON.stringify(event) });
+      const key: string | undefined = opts.idempotencyKey;
+      if (!key) {
+        console.log(formatOutput((await create()).data, opts.output as OutputFormat));
+        return;
+      }
+      // Graph de-duplicates on transactionId server-side; the ledger also skips the request on a local retry (D23).
+      event.transactionId = key;
+      if (isDryRun(client)) {
+        console.log(formatOutput((await create()).data, opts.output as OutputFormat));
+        return;
+      }
+      let created: unknown;
+      const outcome = await withIdempotency(key, 'cal create', fingerprint({ endpoint, event }), async () => {
+        created = (await create()).data;
+        const { id, webLink } = created as { id?: string; webLink?: string };
+        return { id, webLink };
       });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      if (outcome.status === 'replay') info(`Event already created at ${outcome.ts}; not created again.`);
+      console.log(formatOutput(outcome.status === 'replay' ? outcome.result : created, opts.output as OutputFormat));
     }));
 
   cal
