@@ -1,8 +1,11 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, streamPages, type OutputFormat } from '../formatter.js';
-import { handleErrors, CliError } from '../errors.js';
-import { parseDate, truncate, parseRecipients, formatSize, outputOption, confirm, info } from '../utils.js';
+import { handleErrors, CliError, ExitCode } from '../errors.js';
+import {
+  truncate, parseRecipients, formatSize, outputOption, confirm, info,
+  odataQuote, kqlQuote, safeOutputPath, resolveTimeZone, parseTime, toGraphDateTime,
+} from '../utils.js';
 
 // Well-known folder names that Graph API supports directly
 const WELL_KNOWN_FOLDERS = [
@@ -25,12 +28,12 @@ async function resolveFolderName(client: GraphClient, name: string): Promise<str
     return wellKnown;
   }
 
-  // Search by displayName — validate input to prevent OData filter injection
-  const safeName = name.replace(/[^a-zA-Z0-9 _\-().]/g, '').trim();
-  if (!safeName) return null;
+  // Search by displayName; odataQuote keeps the literal intact (including non-ASCII names)
+  const trimmed = name.trim();
+  if (!trimmed) return null;
   const response = await client.request('/me/mailFolders', {
     queryParams: {
-      '$filter': `displayName eq '${safeName.replace(/'/g, "''")}'`,
+      '$filter': `displayName eq '${odataQuote(trimmed)}'`,
       '$select': 'id,displayName',
       '$top': '1',
     },
@@ -53,6 +56,61 @@ async function resolveFolderName(client: GraphClient, name: string): Promise<str
   return match ? (match.id as string) : null;
 }
 
+// Inline (base64) attachments are limited to 3 MB; larger files need an upload session.
+const INLINE_ATTACHMENT_LIMIT = 3 * 1024 * 1024;
+const ATTACHMENT_CHUNK_SIZE = 3 * 1024 * 1024;
+
+/**
+ * Upload a large file attachment via POST …/attachments/createUploadSession, then PUT
+ * the bytes to the pre-authorized uploadUrl in chunks (no bearer token is sent there).
+ */
+async function uploadLargeAttachment(
+  client: GraphClient, messageId: string, filePath: string, name: string, contentType: string, size: number,
+): Promise<unknown> {
+  const session = await client.request(`/me/messages/${encodeURIComponent(messageId)}/attachments/createUploadSession`, {
+    method: 'POST',
+    body: JSON.stringify({ AttachmentItem: { attachmentType: 'file', name, size, contentType } }),
+  });
+  const sessionData = session.data as { uploadUrl?: string; dryRun?: boolean };
+  if (sessionData.dryRun) {
+    console.log(`[dry-run] Then PUT ${Math.ceil(size / ATTACHMENT_CHUNK_SIZE)} chunk(s) to the session uploadUrl`);
+    return session.data;
+  }
+  if (!sessionData.uploadUrl) {
+    throw new CliError('Upload session response did not include an uploadUrl.', { code: 'bad_response' });
+  }
+
+  const fs = await import('fs');
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    let offset = 0;
+    while (offset < size) {
+      const length = Math.min(ATTACHMENT_CHUNK_SIZE, size - offset);
+      const buffer = Buffer.alloc(length);
+      fs.readSync(fd, buffer, 0, length, offset);
+      const res = await fetch(sessionData.uploadUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'Content-Length': String(length),
+          'Content-Range': `bytes ${offset}-${offset + length - 1}/${size}`,
+        },
+        body: buffer,
+      });
+      if (!res.ok) {
+        throw new CliError(`Attachment chunk upload failed at byte ${offset} (${res.status}): ${await res.text()}`,
+          { code: 'upload_failed', status: res.status, exitCode: res.status === 429 ? ExitCode.THROTTLED : ExitCode.GENERIC });
+      }
+      offset += length;
+      info(`Uploading... ${Math.round((offset / size) * 100)}%`);
+      if (res.status === 201) break;
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return { message: 'Attachment uploaded', name, size };
+}
+
 export function registerMailCommands(program: Command, getClient: () => GraphClient): void {
   const mail = program.command('mail').description('Outlook mail operations');
 
@@ -62,7 +120,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .option('--top <n>', 'Number of messages to return', '10')
     .option('--filter <filter>', 'OData filter expression')
     .option('--select <fields>', 'Comma-separated fields to return')
-    .option('--search <query>', 'Search query')
+    .option('--search <query>', 'Search query (cannot be combined with --filter; Graph returns at most 250 results)')
     .option('--folder <name>', 'Folder name or ID (e.g. "Drafts", "Sent Items", "Archive", or a folder ID)')
     .option('--all', 'Fetch all pages')
     .option('--page-limit <n>', 'Max pages when using --all')
@@ -74,7 +132,16 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       if (opts.top) queryParams['$top'] = opts.top;
       if (opts.filter) queryParams['$filter'] = opts.filter;
       if (opts.select) queryParams['$select'] = opts.select;
-      if (opts.search) queryParams['$search'] = `"${opts.search}"`;
+      if (opts.search) {
+        if (opts.filter) {
+          throw new CliError('--search cannot be combined with --filter: Outlook $search does not support $filter or $orderby.',
+            { code: 'usage', exitCode: ExitCode.USAGE, fix: 'drop --filter, or filter the --search results client-side (e.g. with jq)' });
+        }
+        queryParams['$search'] = kqlQuote(opts.search);
+        if (opts.all || parseInt(opts.top) > 250) {
+          info('Warning: mail search returns at most 250 results; --all cannot page beyond that.');
+        }
+      }
 
       let endpoint = '/me/messages';
       if (opts.folder) {
@@ -215,7 +282,8 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         '$orderby': 'receivedDateTime desc',
       };
       if (!opts.includeRead) {
-        queryParams['$filter'] = opts.filter;
+        // Graph requires the $orderby property to appear first in $filter (else 400 InefficientFilter).
+        queryParams['$filter'] = `receivedDateTime ge 1900-01-01T00:00:00Z and (${opts.filter})`;
       }
 
       const endpoint = opts.folder
@@ -226,13 +294,13 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       const data = response.data as Record<string, unknown>;
       const messages = (data.value as Array<Record<string, unknown>>) || [];
 
-      if (messages.length === 0) {
-        console.log('No messages found.');
+      if (opts.output === 'json') {
+        console.log(formatOutput(response.data, 'json'));
         return;
       }
 
-      if (opts.output === 'json') {
-        console.log(formatOutput(response.data, 'json'));
+      if (messages.length === 0) {
+        info('No messages found.');
         return;
       }
 
@@ -416,7 +484,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
 
       const created = response.data as Record<string, unknown>;
       if (opts.output !== 'json') {
-        console.log(`Draft created. ID: ${created.id}`);
+        info(`Draft created. ID: ${created.id}`);
       } else {
         console.log(formatOutput(response.data, 'json'));
       }
@@ -458,6 +526,16 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .addOption(outputOption())
     .action(handleErrors(async (messageId: string, opts) => {
       const client = getClient();
+      // Editing subject/body/recipients of a sent/received message needs Mail-Advanced.ReadWrite
+      // (admin consent) from 2026-12-31; refuse up front instead of surfacing an unclear 403.
+      const current = await client.request(`/me/messages/${encodeURIComponent(messageId)}`, {
+        queryParams: { '$select': 'isDraft' },
+      });
+      if ((current.data as Record<string, unknown>).isDraft === false) {
+        throw new CliError(`Message ${messageId.substring(0, 16)}... is not a draft. Changing the subject, body or recipients ` +
+          'of a non-draft message requires the Mail-Advanced.ReadWrite permission (admin consent) from 2026-12-31.',
+          { code: 'not_a_draft', fix: 'create a new draft with `ms365 mail draft`, or use `mail forward`/`mail reply`' });
+      }
       const patch: Record<string, unknown> = {};
 
       if (opts.subject) patch.subject = opts.subject;
@@ -517,21 +595,40 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
   mail
     .command('add-attachment <messageId>')
     .description('Add an attachment to a draft message')
-    .requiredOption('--name <name>', 'Attachment file name')
+    .option('--name <name>', 'Attachment file name (default with --file: the file\'s base name)')
     .requiredOption('--content-type <type>', 'MIME content type')
-    .requiredOption('--content <base64>', 'Base64-encoded content')
+    .option('--content <base64>', 'Base64-encoded content (small attachments only)')
+    .option('--file <path>', 'Read the attachment from a file (over 3 MB uses an upload session)')
     .addOption(outputOption())
     .action(handleErrors(async (messageId: string, opts) => {
+      if (!!opts.content === !!opts.file) {
+        throw new CliError('Pass exactly one of --content or --file.', { code: 'usage', exitCode: ExitCode.USAGE });
+      }
+      const name: string | undefined = opts.name || (opts.file && (await import('path')).basename(opts.file));
+      if (!name) {
+        throw new CliError('--name is required with --content.', { code: 'usage', exitCode: ExitCode.USAGE });
+      }
       const client = getClient();
+      let contentBytes: string = opts.content;
+      if (opts.file) {
+        const fs = await import('fs');
+        const size = fs.statSync(opts.file).size;
+        if (size > INLINE_ATTACHMENT_LIMIT) {
+          const result = await uploadLargeAttachment(client, messageId, opts.file, name, opts.contentType, size);
+          console.log(formatOutput(result, opts.output as OutputFormat));
+          return;
+        }
+        contentBytes = fs.readFileSync(opts.file).toString('base64');
+      }
       const response = await client.request(
         `/me/messages/${encodeURIComponent(messageId)}/attachments`,
         {
           method: 'POST',
           body: JSON.stringify({
             '@odata.type': '#microsoft.graph.fileAttachment',
-            name: opts.name,
+            name,
             contentType: opts.contentType,
-            contentBytes: opts.content,
+            contentBytes,
           }),
         }
       );
@@ -553,7 +650,8 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
   mail
     .command('download-attachment <messageId> <attachmentId>')
     .description('Download an attachment to a file')
-    .option('--out <path>', 'Output file path (default: attachment name)')
+    .option('--out <path>', 'Output file path (default: attachment name in the current directory)')
+    .option('--force', 'Overwrite an existing file')
     .action(handleErrors(async (messageId: string, attachmentId: string, opts) => {
       const client = getClient();
       const response = await client.request(
@@ -565,9 +663,10 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       if (!contentBytes) {
         throw new Error('No content found. This may be a reference attachment or item attachment.');
       }
-      const outPath = (await import('path')).resolve(opts.out || name);
-      (await import('fs')).writeFileSync(outPath, Buffer.from(contentBytes, 'base64'));
-      info(`Saved to ${outPath} (${formatSize(Buffer.from(contentBytes, 'base64').length)})`);
+      const outPath = safeOutputPath(name, { out: opts.out, force: opts.force, fallback: 'attachment' });
+      const bytes = Buffer.from(contentBytes, 'base64');
+      (await import('fs')).writeFileSync(outPath, bytes);
+      info(`Saved to ${outPath} (${formatSize(bytes.length)})`);
     }));
 
   mail
@@ -633,13 +732,19 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
   mail
     .command('flag <messageId>')
     .description('Set follow-up flag on a message')
-    .option('--due <date>', 'Due date (YYYY-MM-DD)')
+    .option('--due <when>', 'Due date/time (YYYY-MM-DD, ISO 8601, "tomorrow", "next fri 17:00", "+3d")')
+    .option('--timezone <tz>', 'IANA time zone for --due (default: MS365_CLI_TIMEZONE or local)')
     .action(handleErrors(async (messageId: string, opts) => {
-      const client = getClient();
       const flag: Record<string, unknown> = { flagStatus: 'flagged' };
       if (opts.due) {
-        flag.dueDateTime = { dateTime: parseDate(opts.due) + 'T00:00:00', timeZone: 'UTC' };
+        // Graph rejects a dueDateTime without a startDateTime; start now (or at the due time if it is past).
+        const tz = resolveTimeZone(opts.timezone);
+        const due = parseTime(opts.due, { tz });
+        const start = new Date(Math.min(Date.now(), due.date.getTime()));
+        flag.startDateTime = { dateTime: toGraphDateTime(start, tz), timeZone: tz };
+        flag.dueDateTime = { dateTime: due.dateTime, timeZone: tz };
       }
+      const client = getClient();
       await client.request(`/me/messages/${encodeURIComponent(messageId)}`, {
         method: 'PATCH',
         body: JSON.stringify({ flag }),
@@ -683,7 +788,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         method: 'PATCH',
         body: JSON.stringify({ categories }),
       });
-      console.log(`Categories set: ${categories.join(', ')}`);
+      info(`Categories set: ${categories.join(', ')}`);
     }));
 
   // Shared mailbox commands (require --org-mode)
@@ -753,7 +858,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
           saveToSentItems: true,
         }),
       });
-      console.log('Email sent from shared mailbox.');
+      info('Email sent from shared mailbox.');
     }));
 
   // ── Inbox rules ─────────────────────────────────────────────
@@ -789,17 +894,22 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .option('--mark-read', 'Mark matching messages as read')
     .option('--importance <level>', 'Set importance: low, normal, high')
     .option('--stop-processing', 'Stop processing subsequent rules')
-    .option('--enabled', 'Enable rule (default: true)')
+    .option('--all-messages', 'Apply the rule to every incoming message (required when no condition is given)')
+    .option('--disabled', 'Create the rule disabled')
+    .option('--enabled', 'Accepted for compatibility; rules are enabled unless --disabled')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
-      const client = getClient();
-
       const conditions: Record<string, unknown> = {};
       if (opts.from) {
         conditions.senderContains = opts.from.split(',').map((s: string) => s.trim());
       }
       if (opts.subjectContains) {
         conditions.subjectContains = opts.subjectContains.split(',').map((s: string) => s.trim());
+      }
+
+      if (Object.keys(conditions).length === 0 && !opts.allMessages) {
+        throw new CliError('Refusing to create a rule with no conditions: it would act on every incoming message.',
+          { code: 'usage', exitCode: ExitCode.USAGE, fix: 'add --from or --subject-contains, or pass --all-messages to confirm' });
       }
 
       const actions: Record<string, unknown> = {};
@@ -826,9 +936,10 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         displayName: opts.name,
         conditions,
         actions,
-        isEnabled: opts.enabled !== false,
+        isEnabled: !opts.disabled,
       };
 
+      const client = getClient();
       const response = await client.request('/me/mailFolders/inbox/messageRules', {
         method: 'POST',
         body: JSON.stringify(rule),
@@ -876,7 +987,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
           failed.push({ id, error: (err as Error).message });
         }
       }
-      console.log(`Marked ${succeeded} message(s) as read.`);
+      info(`Marked ${succeeded} message(s) as read.`);
       if (failed.length > 0) {
         throw new CliError(`Failed ${failed.length} of ${ids.length}: ${failed.map(f => f.id.substring(0, 12) + '...').join(', ')}`,
           { code: 'partial_failure' });
@@ -904,7 +1015,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
           failed.push({ id, error: (err as Error).message });
         }
       }
-      console.log(`Moved ${succeeded} message(s).`);
+      info(`Moved ${succeeded} message(s).`);
       if (failed.length > 0) {
         throw new CliError(`Failed ${failed.length} of ${ids.length}: ${failed.map(f => f.id.substring(0, 12) + '...').join(', ')}`,
           { code: 'partial_failure' });
