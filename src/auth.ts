@@ -343,25 +343,34 @@ export class AuthManager {
     return this.accessToken;
   }
 
-  async getCurrentAccount(): Promise<AccountInfo | null> {
+  /** The account in effect: the --account override, else the saved selection, else the first cached one. `undefined` when the override matches nothing. */
+  private async pickAccount(): Promise<AccountInfo | null | undefined> {
     const accounts = await (await this.app()).getTokenCache().getAllAccounts();
     if (this.accountOverride) {
-      const wanted = this.accountOverride;
-      const match = accounts.find(a => a.homeAccountId === wanted || a.username.toLowerCase() === wanted.toLowerCase());
-      if (!match) {
-        throw new CliError(`Account "${wanted}" is not signed in. List cached accounts with: ms365 auth accounts`,
-          { code: 'account_not_found', exitCode: ExitCode.AUTH, fix: 'ms365 auth accounts' });
-      }
-      return match;
+      const wanted = this.accountOverride.toLowerCase();
+      return accounts.find(a => a.homeAccountId === this.accountOverride || a.username.toLowerCase() === wanted);
     }
     if (accounts.length === 0) return null;
+    return accounts.find(a => a.homeAccountId === this.selectedAccountId) ?? accounts[0];
+  }
 
-    if (this.selectedAccountId) {
-      const selected = accounts.find(a => a.homeAccountId === this.selectedAccountId);
-      if (selected) return selected;
+  async getCurrentAccount(): Promise<AccountInfo | null> {
+    const account = await this.pickAccount();
+    if (account === undefined) {
+      throw new CliError(`Account "${this.accountOverride}" is not signed in. List cached accounts with: ms365 auth accounts`,
+        { code: 'account_not_found', exitCode: ExitCode.AUTH, fix: 'ms365 auth accounts' });
     }
+    return account;
+  }
 
-    return accounts[0];
+  /** homeAccountId of the account this invocation uses (same precedence as getCurrentAccount()), or null when none matches. */
+  async activeAccountId(): Promise<string | null> {
+    return (await this.pickAccount())?.homeAccountId ?? null;
+  }
+
+  /** The --account / MS365_CLI_ACCOUNT / profile account for this process, if any. */
+  getAccountOverride(): string | null {
+    return this.accountOverride;
   }
 
   /** Granted (consented) scopes of the current access token, from its `scp` claim. */

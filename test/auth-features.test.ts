@@ -144,6 +144,64 @@ describe('T40: --account (PM-8, D21)', () => {
   });
 });
 
+describe('VT5: `auth accounts` marks the account in effect (V-14)', () => {
+  beforeEach(() => { fs.writeFileSync(path.join(dir, 'token-cache.json'), cacheJson(1, 2)); });
+  const active = (stdout: string) => stdout.split('\n').filter(l => l.includes('(active)')).map(l => l.trim());
+
+  it('the --account override wins over the saved selection', async () => {
+    fs.writeFileSync(path.join(dir, 'selected-account.json'), JSON.stringify({ accountId: 'uid1.utid' }));
+    const r = await runCommand(register(new AuthManager([], { account: 'USER2@contoso.com' })), ['auth', 'accounts']);
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(active(r.stdout)).toEqual(['user2@contoso.com (active)']);
+  });
+
+  it('the saved selection is marked when there is no override', async () => {
+    fs.writeFileSync(path.join(dir, 'selected-account.json'), JSON.stringify({ accountId: 'uid2.utid' }));
+    const r = await runCommand(register(new AuthManager([])), ['auth', 'accounts']);
+    expect(active(r.stdout)).toEqual(['user2@contoso.com (active)']);
+  });
+
+  it('with nothing saved, the first cached account (the one commands use) is marked', async () => {
+    const m = new AuthManager([]);
+    const r = await runCommand(register(m), ['auth', 'accounts']);
+    expect(active(r.stdout)).toHaveLength(1);
+    await m.initialize();
+    expect(active(r.stdout)[0]).toBe(`${(await m.getCurrentAccount())!.username} (active)`);
+  });
+
+  it('an override that matches nothing marks none and warns on stderr', async () => {
+    fs.writeFileSync(path.join(dir, 'selected-account.json'), JSON.stringify({ accountId: 'uid1.utid' }));
+    const r = await runCommand(register(new AuthManager([], { account: 'nobody@contoso.com' })), ['auth', 'accounts']);
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(active(r.stdout)).toEqual([]);
+    expect(r.stdout).toContain('user1@contoso.com');
+    expect(r.stderr).toContain('nobody@contoso.com');
+  });
+
+  it('activeAccountId() follows getCurrentAccount() precedence and returns null instead of throwing', async () => {
+    fs.writeFileSync(path.join(dir, 'selected-account.json'), JSON.stringify({ accountId: 'uid1.utid' }));
+    const m = new AuthManager([], { account: 'uid2.utid' });
+    await m.initialize();
+    expect(await m.activeAccountId()).toBe('uid2.utid');
+    const none = new AuthManager([], { account: 'nobody@contoso.com' });
+    await none.initialize();
+    expect(await none.activeAccountId()).toBeNull();
+  });
+});
+
+describe('[ADDED] `auth status` / `auth scopes` under --dry-run stay offline (DR-22 class)', () => {
+  for (const cmd of ['status', 'scopes']) {
+    it(`--dry-run auth ${cmd} prints the note, exits 0 and never builds an AuthManager`, async () => {
+      const getAuth = vi.fn(() => { throw new Error('AuthManager built'); });
+      const r = await runCommand((p: Command) => registerAuthCommands(p, getAuth as never), ['auth', cmd], { dryRun: true });
+      expect(r.exitCode, r.stderr).toBe(0);
+      expect(getAuth).not.toHaveBeenCalled();
+      expect(r.stderr).toContain('[dry-run]');
+      expect(r.stdout).toBe('');
+    });
+  }
+});
+
 describe('T40: profiles (PM-8, D21)', () => {
   it('validates names so no path can escape the profiles dir', () => {
     for (const bad of ['', '../x', 'a/b', 'A', 'x.json', '..']) {

@@ -52,6 +52,8 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
     .command('status')
     .description('Verify current login status')
     .action(handleErrors(async () => {
+      // Offline under --dry-run: no AuthManager, so no token-cache read or refresh (DR-22 class).
+      if (isDryRun()) return dryRunTrace('would check the login status (token cache not read)');
       const authManager = getAuth();
       await authManager.initialize();
       const result = await authManager.verifyLogin();
@@ -67,6 +69,7 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
     .description('Show the scopes granted to the current access token (plus audience, tenant, user, expiry)')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
+      if (isDryRun()) return dryRunTrace('would show the scopes of the current access token (token cache not read)');
       const authManager = getAuth();
       await authManager.initialize();
       console.log(formatOutput(tokenInfo(await authManager.getToken()), opts.output as OutputFormat));
@@ -79,15 +82,16 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
       const authManager = getAuth();
       await authManager.initialize();
       const accounts = await authManager.listAccounts();
-      const selectedId = authManager.getSelectedAccountId();
-
       if (accounts.length === 0) {
         info('No accounts found. Run: ms365 auth login');
         return;
       }
 
+      const activeId = await authManager.activeAccountId();
+      const override = authManager.getAccountOverride();
+      if (override && !activeId) info(`Warning: account "${override}" (from --account, MS365_CLI_ACCOUNT or the profile) matches no cached account.`);
       for (const acc of accounts) {
-        const marker = acc.homeAccountId === selectedId ? ' (active)' : '';
+        const marker = acc.homeAccountId === activeId ? ' (active)' : '';
         console.log(`  ${acc.username}${marker}`);
         console.log(`    ID: ${acc.homeAccountId}`);
       }
