@@ -65,12 +65,34 @@ describe('watch: first run (baseline)', () => {
     ]);
   });
 
-  it('--folder targets that folder and names the cursor after it', async () => {
+  it('--folder with a well-known name targets it without a lookup and names the cursor after it', async () => {
     const r = await run(['mail', '--folder', 'Archive'], {
-      routes: [['GET', '/me/mailFolders/Archive/messages/delta', () => ({ value: [], '@odata.deltaLink': `${GRAPH}/x?$deltatoken=A` })]],
+      routes: [['GET', '/me/mailFolders/archive/messages/delta', () => ({ value: [], '@odata.deltaLink': `${GRAPH}/x?$deltatoken=A` })]],
     });
     expect(r.exitCode).toBe(0);
-    expect(readCursor('mail-Archive').endpoint).toBe('/me/mailFolders/Archive/messages/delta');
+    expect(r.calls).toHaveLength(1);
+    expect(readCursor('mail-archive').endpoint).toBe('/me/mailFolders/archive/messages/delta');
+  });
+
+  it('--folder <name> resolves to the folder ID; the cursor is named from the ID (Q-13)', async () => {
+    const r = await run(['mail', '--folder', 'Receipts'], {
+      routes: [
+        ['GET', /^\/me\/mailFolders\/AAMkRcpt=\/messages\/delta/, () => ({ value: [], '@odata.deltaLink': `${GRAPH}/x?$deltatoken=R` })],
+        ['GET', '/me/mailFolders', () => ({ value: [{ id: 'AAMkRcpt=', displayName: 'Receipts', childFolderCount: 0 }] })],
+      ],
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.calls.map(c => c.path.split('?')[0])).toEqual(['/me/mailFolders', '/me/mailFolders/AAMkRcpt=/messages/delta']);
+    expect(readCursor('mail-AAMkRcpt_').endpoint).toBe('/me/mailFolders/AAMkRcpt%3D/messages/delta');
+  });
+
+  it('--folder Inbox and --folder inbox share the default mail cursor (Q-13)', async () => {
+    for (const folder of ['Inbox', 'inbox']) {
+      const r = await run(['mail', '--folder', folder], mailPages);
+      expect(r.exitCode).toBe(0);
+      expect(r.calls[0].path.split('?')[0]).toBe(MAIL);
+    }
+    expect(fs.readdirSync(path.join(dir, 'watch'))).toEqual(['mail.json']);
   });
 
   it('--name sets the cursor file; an unsafe name is a usage error', async () => {
@@ -208,6 +230,15 @@ describe('watch: dry-run', () => {
     expect(fresh.exitCode).toBe(0);
     expect(fs.existsSync(cursorPath('contacts'))).toBe(false);
   });
+
+  it('--reset previews a new baseline but never deletes the cursor (DR-18)', async () => {
+    writeCursor('mail', MAIL_CURSOR);
+    const r = await runCommand(registerWatchCommands, ['watch', 'mail', '--reset'], { env, dryRun: true });
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).toContain(`[dry-run] GET ${GRAPH}${MAIL}`);
+    expect(r.stderr).not.toContain('deltatoken');
+    expect(readCursor('mail')).toEqual(MAIL_CURSOR);
+  });
 });
 
 describe('watch: expired delta token', () => {
@@ -288,4 +319,139 @@ describe('watch --follow', () => {
     expect(readCursor('contacts').deltaLink).toContain('deltatoken=T1');
     expect(process.listenerCount('SIGINT')).toBe(before);
   });
+
+  const denied = () => jsonResponse({ error: { code: 'ErrorAccessDenied', message: 'no' } }, 403);
+  /** Contacts feed whose pass n (1-based) fails when fail(n). */
+  const flaky = (fail: (n: number) => boolean) => {
+    let n = 0;
+    return {
+      routes: [['GET', '/me/contacts/delta', () => {
+        n++;
+        if (fail(n)) return denied();
+        return { value: [], '@odata.deltaLink': `${GRAPH}/me/contacts/delta?$deltatoken=T${n}` };
+      }]],
+    } as Parameters<typeof runCommand>[2];
+  };
+
+  it('a failed pass warns, backs off interval x 2^n and continues (R-10)', async () => {
+    const sleeps: number[] = [];
+    vi.spyOn(watchDeps, 'sleep').mockImplementation(async (ms) => { sleeps.push(ms); });
+    const r = await run(['contacts', '--follow', '--interval', '20', '--max-passes', '4'], flaky(n => n <= 2));
+    expect(r.exitCode).toBe(0);
+    expect(r.calls).toHaveLength(4);
+    expect(sleeps).toEqual([40_000, 80_000, 20_000]);
+    expect(r.stderr).toMatch(/Warning: watch pass failed .*retrying in 80s/i);
+    expect(readCursor('contacts').deltaLink).toContain('deltatoken=T4');
+  });
+
+  it('backoff is capped at 15 minutes', async () => {
+    const sleeps: number[] = [];
+    vi.spyOn(watchDeps, 'sleep').mockImplementation(async (ms) => { sleeps.push(ms); });
+    await run(['contacts', '--follow', '--interval', '600', '--max-passes', '3'], flaky(() => true));
+    expect(sleeps).toEqual([900_000, 900_000]);
+  });
+
+  it('--max-failures N consecutive failures exits with the last error code', async () => {
+    const sleeps: number[] = [];
+    vi.spyOn(watchDeps, 'sleep').mockImplementation(async (ms) => { sleeps.push(ms); });
+    const r = await run(['contacts', '--follow', '--interval', '20', '--max-failures', '2'], flaky(() => true));
+    expect(r.exitCode).toBe(4);
+    expect(r.calls).toHaveLength(2);
+    expect(sleeps).toEqual([40_000]);
+  });
+
+  it('defaults to 10 consecutive failures; a success resets the count', async () => {
+    vi.spyOn(watchDeps, 'sleep').mockImplementation(async () => {});
+    const r = await run(['contacts', '--follow'], flaky(n => n !== 5));
+    expect(r.exitCode).toBe(4);
+    expect(r.calls).toHaveLength(15);
+  });
+
+  it('rejects a --max-failures that is not a positive integer', async () => {
+    const r = await run(['contacts', '--follow', '--max-failures', '0']);
+    expect(r.exitCode).toBe(2);
+    expect(r.calls).toHaveLength(0);
+  });
+
+  it('auth errors end --follow at once (exit 3)', async () => {
+    const sleeps: number[] = [];
+    vi.spyOn(watchDeps, 'sleep').mockImplementation(async (ms) => { sleeps.push(ms); });
+    const r = await run(['contacts', '--follow'], {
+      routes: [['GET', '/me/contacts/delta', () => jsonResponse({ error: { code: 'InvalidAuthenticationToken', message: 'expired' } }, 401)]],
+    });
+    expect(r.exitCode).toBe(3);
+    expect(sleeps).toEqual([]);
+  });
+
+  it('a pass that fails after printing saves nothing, so its lines repeat next pass (R-11)', async () => {
+    vi.spyOn(watchDeps, 'sleep').mockImplementation(async () => {});
+    writeCursor('mail', MAIL_CURSOR);
+    let page2 = 0;
+    const r = await run(['mail', '--follow', '--max-passes', '2'], {
+      routes: [['GET', MAIL, (call) => {
+        if (call.url.includes('skiptoken')) {
+          return ++page2 === 1 ? denied() : { value: [], '@odata.deltaLink': `${GRAPH}${MAIL}?$deltatoken=NEW` };
+        }
+        return { value: [{ id: 'N1', createdDateTime: '2026-10-14T16:30:00Z' }], '@odata.nextLink': `${GRAPH}${MAIL}?$skiptoken=P2` };
+      }]],
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.calls[2].url).toBe(MAIL_CURSOR.deltaLink);
+    expect(lines(r.stdout).map(l => l.id)).toEqual(['N1', 'N1']);
+    expect(readCursor('mail').deltaLink).toContain('deltatoken=NEW');
+  });
+
+  it('--help documents at-least-once delivery (R-11)', async () => {
+    const r = await run(['--help']);
+    expect(r.stdout).toMatch(/at-least-once/i);
+    expect(r.stdout).toMatch(/dedupe on id/i);
+  });
+
+  it('SIGINT mid-pass stops after the current page, saves nothing and exits 130 (R-12, F22)', async () => {
+    writeCursor('mail', MAIL_CURSOR);
+    const r = await run(['mail', '--follow'], {
+      routes: [['GET', MAIL, () => {
+        process.emit('SIGINT');
+        return { value: [{ id: 'N1', createdDateTime: '2026-10-14T16:30:00Z' }], '@odata.nextLink': `${GRAPH}${MAIL}?$skiptoken=P2` };
+      }]],
+    });
+    expect(r.exitCode).toBe(130);
+    expect(r.calls).toHaveLength(1);
+    expect(lines(r.stdout).map(l => l.id)).toEqual(['N1']);
+    expect(readCursor('mail')).toEqual(MAIL_CURSOR);
+  });
+
+  it('a second SIGINT exits 130 at once', async () => {
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+    const r = await run(['contacts', '--follow'], {
+      routes: [['GET', '/me/contacts/delta', () => {
+        process.emit('SIGINT');
+        process.emit('SIGINT');
+        return { value: [], '@odata.nextLink': `${GRAPH}/me/contacts/delta?$skiptoken=P2` };
+      }]],
+    });
+    expect(exit).toHaveBeenCalledWith(130);
+    expect(r.exitCode).toBe(130);
+    expect(fs.existsSync(cursorPath('contacts'))).toBe(false);
+  });
 });
+
+describe('watch under MCP (X-6)', () => {
+  const empty = (prefix: string): Parameters<typeof runCommand>[2] => ({
+    routes: [['GET', prefix, () => ({ value: [], '@odata.deltaLink': `${GRAPH}${prefix}?$deltatoken=X` })]],
+  });
+
+  it('MS365_CLI_MCP=1 prefixes the default cursor name with mcp-', async () => {
+    env.MS365_CLI_MCP = '1';
+    expect((await run(['contacts'], empty('/me/contacts/delta'))).exitCode).toBe(0);
+    expect((await run(['mail', '--folder', 'archive'], empty('/me/mailFolders/archive/messages/delta'))).exitCode).toBe(0);
+    expect(fs.readdirSync(path.join(dir, 'watch')).sort()).toEqual(['mcp-contacts.json', 'mcp-mail-archive.json']);
+  });
+
+  it('an explicit --name is used as given', async () => {
+    env.MS365_CLI_MCP = '1';
+    await run(['contacts', '--name', 'agent'], empty('/me/contacts/delta'));
+    expect(fs.readdirSync(path.join(dir, 'watch'))).toEqual(['agent.json']);
+  });
+});
+
