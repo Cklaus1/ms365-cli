@@ -1,8 +1,8 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
-import { outputOption } from '../utils.js';
-import { handleErrors } from '../errors.js';
+import { outputOption, odataQuote, info } from '../utils.js';
+import { handleErrors, CliError, ExitCode } from '../errors.js';
 
 export function registerExcelCommands(program: Command, getClient: () => GraphClient): void {
   const excel = program.command('excel').description('Excel workbook operations');
@@ -12,6 +12,9 @@ export function registerExcelCommands(program: Command, getClient: () => GraphCl
 
   const wsPath = (driveId: string, itemId: string, worksheetId: string) =>
     `${wbPath(driveId, itemId)}/worksheets/${encodeURIComponent(worksheetId)}`;
+
+  const rangePath = (driveId: string, itemId: string, worksheetId: string, address: string) =>
+    `${wsPath(driveId, itemId, worksheetId)}/range(address='${encodeURIComponent(odataQuote(address))}')`;
 
   excel
     .command('worksheets <driveId> <itemId>')
@@ -29,9 +32,7 @@ export function registerExcelCommands(program: Command, getClient: () => GraphCl
     .addOption(outputOption())
     .action(handleErrors(async (driveId: string, itemId: string, worksheetId: string, address: string, opts) => {
       const client = getClient();
-      const response = await client.request(
-        `${wsPath(driveId, itemId, worksheetId)}/range(address='${encodeURIComponent(address)}')`
-      );
+      const response = await client.request(rangePath(driveId, itemId, worksheetId, address));
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
@@ -61,32 +62,41 @@ export function registerExcelCommands(program: Command, getClient: () => GraphCl
   excel
     .command('format-range <driveId> <itemId> <worksheetId> <address>')
     .description('Format a cell range (e.g. "A1:D10")')
-    .requiredOption('--font-bold [bool]', 'Bold font')
+    .option('--font-bold [bool]', 'Bold font (true/false)')
     .option('--font-color <color>', 'Font color (e.g. #FF0000)')
     .option('--fill-color <color>', 'Fill color (e.g. #FFFF00)')
     .addOption(outputOption())
     .action(handleErrors(async (driveId: string, itemId: string, worksheetId: string, address: string, opts) => {
-      const client = getClient();
-      const format: Record<string, unknown> = {};
-
+      const font: Record<string, unknown> = {};
       if (opts.fontBold !== undefined) {
-        format.font = { bold: opts.fontBold === true || opts.fontBold === 'true' };
+        font.bold = opts.fontBold === true || opts.fontBold === 'true';
       }
       if (opts.fontColor) {
-        format.font = { ...(format.font as Record<string, unknown> || {}), color: opts.fontColor };
+        font.color = opts.fontColor;
       }
-      if (opts.fillColor) {
-        format.fill = { color: opts.fillColor };
+      if (Object.keys(font).length === 0 && !opts.fillColor) {
+        throw new CliError('No formatting option given', {
+          code: 'usage',
+          exitCode: ExitCode.USAGE,
+          fix: 'Pass at least one of --font-bold, --font-color, --fill-color',
+        });
       }
 
-      const response = await client.request(
-        `${wsPath(driveId, itemId, worksheetId)}/range(address='${encodeURIComponent(address)}')/format`,
-        {
+      const client = getClient();
+      const base = `${rangePath(driveId, itemId, worksheetId, address)}/format`;
+      const result: Record<string, unknown> = {};
+      if (Object.keys(font).length > 0) {
+        const response = await client.request(`${base}/font`, { method: 'PATCH', body: JSON.stringify(font) });
+        result.font = response.data;
+      }
+      if (opts.fillColor) {
+        const response = await client.request(`${base}/fill`, {
           method: 'PATCH',
-          body: JSON.stringify(format),
-        }
-      );
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+          body: JSON.stringify({ color: opts.fillColor }),
+        });
+        result.fill = response.data;
+      }
+      console.log(formatOutput(result, opts.output as OutputFormat));
     }));
 
   excel
@@ -94,26 +104,25 @@ export function registerExcelCommands(program: Command, getClient: () => GraphCl
     .description('Sort a cell range (e.g. "A1:D10")')
     .requiredOption('--fields <json>', 'Sort fields JSON (e.g. [{"key":0,"ascending":true}])')
     .option('--match-case', 'Case-sensitive sort')
-    .addOption(outputOption())
     .action(handleErrors(async (driveId: string, itemId: string, worksheetId: string, address: string, opts) => {
       const client = getClient();
       let fields;
       try {
         fields = JSON.parse(opts.fields);
       } catch {
-        throw new Error('--fields must be valid JSON array');
+        throw new CliError('--fields must be valid JSON array', { code: 'usage', exitCode: ExitCode.USAGE });
       }
 
-      const response = await client.request(
-        `${wsPath(driveId, itemId, worksheetId)}/range(address='${encodeURIComponent(address)}')/sort`,
+      await client.request(
+        `${rangePath(driveId, itemId, worksheetId, address)}/sort/apply`,
         {
-          method: 'PATCH',
+          method: 'POST',
           body: JSON.stringify({
             fields,
             matchCase: opts.matchCase || false,
           }),
         }
       );
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      info('Range sorted.');
     }));
 }
