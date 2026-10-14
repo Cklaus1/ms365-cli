@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { configDir } from './auth.js';
+import { configDir, withFileLock } from './auth.js';
 
 /** Rotate the log to audit.log.1 once it grows past this size (one generation is kept). */
 export const AUDIT_MAX_BYTES = 5 * 1024 * 1024;
@@ -43,6 +43,17 @@ function describeCommand(): string {
   return [words, ...options].filter(Boolean).join(' ');
 }
 
+/**
+ * Move a full log to `.1`. The rename runs under a lock and re-checks the size, so a writer whose
+ * stat went stale (another process just rotated) never moves a fresh log over the full generation.
+ */
+function rotateIfFull(file: string): void {
+  if (fs.statSync(file).size <= AUDIT_MAX_BYTES) return;
+  withFileLock(`${file}.rotate`, () => {
+    if (fs.statSync(file).size > AUDIT_MAX_BYTES) fs.renameSync(file, `${file}.1`);
+  });
+}
+
 /** Append one line to the audit log. Disabled by MS365_CLI_AUDIT=0. Never throws. */
 export function recordAudit(entry: Omit<AuditEntry, 'ts' | 'actor' | 'command'>): void {
   if (process.env.MS365_CLI_AUDIT === '0') return;
@@ -51,8 +62,8 @@ export function recordAudit(entry: Omit<AuditEntry, 'ts' | 'actor' | 'command'>)
     const file = auditLogPath();
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     try {
-      if (fs.statSync(file).size > AUDIT_MAX_BYTES) fs.renameSync(file, `${file}.1`);
-    } catch { /* no log yet */ }
+      rotateIfFull(file);
+    } catch { /* no log yet, or lock_timeout: append anyway */ }
     const line: AuditEntry = {
       ts: new Date().toISOString(),
       actor: actor ?? (process.env.MS365_CLI_ACTOR || 'cli'),

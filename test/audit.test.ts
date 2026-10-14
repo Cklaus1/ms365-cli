@@ -151,6 +151,51 @@ describe('audit log (§6 accountability, T37)', () => {
     expect(fs.existsSync(auditLogPath() + '.2')).toBe(false);
   });
 
+  it('R-13: a writer that saw a stale size never rotates a fresh log over the big .1', () => {
+    const file = auditLogPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, 'x'.repeat(AUDIT_MAX_BYTES + 1));
+    // Simulate process A rotating and appending right after this process's unlocked stat saw > 5 MB.
+    const realStat = fs.statSync;
+    let raced = false;
+    vi.spyOn(fs, 'statSync').mockImplementation(((p: fs.PathLike, o?: fs.StatSyncOptions) => {
+      const st = realStat(p, o);
+      if (!raced && p === file) {
+        raced = true;
+        fs.renameSync(file, `${file}.1`);
+        fs.appendFileSync(file, '{"from":"A"}\n');
+      }
+      return st;
+    }) as typeof fs.statSync);
+    recordAudit({ method: 'POST', endpoint: '/b', status: 200, ok: true });
+    expect(realStat(`${file}.1`).size).toBe(AUDIT_MAX_BYTES + 1);
+    expect(fs.readFileSync(file, 'utf8').trim().split('\n')).toHaveLength(2);
+  });
+
+  it('R-13: rotation happens while holding audit.log.rotate.lock, and the lock is released', () => {
+    const file = auditLogPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, 'x'.repeat(AUDIT_MAX_BYTES + 1));
+    const realRename = fs.renameSync;
+    let lockedDuringRename = false;
+    vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+      lockedDuringRename = fs.existsSync(`${file}.rotate.lock`);
+      realRename(from, to);
+    });
+    recordAudit({ method: 'POST', endpoint: '/a', status: 200, ok: true });
+    expect(lockedDuringRename).toBe(true);
+    expect(fs.existsSync(`${file}.rotate.lock`)).toBe(false);
+    expect(readLines()).toHaveLength(1);
+  });
+
+  it('R-13: under the limit no lock file is taken (fast path)', () => {
+    const open = vi.spyOn(fs, 'openSync');
+    recordAudit({ method: 'POST', endpoint: '/a', status: 200, ok: true });
+    recordAudit({ method: 'POST', endpoint: '/b', status: 200, ok: true });
+    expect(open.mock.calls.filter(([p]) => String(p).endsWith('.lock'))).toHaveLength(0);
+    expect(readLines()).toHaveLength(2);
+  });
+
   it('audit tail -n 2 -o json prints the last two entries; audit path prints the path', async () => {
     for (const ep of ['/1', '/2', '/3']) recordAudit({ method: 'POST', endpoint: ep, status: 200, ok: true });
     const tail = await runCommand((p) => registerAuditCommands(p), ['audit', 'tail', '-n', '2', '-o', 'json']);
