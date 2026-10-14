@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { AuthManager } from '../auth.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
+import { info } from '../utils.js';
 
 export function registerAuthCommands(program: Command, getAuth: () => AuthManager): void {
   const auth = program.command('auth').description('Authentication management');
@@ -18,9 +19,9 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
       }
       const result = await authManager.verifyLogin();
       if (result.success && result.user) {
-        console.log(`Logged in as ${result.user.displayName} (${result.user.email})`);
+        info(`Logged in as ${result.user.displayName} (${result.user.email})`);
       } else {
-        console.log('Login completed. Run "ms365 auth status" to verify.');
+        info('Login completed. Run "ms365 auth status" to verify.');
       }
     }));
 
@@ -30,8 +31,9 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
     .action(handleErrors(async () => {
       const authManager = getAuth();
       await authManager.initialize();
-      await authManager.logout();
-      console.log('Logged out successfully.');
+      const warnings = await authManager.logout();
+      for (const warning of warnings) info(warning);
+      info('Logged out successfully.');
     }));
 
   auth
@@ -44,7 +46,7 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
       if (result.success && result.user) {
         console.log(`Logged in as ${result.user.displayName} (${result.user.email})`);
       } else {
-        console.log('Not logged in. Run: ms365 auth login');
+        throw new CliError('Not logged in.', { code: 'not_logged_in', exitCode: ExitCode.AUTH, fix: 'ms365 auth login' });
       }
     }));
 
@@ -58,7 +60,7 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
       const selectedId = authManager.getSelectedAccountId();
 
       if (accounts.length === 0) {
-        console.log('No accounts found. Run: ms365 auth login');
+        info('No accounts found. Run: ms365 auth login');
         return;
       }
 
@@ -77,7 +79,7 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
       await authManager.initialize();
       const ok = await authManager.selectAccount(accountId);
       if (ok) {
-        console.log('Account selected.');
+        info('Account selected.');
       } else {
         throw new CliError('Account not found.', { code: 'not_found', exitCode: ExitCode.NOT_FOUND });
       }
@@ -91,7 +93,7 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
       await authManager.initialize();
       const ok = await authManager.removeAccount(accountId);
       if (ok) {
-        console.log('Account removed.');
+        info('Account removed.');
       } else {
         throw new CliError('Account not found.', { code: 'not_found', exitCode: ExitCode.NOT_FOUND });
       }

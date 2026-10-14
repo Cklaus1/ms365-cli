@@ -1,7 +1,14 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { buildScopes } from '../src/auth.js';
 
 describe('buildScopes', () => {
+  // buildScopes reads saved scopes from config.json; never read the developer's real config.
+  beforeEach(() => { vi.stubEnv('MS365_CLI_CONFIG_DIR', fs.mkdtempSync(path.join(os.tmpdir(), 'ms365-scopes-'))); });
+  afterEach(() => { vi.unstubAllEnvs(); });
+
   it('includes personal scopes by default', () => {
     const scopes = buildScopes(false);
     expect(scopes).toContain('User.Read');

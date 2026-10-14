@@ -75,11 +75,23 @@ function ensureConfigDir(): void {
   fs.mkdirSync(configDir(), { recursive: true, mode: 0o700 });
 }
 
-export function buildScopes(orgMode: boolean): string[] {
-  const scopes = [...PERSONAL_SCOPES];
-  if (orgMode) {
-    scopes.push(...ORG_SCOPES);
+export const configFilePath = () => path.join(configDir(), 'config.json');
+
+/** Scopes saved by `ms365 auth setup` in config.json, or null when none are saved (or the file is unreadable). */
+export function readSavedScopes(): string[] | null {
+  const data = readFileIfExists(configFilePath());
+  if (!data) return null;
+  try {
+    const scopes = JSON.parse(data).scopes;
+    return Array.isArray(scopes) && scopes.length > 0 && scopes.every(s => typeof s === 'string') ? scopes : null;
+  } catch {
+    return null;
   }
+}
+
+/** Scopes requested at login: the wizard's saved choice (D14), else the built-in personal (+ org) set. */
+export function buildScopes(orgMode: boolean): string[] {
+  const scopes = readSavedScopes() ?? [...PERSONAL_SCOPES, ...(orgMode ? ORG_SCOPES : [])];
 
   // Optimize scope hierarchy
   const scopeSet = new Set(scopes);

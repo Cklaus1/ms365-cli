@@ -1,7 +1,8 @@
 import { Command } from 'commander';
-import { handleErrors } from '../errors.js';
+import { handleErrors, CliError } from '../errors.js';
 import fs from 'fs';
 import path from 'path';
+import { info } from '../utils.js';
 
 interface ServiceDef {
   name: string;
@@ -210,7 +211,7 @@ ${commandTable}
 
 ## Common Options
 
-All list commands support:
+Options vary by command; run \`ms365 ${service.name} <command> --help\` for the exact list. Many list commands accept:
 - \`--top <n>\` — Limit results
 - \`--filter <expr>\` — OData filter
 - \`--select <fields>\` — Choose fields
@@ -260,7 +261,9 @@ ms365 auth accounts  # List cached accounts
 
 ## Output Formats
 
-- **json** — Pretty-printed JSON (default)
+Default: **table** when stdout is a terminal, **json** when output is piped or redirected. Pass \`-o\` to choose explicitly.
+
+- **json** — Pretty-printed JSON
 - **table** — ASCII table with nested object flattening (dot notation)
 - **csv** — Comma-separated with headers
 - **yaml** — YAML format
@@ -268,11 +271,15 @@ ms365 auth accounts  # List cached accounts
 
 ## Pagination
 
+Supported by list commands that page (check \`--help\`):
+
 - \`--all\` — Fetch all pages automatically
 - \`--page-limit <n>\` — Max pages (default: 100)
 - \`--page-delay <ms>\` — Delay between pages
 
 ## OData Filters
+
+Where a command accepts these options (check \`--help\`):
 
 \`\`\`bash
 --filter "isRead eq false"
@@ -342,6 +349,7 @@ export function registerGenerateSkillsCommand(program: Command): void {
     .description('Generate SKILL.md files for AI agent integration')
     .option('--output-dir <dir>', 'Output directory', './skills')
     .option('--filter <pattern>', 'Only generate skills matching pattern')
+    .option('--force', 'Overwrite existing skill files')
     .action(handleErrors(async (opts) => {
       const outDir = path.resolve(opts.output_dir || opts.outputDir || './skills');
 
@@ -355,24 +363,28 @@ export function registerGenerateSkillsCommand(program: Command): void {
         services = services.filter(s => re.test(s.name));
       }
 
-      // Generate shared skill
-      const sharedDir = path.join(outDir, 'ms365-shared');
-      if (!fs.existsSync(sharedDir)) fs.mkdirSync(sharedDir, { recursive: true });
-      fs.writeFileSync(path.join(sharedDir, 'SKILL.md'), generateSharedSkill());
-      console.log(`  Generated: ms365-shared/SKILL.md`);
+      const files: Array<[string, string]> = [
+        ['ms365-shared/SKILL.md', generateSharedSkill()],
+        ...services.map((service): [string, string] => [`ms365-${service.name}/SKILL.md`, generateServiceSkill(service)]),
+        ['INDEX.md', generateSkillIndex(services)],
+      ];
 
-      // Generate per-service skills
-      for (const service of services) {
-        const serviceDir = path.join(outDir, `ms365-${service.name}`);
-        if (!fs.existsSync(serviceDir)) fs.mkdirSync(serviceDir, { recursive: true });
-        fs.writeFileSync(path.join(serviceDir, 'SKILL.md'), generateServiceSkill(service));
-        console.log(`  Generated: ms365-${service.name}/SKILL.md`);
+      // Check everything first so a refusal leaves no partial regeneration behind.
+      if (!opts.force) {
+        const existing = files.map(([rel]) => rel).filter(rel => fs.existsSync(path.join(outDir, rel)));
+        if (existing.length > 0) {
+          throw new CliError(`Refusing to overwrite existing skill files in ${outDir}: ${existing.join(', ')}`,
+            { code: 'file_exists', fix: 'pass --force to overwrite' });
+        }
       }
 
-      // Generate index
-      fs.writeFileSync(path.join(outDir, 'INDEX.md'), generateSkillIndex(services));
-      console.log(`  Generated: INDEX.md`);
+      for (const [rel, content] of files) {
+        const target = path.join(outDir, rel);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, content);
+        info(`  Generated: ${rel}`);
+      }
 
-      console.log(`\n${services.length + 1} skill files written to ${outDir}/`);
+      info(`\n${services.length + 1} skill files written to ${outDir}/`);
     }));
 }
