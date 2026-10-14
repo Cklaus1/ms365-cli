@@ -61,6 +61,16 @@ describe('reportError', () => {
     const parsed = JSON.parse(writes.join('').trim());
     expect(parsed.error).toMatchObject({ code: 'not_found', exitCode: 5, status: 404, requestId: 'r1', message: 'nope' });
   });
+  it('includes maybeProcessed in the JSON payload only when set (R-7)', () => {
+    const writes: string[] = [];
+    vi.spyOn(process.stderr, 'write').mockImplementation((c: string | Uint8Array) => { writes.push(String(c)); return true; });
+    setErrorFormat('json');
+    reportError(new CliError('timed out', { code: 'timeout', maybeProcessed: true }));
+    reportError(new CliError('nope', { code: 'not_found' }));
+    const [tagged, plain] = writes.join('').trim().split('\n').map(l => JSON.parse(l).error);
+    expect(tagged).toMatchObject({ code: 'timeout', maybeProcessed: true });
+    expect('maybeProcessed' in plain).toBe(false);
+  });
   it('writes a text line with fix hint', () => {
     const writes: string[] = [];
     vi.spyOn(process.stderr, 'write').mockImplementation((c: string | Uint8Array) => { writes.push(String(c)); return true; });
@@ -118,7 +128,7 @@ describe('exit-code matrix (spawned CLI)', () => {
 
   it.each([
     ['success (dry-run)', ['--dry-run', 'mail', 'send', '--to', 'a@b.com', '--subject', 's', '--body', 'b'], 0],
-    ['generic (bad email)', ['--dry-run', 'mail', 'send', '--to', 'not-an-email', '--subject', 's', '--body', 'b'], 1],
+    ['usage (bad email, V-11)', ['--dry-run', 'mail', 'send', '--to', 'not-an-email', '--subject', 's', '--body', 'b'], 2],
     ['usage (unknown option)', ['mail', 'send', '--bogus'], 2],
     ['auth (not logged in)', ['--read-only', 'user', 'me'], 3],
     ['confirmation refused (non-TTY)', ['todo', 'delete', 'L', 'T'], 7],

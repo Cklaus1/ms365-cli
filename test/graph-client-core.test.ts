@@ -172,4 +172,109 @@ describe('GraphClient core (T03)', () => {
       expect(isTrustedHost('not a url')).toBe(false);
     });
   });
+
+  // RT-3 (R-9 / F21): send() scales the default timeout with the body size.
+  describe('body-size timeout (R-9)', () => {
+    const stall = () => vi.fn((_u: string, init: RequestInit) => new Promise<Response>((_, reject) => {
+      init.signal!.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+    }));
+    beforeEach(() => { vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }); });
+    afterEach(() => { vi.useRealTimers(); });
+    const outcome = (p: Promise<unknown>) => {
+      const state = { settled: false, err: undefined as unknown };
+      p.catch((e) => { state.err = e; }).finally(() => { state.settled = true; });
+      return state;
+    };
+
+    it('a 4 MB body with no timeoutMs gets at least 150 s', async () => {
+      globalThis.fetch = stall() as never;
+      const st = outcome(client().request('/me/sendMail', { method: 'POST', body: 'x'.repeat(4 * 1024 * 1024) }));
+      await vi.advanceTimersByTimeAsync(150_000);
+      expect(st.settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(st.settled).toBe(true);
+      expect(st.err).toMatchObject({ code: 'timeout' });
+      expect((st.err as Error).message).toMatch(/after 158s/);
+    });
+
+    it('a small body keeps the 30 s default', async () => {
+      globalThis.fetch = stall() as never;
+      const st = outcome(client().request('/me/sendMail', { method: 'POST', body: '{}' }));
+      await vi.advanceTimersByTimeAsync(30_001);
+      expect(st.settled).toBe(true);
+    });
+
+    it('an explicit timeoutMs is never overridden', async () => {
+      globalThis.fetch = stall() as never;
+      const st = outcome(client().request('/me/sendMail', { method: 'POST', body: 'x'.repeat(4 * 1024 * 1024), timeoutMs: 5000 }));
+      await vi.advanceTimersByTimeAsync(5001);
+      expect(st.settled).toBe(true);
+      expect((st.err as Error).message).toMatch(/after 5s/);
+    });
+  });
+
+  // RT-4 (R-7 signal, R-15): errors where the request may have been processed are tagged.
+  describe('maybeProcessed tagging (R-7, R-15)', () => {
+    const abortErr = () => Object.assign(new Error('aborted'), { name: 'AbortError' });
+    const netErr = (code: string) => Object.assign(new TypeError('fetch failed'), { cause: { code } });
+
+    it('a POST timeout is tagged maybeProcessed', async () => {
+      globalThis.fetch = vi.fn(async () => { throw abortErr(); }) as never;
+      const err = await client().request('/me/sendMail', { method: 'POST', body: '{}' }).catch(e => e);
+      expect(err).toMatchObject({ code: 'timeout', maybeProcessed: true });
+    });
+
+    it.each(['ECONNRESET', 'EPIPE', 'UND_ERR_SOCKET'])('a POST %s becomes network_error, tagged, not retried', async (code) => {
+      const f = vi.fn(async () => { throw netErr(code); });
+      globalThis.fetch = f as never;
+      const err = await client().request('/me/sendMail', { method: 'POST', body: '{}' }).catch(e => e);
+      expect(err).toBeInstanceOf(CliError);
+      expect(err).toMatchObject({ code: 'network_error', maybeProcessed: true, exitCode: ExitCode.GENERIC });
+      expect(err.message).toContain(code);
+      expect(err.message).toMatch(/may have been processed/);
+      expect(f).toHaveBeenCalledTimes(1);
+    });
+
+    it('a 5xx on POST is tagged maybeProcessed', async () => {
+      globalThis.fetch = vi.fn(async () => new Response('boom', { status: 503 })) as never;
+      const err = await client().request('/me/sendMail', { method: 'POST', body: '{}' }).catch(e => e);
+      expect(err).toMatchObject({ code: 'graph_error', status: 503, maybeProcessed: true });
+    });
+
+    it('a GET network error becomes network_error after retries, untagged', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        const f = vi.fn(async () => { throw netErr('ECONNRESET'); });
+        globalThis.fetch = f as never;
+        const p = client().request('/me').catch(e => e);
+        await vi.advanceTimersByTimeAsync(10_000);
+        const err = await p;
+        expect(f).toHaveBeenCalledTimes(3);
+        expect(err).toMatchObject({ code: 'network_error' });
+        expect(err.maybeProcessed).toBeUndefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it.each([
+      ['a pre-send connection error', () => { throw netErr('ECONNREFUSED'); }],
+      ['a 429', () => new Response('', { status: 429, headers: { 'Retry-After': '0' } })],
+      ['a 400', () => new Response('bad', { status: 400 })],
+      ['a 5xx on PUT', () => new Response('boom', { status: 503 })],
+    ])('%s is not tagged', async (_name, respond) => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        globalThis.fetch = vi.fn(async () => respond()) as never;
+        const method = _name === 'a 5xx on PUT' ? 'PUT' : 'POST';
+        const p = client().request('/me/sendMail', { method, body: '{}' }).catch(e => e);
+        await vi.advanceTimersByTimeAsync(10_000);
+        const err = await p;
+        expect(err).toBeInstanceOf(CliError);
+        expect(err.maybeProcessed).toBeUndefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
 });

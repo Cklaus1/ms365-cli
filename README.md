@@ -468,7 +468,7 @@ The reference below is generated from the live command tree (`ms365 describe --j
 
 | Command | Description | Arguments | Key options | Notes |
 |---|---|---|---|---|
-| `resolve` | Resolve a name to its ID (exact, then unique prefix/substring match) | `<type> <name>` | `--team <team>` `--plan <plan>` | Tasks.Read, Team.ReadBasic.All, Channel.ReadBasic.All |
+| `resolve` | Resolve a name to its ID (exact, then unique prefix/substring match; mail-folder: exact name or path like Inbox/Projects) | `<type> <name>` | `--team <team>` `--plan <plan>` `--user <user>` | Tasks.Read, Team.ReadBasic.All, Channel.ReadBasic.All |
 
 ### schema
 

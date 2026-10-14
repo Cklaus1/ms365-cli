@@ -2,11 +2,16 @@ import { AuthManager } from './auth.js';
 import logger from './logger.js';
 import { CliError, ExitCode } from './errors.js';
 import { recordAudit } from './audit.js';
+import { info } from './utils.js';
 
 const MAX_RETRIES = 3;
 const MAX_PAGES = 100;
 const MAX_REDIRECTS = 5;
 const REQUEST_TIMEOUT_MS = 30_000;
+/** Per-chunk timeout for upload-session PUTs. */
+const CHUNK_TIMEOUT_MS = 120_000;
+/** Timeout for upload-session status GETs and DELETEs. */
+const QUERY_TIMEOUT_MS = 30_000;
 
 /**
  * How the caller wants the response body:
@@ -184,25 +189,31 @@ export class GraphClient {
     };
 
     const idempotent = IDEMPOTENT_METHODS.has(method);
+    const timeoutMs = options.timeoutMs ?? bodyTimeoutMs(options.body);
+    const notRetried = idempotent ? '' : ' (not retried; it may have been processed)';
     let lastError: Error | null = null;
     let retriedWith401 = false;
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       let response: Response;
       try {
-        response = await this.fetchFollowingRedirects(url, method, headers, options.body, options.timeoutMs ?? REQUEST_TIMEOUT_MS);
+        response = await this.fetchFollowingRedirects(url, method, headers, options.body, timeoutMs);
       } catch (err: unknown) {
+        if (err instanceof CliError) throw err;
         const timedOut = err instanceof Error && err.name === 'AbortError';
-        const retryable = idempotent || isPreSendError(err);
+        const preSend = isPreSendError(err);
+        // A non-idempotent request that failed after it was sent may already have been applied (R-7).
+        const maybeProcessed = !idempotent && !preSend;
         if (timedOut) {
-          lastError = new CliError(
-            `Request timed out after ${(options.timeoutMs ?? REQUEST_TIMEOUT_MS) / 1000}s: ${method} ${url}` + (idempotent ? '' : ' (not retried; it may have been processed)'),
-            { code: 'timeout' },
-          );
+          lastError = new CliError(`Request timed out after ${timeoutMs / 1000}s: ${method} ${url}${notRetried}`,
+            { code: 'timeout', maybeProcessed });
         } else {
-          lastError = err instanceof Error ? err : new Error(String(err));
+          const cause = (err as { cause?: { code?: string; message?: string } })?.cause;
+          const reason = cause?.code ?? cause?.message ?? (err instanceof Error ? err.message : String(err));
+          lastError = new CliError(`Network error (${reason}): ${method} ${url}${preSend ? '' : notRetried}`,
+            { code: 'network_error', maybeProcessed });
         }
-        if (retryable && attempt < MAX_RETRIES - 1) {
+        if ((idempotent || preSend) && attempt < MAX_RETRIES - 1) {
           const waitMs = Math.pow(2, attempt) * 1000;
           logger.warn(`${timedOut ? 'Request timed out' : 'Connection error'}. Retrying in ${waitMs / 1000}s...`);
           await sleep(waitMs);
@@ -265,7 +276,9 @@ export class GraphClient {
               { ...details, code: 'auth_failed', exitCode: ExitCode.AUTH, fix: 'ms365 auth login' });
           }
         }
-        throw graphError(response.status, errorMessage, details);
+        const error = graphError(response.status, errorMessage, details);
+        if (response.status >= 500 && !idempotent) error.maybeProcessed = true;
+        throw error;
       }
 
       return decodeResponse(response, responseType);
@@ -367,23 +380,52 @@ export class GraphClient {
         : response;
     }
 
-    return this.audited('PUT', endpoint, () => this.uploadInSession(sessionEndpoint!, filePath, fileSize, chunkSize));
+    return this.uploadSession(sessionEndpoint!, { item: { '@microsoft.graph.conflictBehavior': 'replace' } }, filePath, fileSize,
+      { chunkSize, auditAs: endpoint });
   }
 
-  /** Large upload through an upload session (audited as one PUT by uploadFile). */
-  private async uploadInSession(sessionEndpoint: string, filePath: string, fileSize: number, chunkSize: number): Promise<GraphResponse> {
+  /**
+   * Upload `filePath` through an upload session: POST `sessionEndpoint` with `sessionBody`, then PUT the bytes to the
+   * pre-authorized uploadUrl in chunks that retry and resume. Shared by drive items and Outlook attachments, so it
+   * accepts both conventions: a 2xx with nextExpectedRanges resumes from them, a 2xx without ranges advances one
+   * chunk, and the upload is done at a 201 or at any 2xx once every byte was sent. On a final failure the session is
+   * DELETEd (best effort). Audited as one PUT on `auditAs` (default: `sessionEndpoint`).
+   */
+  async uploadSession(
+    sessionEndpoint: string,
+    sessionBody: unknown,
+    filePath: string,
+    size: number,
+    options: { chunkSize?: number; auditAs?: string } = {},
+  ): Promise<GraphResponse> {
+    if (this.readOnly) {
+      throw new CliError('Read-only mode: file uploads are blocked. Remove --read-only to proceed.', { code: 'read_only', exitCode: ExitCode.PERMISSION });
+    }
+    // Chunks must be a multiple of 320 KiB; 10 MiB = 32 × 320 KiB.
+    const chunkSize = options.chunkSize ?? 10 * 1024 * 1024;
+    const url = this.buildUrl(sessionEndpoint);
+    if (this.dryRun) {
+      console.log(`[dry-run] POST ${url}`);
+      console.log(`[dry-run] Body: ${JSON.stringify(sessionBody)}`);
+      console.log(`[dry-run] Then PUT ${Math.ceil(size / chunkSize)} chunk(s) to the session uploadUrl`);
+      return { data: { dryRun: true, method: 'POST', url }, status: 0 };
+    }
+    return this.audited('PUT', options.auditAs ?? sessionEndpoint, () => this.uploadInSession(sessionEndpoint, sessionBody, filePath, size, chunkSize));
+  }
+
+  private async uploadInSession(sessionEndpoint: string, sessionBody: unknown, filePath: string, fileSize: number, chunkSize: number): Promise<GraphResponse> {
     const { openSync, readSync, closeSync } = await import('fs');
-    const session = await this.send(sessionEndpoint, {
-      method: 'POST',
-      body: JSON.stringify({ item: { '@microsoft.graph.conflictBehavior': 'replace' } }),
-    });
-    const uploadUrl = (session.data as { uploadUrl?: string }).uploadUrl;
+    const session = await this.send(sessionEndpoint, { method: 'POST', body: JSON.stringify(sessionBody) });
+    const sessionData = session.data as { uploadUrl?: string; nextExpectedRanges?: string[] };
+    const uploadUrl = sessionData.uploadUrl;
     if (!uploadUrl) {
       throw new CliError('Upload session response did not include an uploadUrl.', { code: 'bad_response' });
     }
 
     let offset = 0;
-    let lastResult: unknown = null;
+    // The server's last word on which bytes it still needs; the resume fallback when the session can't be queried.
+    let knownRanges = sessionData.nextExpectedRanges;
+    let lastResult: Record<string, unknown> | null = null;
     let failures = 0;
     const fd = openSync(filePath, 'r');
     try {
@@ -397,65 +439,69 @@ export class GraphClient {
         let res: Response | null = null;
         let failure: string | null = null;
         try {
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 120_000);
-          try {
-            // uploadUrl is pre-authorized: never send the bearer token to it.
-            res = await fetch(uploadUrl, {
-              method: 'PUT',
-              headers: { 'Content-Length': String(length), 'Content-Range': `bytes ${offset}-${rangeEnd}/${fileSize}` },
-              body: buffer,
-              signal: controller.signal,
-            });
-          } finally {
-            clearTimeout(timer);
-          }
+          // uploadUrl is pre-authorized: never send the bearer token to it.
+          res = await fetchWithTimeout(uploadUrl, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/octet-stream',
+              'Content-Length': String(length),
+              'Content-Range': `bytes ${offset}-${rangeEnd}/${fileSize}`,
+            },
+            body: buffer,
+          }, CHUNK_TIMEOUT_MS);
         } catch (err) {
           failure = err instanceof Error ? err.message : String(err);
         }
 
-        if (res && (res.status === 200 || res.status === 201)) {
-          lastResult = await res.json();
-          offset = fileSize;
-        } else if (res && res.status === 202) {
-          const body = await res.json().catch(() => ({})) as { nextExpectedRanges?: string[] };
-          offset = nextOffset(body.nextExpectedRanges) ?? offset + length;
+        if (res && res.ok) {
+          const body = parseJsonObject(await res.text());
+          const ranges = body?.nextExpectedRanges as string[] | undefined;
+          knownRanges = ranges;
+          offset = nextOffset(ranges) ?? offset + length;
           failures = 0;
-        } else {
-          const status = res?.status;
-          const text = res ? await res.text() : '';
-          const retryable = !res || status === 429 || (status !== undefined && status >= 500) || status === 416;
-          if (!retryable || ++failures >= MAX_RETRIES) {
-            throw new CliError(`Chunk upload failed at byte ${offset}${status ? ` (${status})` : ''}: ${failure ?? text}`,
-              { code: 'upload_failed', status, exitCode: status === 429 ? ExitCode.THROTTLED : ExitCode.GENERIC });
+          if (res.status === 201 || offset >= fileSize) {
+            if (body && Object.keys(body).some(k => k !== 'nextExpectedRanges' && k !== 'expirationDateTime')) lastResult = body;
+            break;
           }
-          const waitMs = status === 429
-            ? parseRetryAfter(res!.headers.get('Retry-After'), Math.pow(2, failures) * 1000)
-            : Math.pow(2, failures - 1) * 1000;
-          logger.warn(`Chunk at byte ${offset} failed (${status ?? failure}); resuming in ${waitMs / 1000}s`);
-          await sleep(waitMs);
-          // Ask the session which bytes it still needs, then resume from there.
-          const resumeFrom = await this.querySessionOffset(uploadUrl);
-          if (resumeFrom !== null) offset = resumeFrom;
+          info(`Uploading... ${Math.round((offset / fileSize) * 100)}%`);
           continue;
         }
 
-        const pct = Math.round((Math.min(offset, fileSize) / fileSize) * 100);
-        console.error(`Uploading... ${pct}%`);
+        const status = res?.status;
+        const text = res ? await res.text() : '';
+        const retryable = !res || status === 429 || (status !== undefined && status >= 500) || status === 416;
+        if (!retryable || ++failures >= MAX_RETRIES) {
+          throw new CliError(`Chunk upload failed at byte ${offset}${status ? ` (${status})` : ''}: ${failure ?? text}`,
+            { code: 'upload_failed', status, exitCode: status === 429 ? ExitCode.THROTTLED : ExitCode.GENERIC });
+        }
+        const waitMs = status === 429
+          ? parseRetryAfter(res!.headers.get('Retry-After'), Math.pow(2, failures) * 1000)
+          : Math.pow(2, failures - 1) * 1000;
+        logger.warn(`Chunk at byte ${offset} failed (${status ?? failure}); resuming in ${waitMs / 1000}s`);
+        await sleep(waitMs);
+        // Ask the session which bytes it still needs; GET on an Outlook uploadUrl is not documented, so fall back
+        // to the last nextExpectedRanges, then to the failed chunk.
+        offset = await this.querySessionOffset(uploadUrl) ?? nextOffset(knownRanges) ?? offset;
       }
+    } catch (err) {
+      await fetchWithTimeout(uploadUrl, { method: 'DELETE' }, QUERY_TIMEOUT_MS).then(r => r.body?.cancel(), () => {});
+      throw err;
     } finally {
       closeSync(fd);
     }
 
     if (lastResult) removeODataProps(lastResult);
-    return { data: lastResult || { message: 'Upload complete', size: fileSize }, status: 200 };
+    return { data: lastResult ?? { message: 'Upload complete', size: fileSize }, status: 200 };
   }
 
-  /** GET the upload session status and return the first byte it still expects. */
+  /** GET the upload session status and return the first byte it still expects (null if unknown). */
   private async querySessionOffset(uploadUrl: string): Promise<number | null> {
     try {
-      const res = await fetch(uploadUrl);
-      if (!res.ok) return null;
+      const res = await fetchWithTimeout(uploadUrl, {}, QUERY_TIMEOUT_MS);
+      if (!res.ok) {
+        await res.body?.cancel();
+        return null;
+      }
       const body = await res.json() as { nextExpectedRanges?: string[] };
       return nextOffset(body.nextExpectedRanges);
     } catch {
@@ -715,6 +761,36 @@ function parseRetryAfter(header: string | null, fallbackMs: number): number {
   const date = Date.parse(header);
   if (!isNaN(date)) return Math.max(date - Date.now(), 1000);
   return fallbackMs;
+}
+
+/**
+ * Default timeout to response headers: 30 s plus time to send the body at 32 KiB/s, so a 4 MB inline attachment
+ * on a slow uplink isn't cut off mid-upload (R-9). A string's length stands in for its byte count.
+ */
+function bodyTimeoutMs(body: string | Uint8Array | undefined): number {
+  return REQUEST_TIMEOUT_MS + Math.round(((body?.length ?? 0) / (32 * 1024)) * 1000);
+}
+
+/** fetch to a pre-authorized upload URL, aborted after `timeoutMs`. */
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Parse a response body as a JSON object; empty or non-object bodies give null. */
+function parseJsonObject(text: string): Record<string, unknown> | null {
+  if (!text) return null;
+  try {
+    const v = JSON.parse(text);
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+  } catch {
+    return null;
+  }
 }
 
 function sleep(ms: number): Promise<void> {

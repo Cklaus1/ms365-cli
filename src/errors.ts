@@ -19,6 +19,8 @@ export interface CliErrorDetails {
   graphCode?: string;
   requestId?: string;
   fix?: string;
+  /** The request may have reached Graph and been applied (a non-idempotent timeout, network error or 5xx). */
+  maybeProcessed?: boolean;
 }
 
 /** An error carrying a machine-readable code and the exit code it maps to. */
@@ -29,6 +31,7 @@ export class CliError extends Error {
   graphCode?: string;
   requestId?: string;
   fix?: string;
+  maybeProcessed?: boolean;
 
   constructor(message: string, details: CliErrorDetails = {}) {
     super(message);
@@ -39,6 +42,7 @@ export class CliError extends Error {
     this.graphCode = details.graphCode;
     this.requestId = details.requestId;
     this.fix = details.fix;
+    if (details.maybeProcessed) this.maybeProcessed = true;
   }
 }
 
@@ -75,6 +79,7 @@ export function reportError(err: unknown): ExitCode {
     if (e.graphCode) payload.graphCode = e.graphCode;
     if (e.requestId) payload.requestId = e.requestId;
     if (e.fix) payload.fix = e.fix;
+    if (e.maybeProcessed) payload.maybeProcessed = true;
     process.stderr.write(JSON.stringify({ error: payload }) + '\n');
   } else {
     const hint = e.fix && !e.message.includes(e.fix) ? ` (fix: ${e.fix})` : '';
