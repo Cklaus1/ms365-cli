@@ -30,6 +30,7 @@ type Entry = Kind | [Kind, string[]];
 const GROUP_SCOPES: Record<string, { read: string[]; write: string[] }> = {
   auth: { read: [], write: [] },
   mcp: { read: [], write: [] },
+  completion: { read: [], write: [] },
   notes: { read: ['ShortNotes.Read'], write: ['ShortNotes.ReadWrite'] },
   resolve: { read: ['Tasks.Read', 'Team.ReadBasic.All', 'Channel.ReadBasic.All'], write: [] },
   mail: { read: ['Mail.Read'], write: ['Mail.ReadWrite'] },
@@ -286,6 +287,7 @@ const COMMANDS: Record<string, Entry> = {
   'notes update': 'update',
   'notes delete': 'delete',
   'mcp serve': 'read',
+  'completion': 'read',
   'resolve': 'read',
   'audit path': 'read',
 

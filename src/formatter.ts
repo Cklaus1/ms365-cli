@@ -1,5 +1,6 @@
 import type { GraphClient, GraphRequestOptions } from './graph-client.js';
 import { CliError, ExitCode } from './errors.js';
+import { defaultColumns } from './columns.js';
 
 export type OutputFormat = 'json' | 'ndjson' | 'table' | 'csv' | 'text' | 'yaml';
 
@@ -201,6 +202,18 @@ function flattenObject(obj: Record<string, unknown>, prefix = ''): Record<string
   return result;
 }
 
+/**
+ * The detected resource's default columns that some item has, unless --fields is set or
+ * MS365_CLI_TABLE_ALL_COLUMNS asks for everything; otherwise every column.
+ */
+function tableColumns(items: unknown[], allColumns: string[]): string[] {
+  const all = process.env.MS365_CLI_TABLE_ALL_COLUMNS;
+  if (selectedFields || all === '1' || all === 'true') return allColumns;
+  const present = new Set(allColumns);
+  const defaults = defaultColumns(items)?.filter(c => present.has(c));
+  return defaults?.length ? defaults : allColumns;
+}
+
 function formatTable(data: unknown): string {
   const items = extractItems(data);
   if (items.length === 0) return '(no results)';
@@ -218,7 +231,7 @@ function formatTable(data: unknown): string {
       keySet.add(key);
     }
   }
-  const columns = Array.from(keySet);
+  const columns = tableColumns(items, Array.from(keySet));
   if (columns.length === 0) return JSON.stringify(data, null, 2);
 
   // Calculate column widths (capped at 50)

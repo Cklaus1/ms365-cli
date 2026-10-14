@@ -27,6 +27,7 @@ import { registerDescribeCommand } from '../src/commands/describe.js';
 import { registerMcpCommands } from '../src/commands/mcp.js';
 import { registerResolveCommands } from '../src/commands/resolve.js';
 import { registerNotesCommands } from '../src/commands/notes.js';
+import { registerCompletionCommand } from '../src/commands/completion.js';
 import { commandMeta, catalogPaths } from '../src/catalog.js';
 import type { GraphClient } from '../src/graph-client.js';
 import type { AuthManager } from '../src/auth.js';
@@ -59,6 +60,7 @@ const MODULES: Module[] = [
   { file: 'mcp.ts', register: (p) => registerMcpCommands(p) },
   { file: 'resolve.ts', register: (p, g) => registerResolveCommands(p, g) },
   { file: 'notes.ts', register: (p, g) => registerNotesCommands(p, g) },
+  { file: 'completion.ts', register: (p) => registerCompletionCommand(p) },
 ];
 
 const noAuth = (() => { throw new Error('describe must not touch auth'); }) as () => AuthManager;
