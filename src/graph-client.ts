@@ -18,9 +18,11 @@ export type ResponseType = 'auto' | 'json' | 'text' | 'binary' | 'stream';
 export interface GraphRequestOptions {
   method?: string;
   headers?: Record<string, string>;
-  body?: string;
+  body?: string | Uint8Array;
   queryParams?: Record<string, string>;
   responseType?: ResponseType;
+  /** Timeout until response headers (default 30s). */
+  timeoutMs?: number;
 }
 
 export interface GraphResponse {
@@ -100,14 +102,17 @@ export class GraphClient {
 
     logger.debug(`${method} ${url}`, options.body ? { bodyLength: options.body.length } : undefined);
 
+
     if (this.readOnly && method !== 'GET') {
       throw new CliError(`Read-only mode: ${method} requests are blocked. Remove --read-only to proceed.`, { code: 'read_only', exitCode: ExitCode.PERMISSION });
     }
 
     if (this.dryRun) {
       console.log(`[dry-run] ${method} ${url}`);
-      if (options.body) {
+      if (typeof options.body === 'string') {
         console.log(`[dry-run] Body: ${options.body}`);
+      } else if (options.body) {
+        console.log(`[dry-run] Body: <${options.body.length} bytes>`);
       }
       if (options.headers && Object.keys(options.headers).length > 0) {
         console.log(`[dry-run] Headers: ${JSON.stringify(options.headers)}`);
@@ -130,13 +135,13 @@ export class GraphClient {
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       let response: Response;
       try {
-        response = await this.fetchFollowingRedirects(url, method, headers, options.body);
+        response = await this.fetchFollowingRedirects(url, method, headers, options.body, options.timeoutMs ?? REQUEST_TIMEOUT_MS);
       } catch (err: unknown) {
         const timedOut = err instanceof Error && err.name === 'AbortError';
         const retryable = idempotent || isPreSendError(err);
         if (timedOut) {
           lastError = new CliError(
-            `Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s: ${method} ${url}` + (idempotent ? '' : ' (not retried; it may have been processed)'),
+            `Request timed out after ${(options.timeoutMs ?? REQUEST_TIMEOUT_MS) / 1000}s: ${method} ${url}` + (idempotent ? '' : ' (not retried; it may have been processed)'),
             { code: 'timeout' },
           );
         } else {
@@ -222,12 +227,13 @@ export class GraphClient {
     url: string,
     method: string,
     headers: Record<string, string>,
-    body?: string,
+    body: string | Uint8Array | undefined,
+    timeoutMs: number,
   ): Promise<Response> {
     let currentUrl = url;
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
       const hopHeaders = { ...headers };
       if (hop > 0 && !isTrustedHost(currentUrl)) delete hopHeaders['Authorization'];
       let response: Response;
@@ -235,7 +241,7 @@ export class GraphClient {
         response = await fetch(currentUrl, {
           method,
           headers: hopHeaders,
-          body,
+          body: body as BodyInit | undefined,
           signal: controller.signal,
           redirect: method === 'GET' ? 'manual' : 'follow',
         });
@@ -254,138 +260,146 @@ export class GraphClient {
   }
 
   /**
-   * Stream a file upload using chunked reads instead of loading into memory.
-   * For files <= 4MB, uses simple PUT. For larger files, uses upload session.
+   * Upload a file. Files <= 4MB use a simple PUT to `endpoint`; larger files use an
+   * upload session derived from it (`…:/name:/content` → `…:/name:/createUploadSession`),
+   * sent in 10MB chunks that retry and resume from the server's nextExpectedRanges.
    */
   async uploadFile(
     endpoint: string,
     filePath: string,
     contentType: string,
-    options?: { maxSimpleSize?: number },
+    options?: { maxSimpleSize?: number; chunkSize?: number },
   ): Promise<GraphResponse> {
     if (this.readOnly) {
       throw new CliError('Read-only mode: file uploads are blocked. Remove --read-only to proceed.', { code: 'read_only', exitCode: ExitCode.PERMISSION });
     }
 
-    const { createReadStream, statSync } = await import('fs');
-    const stat = statSync(filePath);
-    const fileSize = stat.size;
+    const { statSync, readFileSync, openSync, readSync, closeSync } = await import('fs');
+    const fileSize = statSync(filePath).size;
+    const simpleLimit = options?.maxSimpleSize ?? 4 * 1024 * 1024;
+    // Chunks must be a multiple of 320 KiB; 10 MiB = 32 × 320 KiB.
+    const chunkSize = options?.chunkSize ?? 10 * 1024 * 1024;
+    const isLarge = fileSize > simpleLimit;
+    const sessionEndpoint = uploadSessionEndpoint(endpoint);
 
     logger.info(`Uploading ${filePath} (${fileSize} bytes, ${contentType})`);
 
+    if (isLarge && !sessionEndpoint) {
+      throw new CliError(`File is ${fileSize} bytes; ${endpoint} only accepts uploads up to ${simpleLimit} bytes.`, { code: 'file_too_large' });
+    }
+
     if (this.dryRun) {
-      console.log(`[dry-run] PUT ${this.baseUrl}${endpoint}`);
+      if (isLarge) {
+        console.log(`[dry-run] POST ${this.baseUrl}${sessionEndpoint}`);
+        console.log(`[dry-run] Then PUT ${Math.ceil(fileSize / chunkSize)} chunk(s) to the session uploadUrl`);
+      } else {
+        console.log(`[dry-run] PUT ${this.baseUrl}${endpoint}`);
+      }
       console.log(`[dry-run] File: ${filePath} (${fileSize} bytes, ${contentType})`);
-      return { data: { dryRun: true, method: 'PUT', fileSize, contentType }, status: 0 };
+      return { data: { dryRun: true, method: isLarge ? 'POST' : 'PUT', fileSize, contentType }, status: 0 };
     }
 
-    const token = await this.auth.getToken();
-
-    const simpleLimit = options?.maxSimpleSize ?? 4 * 1024 * 1024;
-    if (fileSize <= simpleLimit) {
-      // Simple upload for files <= 4MB
-      const { readFileSync } = await import('fs');
-      const content = readFileSync(filePath);
-
-      const response = await fetch(`${this.baseUrl}${endpoint}`, {
+    if (!isLarge) {
+      const response = await this.request(endpoint, {
         method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': contentType,
-          'Content-Length': String(fileSize),
-        },
-        body: content,
+        headers: { 'Content-Type': contentType },
+        body: readFileSync(filePath),
+        responseType: 'json',
+        timeoutMs: 120_000,
       });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Upload failed (${response.status}): ${errorText}`);
-      }
-
-      const text = await response.text();
-      try {
-        const json = JSON.parse(text);
-        removeODataProps(json);
-        return { data: json, status: response.status };
-      } catch {
-        return { data: { message: 'Upload complete', size: fileSize }, status: response.status };
-      }
+      return response.data && typeof response.data === 'object' && 'message' in (response.data as object)
+        ? { ...response, data: { message: 'Upload complete', size: fileSize } }
+        : response;
     }
 
-    // Large file upload session for > 4MB
-    const sessionResponse = await fetch(
-      `${this.baseUrl}${endpoint}/createUploadSession`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          item: { '@microsoft.graph.conflictBehavior': 'replace' },
-        }),
-      }
-    );
-
-    if (!sessionResponse.ok) {
-      const errorText = await sessionResponse.text();
-      throw new Error(`Failed to create upload session (${sessionResponse.status}): ${errorText}`);
+    const session = await this.request(sessionEndpoint!, {
+      method: 'POST',
+      body: JSON.stringify({ item: { '@microsoft.graph.conflictBehavior': 'replace' } }),
+    });
+    const uploadUrl = (session.data as { uploadUrl?: string }).uploadUrl;
+    if (!uploadUrl) {
+      throw new CliError('Upload session response did not include an uploadUrl.', { code: 'bad_response' });
     }
 
-    const session = await sessionResponse.json() as { uploadUrl: string };
-    const chunkSize = 10 * 1024 * 1024; // 10MB chunks
     let offset = 0;
     let lastResult: unknown = null;
-
-    const { openSync, readSync, closeSync } = await import('fs');
+    let failures = 0;
     const fd = openSync(filePath, 'r');
-
     try {
       while (offset < fileSize) {
         const length = Math.min(chunkSize, fileSize - offset);
         const buffer = Buffer.alloc(length);
         readSync(fd, buffer, 0, length, offset);
-
         const rangeEnd = offset + length - 1;
         logger.debug(`Uploading bytes ${offset}-${rangeEnd}/${fileSize}`);
 
-        const chunkResponse = await fetch(session.uploadUrl, {
-          method: 'PUT',
-          headers: {
-            'Content-Length': String(length),
-            'Content-Range': `bytes ${offset}-${rangeEnd}/${fileSize}`,
-          },
-          body: buffer,
-        });
-
-        if (!chunkResponse.ok && chunkResponse.status !== 202) {
-          const errorText = await chunkResponse.text();
-          throw new Error(`Chunk upload failed at byte ${offset} (${chunkResponse.status}): ${errorText}`);
+        let res: Response | null = null;
+        let failure: string | null = null;
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 120_000);
+          try {
+            // uploadUrl is pre-authorized: never send the bearer token to it.
+            res = await fetch(uploadUrl, {
+              method: 'PUT',
+              headers: { 'Content-Length': String(length), 'Content-Range': `bytes ${offset}-${rangeEnd}/${fileSize}` },
+              body: buffer,
+              signal: controller.signal,
+            });
+          } finally {
+            clearTimeout(timer);
+          }
+        } catch (err) {
+          failure = err instanceof Error ? err.message : String(err);
         }
 
-        if (chunkResponse.status === 200 || chunkResponse.status === 201) {
-          lastResult = await chunkResponse.json();
+        if (res && (res.status === 200 || res.status === 201)) {
+          lastResult = await res.json();
+          offset = fileSize;
+        } else if (res && res.status === 202) {
+          const body = await res.json().catch(() => ({})) as { nextExpectedRanges?: string[] };
+          offset = nextOffset(body.nextExpectedRanges) ?? offset + length;
+          failures = 0;
         } else {
-          // Drain the response body to prevent connection leaks on 202
-          await chunkResponse.text();
+          const status = res?.status;
+          const text = res ? await res.text() : '';
+          const retryable = !res || status === 429 || (status !== undefined && status >= 500) || status === 416;
+          if (!retryable || ++failures >= MAX_RETRIES) {
+            throw new CliError(`Chunk upload failed at byte ${offset}${status ? ` (${status})` : ''}: ${failure ?? text}`,
+              { code: 'upload_failed', status, exitCode: status === 429 ? ExitCode.THROTTLED : ExitCode.GENERIC });
+          }
+          const waitMs = status === 429
+            ? parseRetryAfter(res!.headers.get('Retry-After'), Math.pow(2, failures) * 1000)
+            : Math.pow(2, failures - 1) * 1000;
+          logger.warn(`Chunk at byte ${offset} failed (${status ?? failure}); resuming in ${waitMs / 1000}s`);
+          await sleep(waitMs);
+          // Ask the session which bytes it still needs, then resume from there.
+          const resumeFrom = await this.querySessionOffset(uploadUrl);
+          if (resumeFrom !== null) offset = resumeFrom;
+          continue;
         }
 
-        offset += length;
-        const pct = Math.round((offset / fileSize) * 100);
+        const pct = Math.round((Math.min(offset, fileSize) / fileSize) * 100);
         console.error(`Uploading... ${pct}%`);
       }
     } finally {
       closeSync(fd);
     }
 
-    if (lastResult) {
-      removeODataProps(lastResult as Record<string, unknown>);
-    }
+    if (lastResult) removeODataProps(lastResult);
+    return { data: lastResult || { message: 'Upload complete', size: fileSize }, status: 200 };
+  }
 
-    return {
-      data: lastResult || { message: 'Upload complete', size: fileSize },
-      status: 200,
-    };
+  /** GET the upload session status and return the first byte it still expects. */
+  private async querySessionOffset(uploadUrl: string): Promise<number | null> {
+    try {
+      const res = await fetch(uploadUrl);
+      if (!res.ok) return null;
+      const body = await res.json() as { nextExpectedRanges?: string[] };
+      return nextOffset(body.nextExpectedRanges);
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -523,6 +537,23 @@ export function graphError(
     return new CliError(`Graph API error (429): ${message}`, { ...d, code: 'throttled', exitCode: ExitCode.THROTTLED });
   }
   return new CliError(`Graph API error (${status}): ${message}`, { ...d, code: 'graph_error' });
+}
+
+/**
+ * Derive the upload-session endpoint from a content endpoint:
+ * `/drives/D/items/P:/a.zip:/content` → `/drives/D/items/P:/a.zip:/createUploadSession`.
+ * Returns null for endpoints that don't support sessions (e.g. `/me/photo/$value`).
+ */
+export function uploadSessionEndpoint(endpoint: string): string | null {
+  const m = endpoint.match(/^(.*):\/content$/);
+  return m ? `${m[1]}:/createUploadSession` : null;
+}
+
+/** First byte offset from nextExpectedRanges like ["26-", "40-60"]. */
+function nextOffset(ranges?: string[]): number | null {
+  if (!ranges || ranges.length === 0) return null;
+  const start = parseInt(ranges[0].split('-')[0], 10);
+  return Number.isFinite(start) ? start : null;
 }
 
 /** Keys that are transport metadata, not resource data. Type/etag/count are kept. */
