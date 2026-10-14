@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Cklaus1/ms365-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/Cklaus1/ms365-cli/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D22.12-brightgreen.svg)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue.svg)](https://www.typescriptlang.org/)
 [![Microsoft Graph](https://img.shields.io/badge/Microsoft%20Graph-v1.0%20%7C%20beta-0078D4.svg)](https://learn.microsoft.com/en-us/graph/overview)
 
@@ -86,7 +86,7 @@ ms365 --org-mode teams list -o table
 
 ## Requirements
 
-- **Node.js** >= 18 (recommended >= 20)
+- **Node.js** >= 22.12 (Node 20 reached end-of-life 2026-04-30)
 - A **Microsoft account** (personal or work/school)
 - An **Azure AD app registration** with client ID (see [Authentication](#authentication))
 
