@@ -25,34 +25,84 @@ export function info(msg: string): void {
   if (!quiet) console.error(msg);
 }
 
+/** One line reader shared by every question of an interactive flow (confirm, the setup wizard). */
+export interface Prompter {
+  /** Ask a question; resolves with the raw answer line, rejects via onClose once input has ended. */
+  ask(question: string): Promise<string>;
+  close(): void;
+}
+
+/**
+ * Open a single readline.Interface for a run of questions. Lines that arrive while no question is pending
+ * (piped stdin delivers them all in one chunk) are queued for the next ask() instead of being dropped.
+ * EOF rejects the pending and every later question with onClose(question) — by default a usage error.
+ */
+export function createPrompter(opts: {
+  input?: NodeJS.ReadableStream;
+  output?: NodeJS.WritableStream;
+  onClose?: (question: string) => Error;
+} = {}): Prompter {
+  const output = opts.output ?? process.stderr;
+  const onClose = opts.onClose ?? ((q: string) =>
+    new CliError(`No answer for "${q}" (stdin closed)`, { code: 'usage', exitCode: ExitCode.USAGE }));
+  const rl = readline.createInterface({ input: opts.input ?? process.stdin, output });
+  const queued: string[] = [];
+  let closed = false;
+  let pending: { question: string; reject: (e: Error) => void } | undefined;
+  // readline emits 'line' only when no question callback is waiting; test stubs may lack on().
+  rl.on?.('line', (line: string) => { queued.push(line); });
+  rl.on?.('close', () => {
+    closed = true;
+    if (pending) pending.reject(onClose(pending.question));
+    pending = undefined;
+  });
+  return {
+    ask(question) {
+      if (queued.length) {
+        output.write(question);
+        return Promise.resolve(queued.shift()!);
+      }
+      if (closed) return Promise.reject(onClose(question.trim()));
+      return new Promise((resolve, reject) => {
+        pending = { question: question.trim(), reject };
+        rl.question(question, (answer) => {
+          pending = undefined;
+          resolve(answer);
+        });
+      });
+    },
+    close() { rl.close(); },
+  };
+}
+
 /**
  * Prompt user for confirmation on destructive operations.
  * Always prompts — no --yes override — so AI agents can't bypass.
  * Non-TTY stdin auto-rejects to prevent accidental deletions in scripts.
- * Resolves true when confirmed; throws ConfirmationRefusedError (exit 7) otherwise.
+ * Resolves true when confirmed; throws ConfirmationRefusedError (exit 7) otherwise, including on EOF.
  */
 export async function confirm(message: string): Promise<boolean> {
   if (!process.stdin.isTTY) {
     throw new ConfirmationRefusedError('Destructive operation requires interactive confirmation. Run in a terminal.');
   }
-  const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-  const answer = await new Promise<string>((resolve) => {
-    rl.question(`${message} [y/N] `, (a) => {
-      rl.close();
-      resolve(a);
-    });
-  });
+  const prompter = createPrompter({ onClose: () => new ConfirmationRefusedError('Cancelled.') });
+  let answer: string;
+  try {
+    answer = await prompter.ask(`${message} [y/N] `);
+  } finally {
+    prompter.close();
+  }
   if (answer.trim().toLowerCase() !== 'y') {
     throw new ConfirmationRefusedError('Cancelled.');
   }
   return true;
 }
 
-/** Validate and return a YYYY-MM-DD date string. */
+/** Validate and return a real calendar date in YYYY-MM-DD form (no partial dates, no 02-30 rollover). */
 export function parseDate(input: string): string {
   const d = new Date(input + 'T00:00:00Z');
-  if (isNaN(d.getTime())) {
-    throw new Error(`Invalid date: "${input}". Use YYYY-MM-DD format.`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input) || isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== input) {
+    throw new CliError(`Invalid date: "${input}". Use YYYY-MM-DD format.`, { code: 'usage', exitCode: ExitCode.USAGE });
   }
   return input;
 }
@@ -66,7 +116,7 @@ export function truncate(str: string, max: number): string {
 export function validateEmail(email: string): string {
   const trimmed = email.trim();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
-    throw new Error(`Invalid email address: "${trimmed}"`);
+    throw new CliError(`Invalid email address: "${trimmed}"`, { code: 'usage', exitCode: ExitCode.USAGE });
   }
   return trimmed;
 }

@@ -37,7 +37,7 @@ describe('cal create (M-9, M-29)', () => {
   it('rejects an invalid attendee before sending anything', async () => {
     const r = await runCommand(registerCalendarCommands,
       ['cal', 'create', '--subject', 'S', '--start', '2026-10-20T09:00', '--end', '2026-10-20T09:30', '--attendees', 'a@x.com,not-an-email'], { env });
-    expect(r.exitCode).toBe(1);
+    expect(r.exitCode).toBe(2); // V-11: invalid input is a usage error
     expect(r.calls).toHaveLength(0);
     expect(r.stderr).toContain('not-an-email');
   });

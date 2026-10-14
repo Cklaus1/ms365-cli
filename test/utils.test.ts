@@ -1,5 +1,15 @@
-import { describe, it, expect } from 'vitest';
-import { parseDate, truncate, validateEmail, parseRecipients, formatSize, buildODataParams } from '../src/utils.js';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { EventEmitter } from 'events';
+import { PassThrough } from 'stream';
+import readline from 'readline';
+import { parseDate, truncate, validateEmail, parseRecipients, formatSize, buildODataParams, createPrompter, confirm } from '../src/utils.js';
+import { CliError, ExitCode } from '../src/errors.js';
+
+/** Run fn and return the error it throws (or the rejection of the promise it returns). */
+async function caught(fn: () => unknown): Promise<CliError> {
+  try { await fn(); } catch (e) { return e as CliError; }
+  throw new Error('expected a throw');
+}
 
 describe('parseDate', () => {
   it('accepts valid YYYY-MM-DD dates', () => {
@@ -13,10 +23,22 @@ describe('parseDate', () => {
     expect(() => parseDate('')).toThrow('Invalid date');
   });
 
-  it('accepts partial dates that JS Date parses', () => {
-    // JS Date accepts these, so parseDate allows them
-    expect(() => parseDate('2024')).not.toThrow();
-    expect(() => parseDate('2024-12')).not.toThrow();
+  it('rejects partial dates (V-13)', () => {
+    expect(() => parseDate('2024')).toThrow('Invalid date');
+    expect(() => parseDate('2024-12')).toThrow('Invalid date');
+  });
+
+  it('rejects impossible dates instead of rolling them over (V-13)', () => {
+    expect(() => parseDate('2026-02-30')).toThrow('Invalid date');
+    expect(() => parseDate('2025-02-29')).toThrow('Invalid date');
+    expect(parseDate('2024-02-29')).toBe('2024-02-29');
+  });
+
+  it('throws a usage CliError (exit 2) (V-13)', async () => {
+    const e = await caught(() => parseDate('2026-02-30'));
+    expect(e).toBeInstanceOf(CliError);
+    expect(e.code).toBe('usage');
+    expect(e.exitCode).toBe(ExitCode.USAGE);
   });
 });
 
@@ -56,6 +78,13 @@ describe('validateEmail', () => {
     expect(() => validateEmail('no-domain@')).toThrow('Invalid email');
     expect(() => validateEmail('')).toThrow('Invalid email');
   });
+
+  it('throws a usage CliError (exit 2) (V-11)', async () => {
+    const e = await caught(() => validateEmail('bad'));
+    expect(e).toBeInstanceOf(CliError);
+    expect(e.code).toBe('usage');
+    expect(e.exitCode).toBe(ExitCode.USAGE);
+  });
 });
 
 describe('parseRecipients', () => {
@@ -74,6 +103,99 @@ describe('parseRecipients', () => {
 
   it('throws on invalid email in list', () => {
     expect(() => parseRecipients('a@b.com, invalid')).toThrow('Invalid email');
+  });
+
+  it('throws a usage CliError (exit 2) (V-11)', async () => {
+    const e = await caught(() => parseRecipients('a@b.com, invalid'));
+    expect(e.exitCode).toBe(ExitCode.USAGE);
+  });
+});
+
+describe('createPrompter (V-16)', () => {
+  const quietOutput = () => new PassThrough();
+
+  it('answers successive questions from piped input written in one chunk', async () => {
+    const input = new PassThrough();
+    const p = createPrompter({ input, output: quietOutput() });
+    input.end('2\nn\nabc\n');
+    expect(await p.ask('First? ')).toBe('2');
+    expect(await p.ask('Second? ')).toBe('n');
+    expect(await p.ask('Third? ')).toBe('abc');
+    p.close();
+  });
+
+  it('rejects with a usage error once stdin closes before an answer', async () => {
+    const input = new PassThrough();
+    const p = createPrompter({ input, output: quietOutput() });
+    input.end('only\n');
+    expect(await p.ask('One? ')).toBe('only');
+    const e = await caught(() => p.ask('Two? '));
+    expect(e).toBeInstanceOf(CliError);
+    expect(e.exitCode).toBe(ExitCode.USAGE);
+    expect(e.message).toContain('Two?');
+    expect(e.message).toContain('stdin closed');
+  });
+
+  it('rejects a pending question when stdin closes, using onClose', async () => {
+    const input = new PassThrough();
+    const p = createPrompter({ input, output: quietOutput(), onClose: (q) => new CliError(`setup needs an answer for "${q}" (stdin closed)`, { code: 'usage', exitCode: ExitCode.USAGE }) });
+    const pending = p.ask('Client ID: ');
+    input.end();
+    const e = await caught(() => pending);
+    expect(e.message).toBe('setup needs an answer for "Client ID:" (stdin closed)');
+  });
+
+  it('works with a bare {question, close} readline stub', async () => {
+    const answers = ['a', 'b'];
+    const close = vi.fn();
+    vi.spyOn(readline, 'createInterface').mockReturnValue({
+      question: (_q: string, cb: (a: string) => void) => cb(answers.shift()!),
+      close,
+    } as never);
+    const p = createPrompter();
+    expect(await p.ask('1? ')).toBe('a');
+    expect(await p.ask('2? ')).toBe('b');
+    p.close();
+    expect(close).toHaveBeenCalledOnce();
+  });
+});
+
+describe('confirm', () => {
+  const ttyDesc = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (ttyDesc) Object.defineProperty(process.stdin, 'isTTY', ttyDesc); else delete (process.stdin as { isTTY?: boolean }).isTTY;
+  });
+  const setTTY = (v: boolean) => Object.defineProperty(process.stdin, 'isTTY', { value: v, configurable: true });
+  const stubAnswer = (answer: string) => vi.spyOn(readline, 'createInterface').mockReturnValue({
+    question: (_q: string, cb: (a: string) => void) => cb(answer),
+    close: () => {},
+  } as never);
+
+  it('refuses on non-TTY stdin (exit 7)', async () => {
+    setTTY(false);
+    expect((await caught(() => confirm('Delete?'))).exitCode).toBe(ExitCode.CONFIRMATION_REFUSED);
+  });
+
+  it('resolves true on y', async () => {
+    setTTY(true);
+    stubAnswer(' Y ');
+    await expect(confirm('Delete?')).resolves.toBe(true);
+  });
+
+  it('refuses on anything else (exit 7)', async () => {
+    setTTY(true);
+    stubAnswer('n');
+    expect((await caught(() => confirm('Delete?'))).exitCode).toBe(ExitCode.CONFIRMATION_REFUSED);
+  });
+
+  it('refuses (exit 7) when stdin closes before an answer (Ctrl-D)', async () => {
+    setTTY(true);
+    const rl = Object.assign(new EventEmitter(), { question: () => {}, close: () => {} });
+    vi.spyOn(readline, 'createInterface').mockReturnValue(rl as never);
+    const pending = confirm('Delete?');
+    rl.emit('close');
+    expect((await caught(() => pending)).exitCode).toBe(ExitCode.CONFIRMATION_REFUSED);
   });
 });
 
