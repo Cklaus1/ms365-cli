@@ -742,6 +742,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .command('delete-attachment <messageId> <attachmentId>')
     .description('Delete an attachment')
     .action(handleErrors(async (messageId: string, attachmentId: string) => {
+      await confirm(`Delete attachment ${attachmentId.substring(0, 16)}... from message ${messageId.substring(0, 16)}...?`);
       const client = getClient();
       await client.request(
         `/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`,

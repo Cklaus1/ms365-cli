@@ -217,3 +217,16 @@ describe('mail update-draft (G-1)', () => {
     expect(r.calls[1]).toMatchObject({ method: 'PATCH', path: '/me/messages/M', body: { subject: 'x' } });
   });
 });
+
+describe('mail delete-attachment confirmation (M-34)', () => {
+  it('refuses without a TTY (exit 7) and sends nothing', async () => {
+    const r = await runCommand(registerMailCommands, ['mail', 'delete-attachment', 'M1', 'A1']);
+    expect(r.exitCode).toBe(7);
+    expect(r.calls).toHaveLength(0);
+  });
+  it('deletes after "y"', async () => {
+    const r = await runCommand(registerMailCommands, ['mail', 'delete-attachment', 'M1', 'A1'], { tty: true, answer: 'y' });
+    expect(r.exitCode).toBe(0);
+    expect(r.calls[0]).toMatchObject({ method: 'DELETE', path: '/me/messages/M1/attachments/A1' });
+  });
+});
