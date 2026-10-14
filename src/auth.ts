@@ -161,13 +161,16 @@ export class AuthManager {
   private async saveTokenCache(): Promise<void> {
     ensureConfigDir();
     const cacheData = this.msalApp.getTokenCache().serialize();
+    // Always write the file — loadTokenCache reads it first, and withTimeout resolves
+    // null (not throws) when keytar hangs, so a keytar-only save would leave it stale.
+    // Atomic write: write to temp file then rename to prevent corruption
+    const tmpPath = FALLBACK_TOKEN_PATH + '.tmp';
+    fs.writeFileSync(tmpPath, cacheData, { mode: 0o600 });
+    fs.renameSync(tmpPath, FALLBACK_TOKEN_PATH);
     try {
       await withTimeout(keytar.setPassword(SERVICE_NAME, TOKEN_CACHE_ACCOUNT, cacheData));
     } catch {
-      // Atomic write: write to temp file then rename to prevent corruption
-      const tmpPath = FALLBACK_TOKEN_PATH + '.tmp';
-      fs.writeFileSync(tmpPath, cacheData, { mode: 0o600 });
-      fs.renameSync(tmpPath, FALLBACK_TOKEN_PATH);
+      // keytar unavailable — file cache is authoritative
     }
   }
 
