@@ -47,8 +47,8 @@ Derived view of commit history (`git log --grep '^T[0-9]'`). The commits are the
 - [x] T40: `--account` and `--profile` (D21)
 - [x] T41: `auth login --browser` (PKCE loopback)
 - [x] T42: Name resolution: `resolve` command; names accepted for todo lists, team/channel and planner plan
-- [ ] T43: Coverage gaps: excel tables and rows, todo checklist, teams chat create and @mentions, Outlook notes, multi-entity search
-- [ ] T44: Shell completion and default table columns
+- [x] T43: Coverage gaps: excel tables and rows, todo checklist, teams chat create and @mentions, Outlook notes, multi-entity search
+- [x] T44: Shell completion and default table columns
 
 ## needs-human (excluded)
 - [ ] N1

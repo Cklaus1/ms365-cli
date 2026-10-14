@@ -22,3 +22,5 @@ Things discovered mid-build that have no assigned task. Each entry gives a propo
 - **[P3] `auth accounts` marks "(active)" from the saved selection** even when `--account` is passed. (T40)
 - **[P3] Catalog scope approximations.** `search query` and `watch` list the union of their resource types' scopes, and `user list` uses `User.Read.All`. Per-option scopes would be more precise. (T30)
 - **[P3] `mail shared-send` has no `--idempotency-key`.** A crash mid-send leaves a pending claim that blocks the key for 24 h; the error explains this. (T38)
+- **[P3] `validateEmail` throws a plain Error**, so calendar attendees and similar callers exit 1 instead of 2. (T43)
+- **[P3] Completion gaps.** `--version` is offered below the top level, `--x=value` forms aren't completed, and the PowerShell completer covers only `ms365`. Column choices for chats, teams, contacts and planner are unverified against real data. (T44)
