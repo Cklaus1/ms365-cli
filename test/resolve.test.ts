@@ -121,6 +121,118 @@ describe('resolveId', () => {
   });
 });
 
+const FOLDER_ID = 'AAMkAGVmMDEzMTM4LTZmYWUtNDdkNC1hMDZiLTU1OGY5OTZhYmY4OAAuAAAAAAAiQ8W967B7TKBjgx9rVEURAQAiIsqMbYjsT5e-T7KzowPTAAAAAAEMAAA=';
+const TOP = "/me/mailFolders?$select=id,displayName,childFolderCount&$top=100";
+const top = { value: [
+  { id: 'F-inbox', displayName: 'Inbox', childFolderCount: 2 },
+  { id: 'F-archive', displayName: 'Archive', childFolderCount: 0 },
+  { id: 'F-receipts', displayName: 'Receipts', childFolderCount: 1 },
+] };
+const inboxKids = { value: [
+  { id: 'F-projects', displayName: 'Projects', childFolderCount: 1 },
+  { id: 'F-misc', displayName: 'Misc', childFolderCount: 0 },
+] };
+const projectKids = { value: [{ id: 'F-alpha', displayName: 'Alpha', childFolderCount: 0 }] };
+const receiptKids = { value: [{ id: 'F-misc2', displayName: 'misc', childFolderCount: 0 }] };
+const kids = (id: string) => `/me/mailFolders/${id}/childFolders?$select=id,displayName,childFolderCount&$top=100`;
+
+describe('resolveId mail-folder', () => {
+  it('passes well-known names (normalised) and Exchange IDs through without a request', async () => {
+    const { client, paths } = fakeClient({});
+    expect(await resolveId(client, 'mail-folder', 'Inbox')).toEqual({ type: 'mail-folder', id: 'inbox', displayName: null });
+    expect((await resolveId(client, 'mail-folder', 'Sent Items')).id).toBe('sentitems');
+    expect((await resolveId(client, 'mail-folder', 'JunkEmail')).id).toBe('junkemail');
+    expect((await resolveId(client, 'mail-folder', 'deleteditems')).id).toBe('deleteditems');
+    expect((await resolveId(client, 'mail-folder', FOLDER_ID)).id).toBe(FOLDER_ID);
+    expect((await resolveId(client, 'mail-folder', 'AQMkADAwATM0MDAAMS0yMDkALTI2NjAtMDACLTAwCgAuAAAD')).id).toBe('AQMkADAwATM0MDAAMS0yMDkALTI2NjAtMDACLTAwCgAuAAAD');
+    expect(paths).toHaveLength(0);
+  });
+
+  it('matches a top-level name exactly and case-insensitively, paging with $top=100', async () => {
+    const { client, paths } = fakeClient({ '/me/mailFolders': top });
+    expect(await resolveId(client, 'mail-folder', 'receipts')).toEqual({ type: 'mail-folder', id: 'F-receipts', displayName: 'Receipts' });
+    expect(paths).toEqual([TOP]);
+  });
+
+  it('never prefix- or substring-matches (F11)', async () => {
+    const { client } = fakeClient({ '/me/mailFolders': { value: [{ id: 'F-r', displayName: 'Receipts', childFolderCount: 0 }] } });
+    const err = await caught(resolveId(client, 'mail-folder', 'Rec'));
+    expect(err).toMatchObject({ code: 'not_found', exitCode: ExitCode.NOT_FOUND });
+    expect(err.message).toContain('Receipts');
+  });
+
+  it('walks a path segment by segment through childFolders (F12)', async () => {
+    const { client, paths } = fakeClient({ [kids('F-projects')]: projectKids, [kids('inbox')]: inboxKids, '/me/mailFolders': top });
+    expect(await resolveId(client, 'mail-folder', 'Inbox/projects/alpha')).toEqual({ type: 'mail-folder', id: 'F-alpha', displayName: 'Alpha' });
+    expect(paths).toEqual([kids('inbox'), kids('F-projects')]);
+  });
+
+  it('a path whose first segment is custom resolves it at the top level', async () => {
+    const { client, paths } = fakeClient({ [kids('F-receipts')]: receiptKids, '/me/mailFolders': top });
+    expect((await resolveId(client, 'mail-folder', 'Receipts/Misc')).id).toBe('F-misc2');
+    expect(paths).toEqual([TOP, kids('F-receipts')]);
+  });
+
+  it('a missing path segment → not_found naming the parent and its children', async () => {
+    const { client } = fakeClient({ [kids('inbox')]: inboxKids });
+    const err = await caught(resolveId(client, 'mail-folder', 'Inbox/Nope'));
+    expect(err).toMatchObject({ code: 'not_found', exitCode: ExitCode.NOT_FOUND });
+    expect(err.message).toContain('"Nope" under "Inbox"');
+    expect(err.message).toContain('Projects, Misc');
+  });
+
+  it('an empty path segment is a usage error', async () => {
+    const { client, paths } = fakeClient({});
+    expect(await caught(resolveId(client, 'mail-folder', 'Inbox//x'))).toMatchObject({ exitCode: ExitCode.USAGE });
+    expect(paths).toHaveLength(0);
+  });
+
+  it('a top-level miss falls back to a breadth-first search, skipping leaf folders', async () => {
+    const { client, paths } = fakeClient({
+      [kids('F-projects')]: projectKids, [kids('F-inbox')]: inboxKids, [kids('F-receipts')]: { value: [] }, '/me/mailFolders': top,
+    });
+    expect(await resolveId(client, 'mail-folder', 'ALPHA')).toEqual({ type: 'mail-folder', id: 'F-alpha', displayName: 'Alpha' });
+    expect(paths).toEqual([TOP, kids('F-inbox'), kids('F-receipts'), kids('F-projects')]);
+  });
+
+  it('two breadth-first matches → ambiguous_name listing their paths', async () => {
+    const { client } = fakeClient({
+      [kids('F-projects')]: projectKids, [kids('F-inbox')]: inboxKids, [kids('F-receipts')]: receiptKids, '/me/mailFolders': top,
+    });
+    const err = await caught(resolveId(client, 'mail-folder', 'misc'));
+    expect(err).toMatchObject({ code: 'ambiguous_name', exitCode: ExitCode.USAGE });
+    expect(err.message).toContain('Inbox/Misc (F-misc)');
+    expect(err.message).toContain('Receipts/misc (F-misc2)');
+  });
+
+  it('the breadth-first search stops at 500 folders', async () => {
+    const wide = { value: Array.from({ length: 600 }, (_, i) => ({ id: `W${i}`, displayName: `Folder ${i}`, childFolderCount: 0 })) };
+    const { client, paths } = fakeClient({ [kids('F-inbox')]: wide, '/me/mailFolders': { value: [{ id: 'F-inbox', displayName: 'Inbox', childFolderCount: 600 }, { id: 'F-late', displayName: 'Late', childFolderCount: 3 }] } });
+    const err = await caught(resolveId(client, 'mail-folder', 'Folder 550'));
+    expect(err).toMatchObject({ code: 'not_found', exitCode: ExitCode.NOT_FOUND });
+    expect(err.message).toContain('searched the first 500 folders');
+    expect(paths).toEqual([TOP, kids('F-inbox')]);
+  });
+
+  it('a miss everywhere → not_found listing top-level names and suggesting a path', async () => {
+    const { client } = fakeClient({ [kids('F-projects')]: projectKids, [kids('F-inbox')]: inboxKids, [kids('F-receipts')]: receiptKids, '/me/mailFolders': top });
+    const err = await caught(resolveId(client, 'mail-folder', 'Recieps'));
+    expect(err).toMatchObject({ code: 'not_found', exitCode: ExitCode.NOT_FOUND });
+    expect(err.message).toContain('Inbox, Archive, Receipts');
+    expect(err.fix).toContain('Inbox/Projects');
+  });
+
+  it('resolves against another mailbox when a user is given, keyed separately in the cache', async () => {
+    const { client, paths } = fakeClient({
+      '/users/shared@contoso.com/mailFolders': { value: [{ id: 'S-r', displayName: 'Receipts', childFolderCount: 0 }] },
+      '/me/mailFolders': top,
+    });
+    expect((await resolveId(client, 'mail-folder', 'Receipts', 'shared@contoso.com')).id).toBe('S-r');
+    expect((await resolveId(client, 'mail-folder', 'Receipts')).id).toBe('F-receipts');
+    expect(paths[0]).toBe('/users/shared@contoso.com/mailFolders?$select=id,displayName,childFolderCount&$top=100');
+  });
+});
+
 describe('ms365 resolve', () => {
   it('prints {type, id, displayName}', async () => {
     const r = await runCommand(registerResolveCommands, ['resolve', 'todo-list', 'groceries', '-o', 'json'], {
@@ -150,6 +262,29 @@ describe('ms365 resolve', () => {
   it('rejects an unknown type', async () => {
     const r = await runCommand(registerResolveCommands, ['resolve', 'folder', 'Inbox']);
     expect(r.exitCode).toBe(2);
+  });
+
+  it('resolve mail-folder <path> prints the nested folder, and --user scopes the mailbox', async () => {
+    const r = await runCommand(registerResolveCommands, ['resolve', 'mail-folder', 'Inbox/Projects', '-o', 'json'], {
+      routes: [['GET', '/me/mailFolders/inbox/childFolders', () => inboxKids]],
+    });
+    expect(r.exitCode).toBe(0);
+    expect(JSON.parse(r.stdout)).toEqual({ type: 'mail-folder', id: 'F-projects', displayName: 'Projects' });
+    const u = await runCommand(registerResolveCommands, ['resolve', 'mail-folder', 'Receipts', '--user', 'shared@contoso.com', '-o', 'json'], {
+      routes: [['GET', '/users/shared@contoso.com/mailFolders', () => top]],
+    });
+    expect(JSON.parse(u.stdout)).toMatchObject({ id: 'F-receipts' });
+  });
+
+  it('resolve mail-folder: a miss exits 5; dry-run passes the name through', async () => {
+    const miss = await runCommand(registerResolveCommands, ['resolve', 'mail-folder', 'Arch'], {
+      routes: [['GET', /^\/me\/mailFolders\/[^/]+\/childFolders/, () => ({ value: [] })], ['GET', '/me/mailFolders', () => top]],
+    });
+    expect(miss.exitCode).toBe(5);
+    const dry = await runCommand(registerResolveCommands, ['resolve', 'mail-folder', 'Receipts', '-o', 'json'], { dryRun: true });
+    expect(dry.exitCode).toBe(0);
+    expect(dry.stdout).toContain('[dry-run] GET https://graph.microsoft.com/v1.0/me/mailFolders?');
+    expect(dry.stdout).toContain('"id": "Receipts"');
   });
 
   it('ambiguous name exits 2', async () => {
