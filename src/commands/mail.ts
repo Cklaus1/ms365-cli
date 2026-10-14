@@ -1,118 +1,31 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import fs from 'fs';
 import path from 'path';
-import { GraphClient, type BatchResult } from '../graph-client.js';
+import { GraphClient, type BatchResult, type GraphResponse } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import {
-  truncate, parseRecipients, formatSize, addListOptions, outputOption, confirm, info,
-  odataQuote, kqlQuote, safeOutputPath, resolveTimeZone, parseTime, toGraphDateTime,
+  truncate, parseRecipients, formatSize, addListOptions, outputOption, confirm, info, success,
+  kqlQuote, safeOutputPath, resolveTimeZone, parseTime, toGraphDateTime,
 } from '../utils.js';
 import { detectMimeType } from '../mime.js';
 import { idempotentSend, IDEMPOTENCY_HELP } from '../idempotency.js';
+import { resolve } from '../resolve.js';
 import { addContentOptions, contentOptions, messageTransform, transformData, type BodyMode } from '../content.js';
-
-// Well-known folder names that Graph API supports directly
-const WELL_KNOWN_FOLDERS = [
-  'inbox', 'drafts', 'sentitems', 'deleteditems', 'archive',
-  'junkemail', 'outbox', 'clutter', 'conflicts',
-  'conversationhistory', 'localfailures', 'msgfolderroot',
-  'recoverableitemsdeletions', 'scheduled', 'searchfolders', 'serverfailures',
-];
-
-/**
- * Resolve a folder display name to its ID.
- * First tries well-known folder names (case-insensitive), then searches by displayName.
- */
-async function resolveFolderName(client: GraphClient, name: string): Promise<string | null> {
-  // Check if it's a well-known name
-  const normalized = name.toLowerCase().replace(/\s+/g, '');
-  const wellKnown = WELL_KNOWN_FOLDERS.find(f => f === normalized);
-  if (wellKnown) {
-    // Graph API accepts well-known names directly as folder IDs
-    return wellKnown;
-  }
-
-  // Search by displayName; odataQuote keeps the literal intact (including non-ASCII names)
-  const trimmed = name.trim();
-  if (!trimmed) return null;
-  const response = await client.request('/me/mailFolders', {
-    queryParams: {
-      '$filter': `displayName eq '${odataQuote(trimmed)}'`,
-      '$select': 'id,displayName',
-      '$top': '1',
-    },
-  });
-  const data = response.data as Record<string, unknown>;
-  const folders = (data.value as Array<Record<string, unknown>>) || [];
-  if (folders.length > 0) {
-    return folders[0].id as string;
-  }
-
-  // Fallback: try case-insensitive match on all folders
-  const allResponse = await client.request('/me/mailFolders', {
-    queryParams: { '$select': 'id,displayName', '$top': '100' },
-  });
-  const allData = allResponse.data as Record<string, unknown>;
-  const allFolders = (allData.value as Array<Record<string, unknown>>) || [];
-  const match = allFolders.find(
-    f => (f.displayName as string || '').toLowerCase() === name.toLowerCase()
-  );
-  return match ? (match.id as string) : null;
-}
 
 // Inline (base64) attachments are limited to 3 MB; larger files need an upload session.
 const INLINE_ATTACHMENT_LIMIT = 3 * 1024 * 1024;
+// Outlook caps upload-session chunks at 4 MB; 3 MiB is a multiple of 320 KiB.
 const ATTACHMENT_CHUNK_SIZE = 3 * 1024 * 1024;
 
-/**
- * Upload a large file attachment via POST …/attachments/createUploadSession, then PUT
- * the bytes to the pre-authorized uploadUrl in chunks (no bearer token is sent there).
- */
-async function uploadLargeAttachment(
+/** Upload a large file attachment through an Outlook upload session (POST …/attachments/createUploadSession). */
+function uploadLargeAttachment(
   client: GraphClient, messageId: string, filePath: string, name: string, contentType: string, size: number,
-): Promise<unknown> {
-  const session = await client.request(`/me/messages/${encodeURIComponent(messageId)}/attachments/createUploadSession`, {
-    method: 'POST',
-    body: JSON.stringify({ AttachmentItem: { attachmentType: 'file', name, size, contentType } }),
-  });
-  const sessionData = session.data as { uploadUrl?: string; dryRun?: boolean };
-  if (sessionData.dryRun) {
-    console.log(`[dry-run] Then PUT ${Math.ceil(size / ATTACHMENT_CHUNK_SIZE)} chunk(s) to the session uploadUrl`);
-    return session.data;
-  }
-  if (!sessionData.uploadUrl) {
-    throw new CliError('Upload session response did not include an uploadUrl.', { code: 'bad_response' });
-  }
-
-  const fd = fs.openSync(filePath, 'r');
-  try {
-    let offset = 0;
-    while (offset < size) {
-      const length = Math.min(ATTACHMENT_CHUNK_SIZE, size - offset);
-      const buffer = Buffer.alloc(length);
-      fs.readSync(fd, buffer, 0, length, offset);
-      const res = await fetch(sessionData.uploadUrl, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/octet-stream',
-          'Content-Length': String(length),
-          'Content-Range': `bytes ${offset}-${offset + length - 1}/${size}`,
-        },
-        body: buffer,
-      });
-      if (!res.ok) {
-        throw new CliError(`Attachment chunk upload failed at byte ${offset} (${res.status}): ${await res.text()}`,
-          { code: 'upload_failed', status: res.status, exitCode: res.status === 429 ? ExitCode.THROTTLED : ExitCode.GENERIC });
-      }
-      offset += length;
-      info(`Uploading... ${Math.round((offset / size) * 100)}%`);
-      if (res.status === 201) break;
-    }
-  } finally {
-    fs.closeSync(fd);
-  }
-  return { message: 'Attachment uploaded', name, size };
+): Promise<GraphResponse> {
+  const attachments = `/me/messages/${encodeURIComponent(messageId)}/attachments`;
+  return client.uploadSession(`${attachments}/createUploadSession`,
+    { AttachmentItem: { attachmentType: 'file', name, size, contentType } }, filePath, size,
+    { chunkSize: ATTACHMENT_CHUNK_SIZE, auditAs: attachments });
 }
 
 interface FileToAttach { filePath: string; name: string; contentType: string; size: number }
@@ -175,14 +88,52 @@ async function addAttachments(client: GraphClient, messageId: string, files: Fil
 async function createDraft(client: GraphClient, endpoint: string, body: unknown): Promise<Record<string, unknown>> {
   const response = await client.request(endpoint, { method: 'POST', body: JSON.stringify(body) });
   const draft = response.data as Record<string, unknown>;
-  return draft.dryRun ? { ...draft, id: 'DRAFT_ID' } : draft;
+  return client.isPreview(response) ? { ...draft, id: 'DRAFT_ID' } : draft;
 }
 
-/** Create a draft via `endpoint`, attach the files, then send it. */
-async function sendViaDraft(client: GraphClient, endpoint: string, body: unknown, files: FileToAttach[]): Promise<void> {
+/**
+ * Put `html` at the top of a draft's body, keeping the quoted thread that createReply/createForward wrote
+ * below it: GET the body, insert right after `<body…>`, PATCH it back (F18). Under --dry-run the GET has no
+ * body, so the preview shows `<from GET>` where the quoted thread goes.
+ */
+async function prependHtml(client: GraphClient, draftId: string, html: string): Promise<void> {
+  const endpoint = `/me/messages/${encodeURIComponent(draftId)}`;
+  const current = await client.request(endpoint, {
+    queryParams: { '$select': 'body' }, headers: { Prefer: 'outlook.body-content-type="html"' },
+  });
+  const existing = client.isPreview(current)
+    ? '<from GET>'
+    : String((current.data as { body?: { content?: string } }).body?.content ?? '');
+  const open = /<body[^>]*>/i.exec(existing);
+  const content = open ? existing.slice(0, open.index + open[0].length) + html + existing.slice(open.index + open[0].length) : html + existing;
+  await client.request(endpoint, { method: 'PATCH', body: JSON.stringify({ body: { contentType: 'HTML', content } }) });
+}
+
+/**
+ * Create a draft via `endpoint`, put `html` on top of its body (if given), attach the files, then send it.
+ * If anything fails before /send is dispatched, the unsent draft is deleted (best effort) so retries
+ * don't pile up copies in Drafts (R-8). Nothing is deleted once /send was dispatched (its outcome may be unknown).
+ */
+async function sendViaDraft(
+  client: GraphClient, endpoint: string, body: unknown, files: FileToAttach[], html?: string,
+): Promise<void> {
   const draft = await createDraft(client, endpoint, body);
-  await addAttachments(client, draft.id as string, files);
-  await client.request(`/me/messages/${encodeURIComponent(draft.id as string)}/send`, { method: 'POST' });
+  const draftPath = `/me/messages/${encodeURIComponent(draft.id as string)}`;
+  try {
+    if (html !== undefined) await prependHtml(client, draft.id as string, html);
+    await addAttachments(client, draft.id as string, files);
+  } catch (err) {
+    const deleted = await client.request(draftPath, { method: 'DELETE' }).then(() => true, () => false);
+    if (err instanceof Error) {
+      err.message += deleted
+        ? ' The unsent draft was deleted.'
+        : ` The unsent draft ${draft.id as string} could not be deleted; remove it from Drafts.`;
+    }
+    // A deleted draft can no longer be sent, so the request cannot have taken effect.
+    if (deleted && err instanceof CliError) err.maybeProcessed = undefined;
+    throw err;
+  }
+  await client.request(`${draftPath}/send`, { method: 'POST' });
 }
 
 /** Attachments enter a send's fingerprint by name and size (their bytes are not re-read for hashing). */
@@ -197,7 +148,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .option('--filter <filter>', 'OData filter expression')
     .option('--select <fields>', 'Comma-separated fields to return')
     .option('--search <query>', 'Search query (cannot be combined with --filter; Graph returns at most 250 results)')
-    .option('--folder <name>', 'Folder name or ID (e.g. "Drafts", "Sent Items", "Archive", or a folder ID)')), { description: 'Number of messages to return', default: '10' })
+    .option('--folder <name>', 'Folder name, path or ID (e.g. "Drafts", "Sent Items", "Inbox/Projects", or a folder ID)')), { description: 'Number of messages to return', default: '10' })
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();
@@ -218,9 +169,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
 
       let endpoint = '/me/messages';
       if (opts.folder) {
-        // Try as well-known name first, then resolve
-        const folderId = await resolveFolderName(client, opts.folder) || opts.folder;
-        endpoint = `/me/mailFolders/${encodeURIComponent(folderId)}/messages`;
+        endpoint = `/me/mailFolders/${encodeURIComponent(await resolve(client, 'mail-folder', opts.folder))}/messages`;
       }
 
       await printList(client, endpoint, { queryParams, headers: textBodyHeaders(opts.body) }, opts,
@@ -336,7 +285,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .description('Show inbox summary — unread messages with key metadata')
     .option('--top <n>', 'Number of messages', '20')
     .option('--filter <filter>', 'OData filter (default: unread)', 'isRead eq false')
-    .option('--folder <folderId>', 'Mail folder ID')
+    .option('--folder <name>', 'Folder name, path (Inbox/Projects) or ID')
     .option('--include-read', 'Include read messages too'), false)
     .addOption(outputOption('table'))
     .action(handleErrors(async (opts) => {
@@ -352,10 +301,15 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       }
 
       const endpoint = opts.folder
-        ? `/me/mailFolders/${encodeURIComponent(opts.folder)}/messages`
+        ? `/me/mailFolders/${encodeURIComponent(await resolve(client, 'mail-folder', opts.folder))}/messages`
         : '/me/messages';
 
       const response = await client.request(endpoint, { queryParams });
+      if (client.isPreview(response)) {
+        // The trace is the whole preview: no report built from the placeholder (DR-12).
+        if (opts.output === 'json') console.log(formatOutput({ dryRun: true }, 'json'));
+        return;
+      }
       const data = await transformData(response.data, messageTransform(client, 'mail', contentOptions(opts))) as Record<string, unknown>;
       const messages = (data.value as Array<Record<string, unknown>>) || [];
 
@@ -447,7 +401,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         }
       });
 
-      if (sent) info('Email sent successfully.');
+      if (sent) success('Email sent successfully.');
     }));
 
   mail
@@ -457,31 +411,32 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       if (!await confirm(`Delete message ${messageId.substring(0, 16)}...?`)) return;
       const client = getClient();
       await client.request(`/me/messages/${encodeURIComponent(messageId)}`, { method: 'DELETE' });
-      info('Message deleted.');
+      success('Message deleted.');
     }));
 
   mail
     .command('move <messageId>')
     .description('Move a message to a folder')
-    .requiredOption('--folder <folderId>', 'Destination folder ID')
+    .requiredOption('--folder <name>', 'Destination folder name, path (Inbox/Projects) or ID')
     .action(handleErrors(async (messageId: string, opts) => {
       const client = getClient();
+      const destinationId = await resolve(client, 'mail-folder', opts.folder);
       await client.request(`/me/messages/${encodeURIComponent(messageId)}/move`, {
         method: 'POST',
-        body: JSON.stringify({ destinationId: opts.folder }),
+        body: JSON.stringify({ destinationId }),
       });
-      info('Message moved.');
+      success('Message moved.');
     }));
 
   addListOptions(mail
     .command('folders')
     .description('List mail folders')
-    .option('--parent <folderId>', 'List child folders of this folder'))
+    .option('--parent <name>', 'List child folders of this folder (name, path (inbox/projects) or id)'))
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();
       const endpoint = opts.parent
-        ? `/me/mailFolders/${encodeURIComponent(opts.parent)}/childFolders`
+        ? `/me/mailFolders/${encodeURIComponent(await resolve(client, 'mail-folder', opts.parent))}/childFolders`
         : '/me/mailFolders';
       const queryParams: Record<string, string> = {
         '$select': 'id,displayName,parentFolderId,childFolderCount,totalItemCount,unreadItemCount',
@@ -492,14 +447,11 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
 
   mail
     .command('folder <name>')
-    .description('Find a folder by display name (e.g. "Drafts", "Sent Items", "Archive")')
+    .description('Find a folder by display name or path (e.g. "Drafts", "Sent Items", "Inbox/Projects")')
     .addOption(outputOption())
     .action(handleErrors(async (folderName: string, opts) => {
       const client = getClient();
-      const folderId = await resolveFolderName(client, folderName);
-      if (!folderId) {
-        throw new Error(`Folder "${folderName}" not found. Run: ms365 mail folders -o table`);
-      }
+      const folderId = await resolve(client, 'mail-folder', folderName);
       const response = await client.request(`/me/mailFolders/${encodeURIComponent(folderId)}`);
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
@@ -508,12 +460,12 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .command('create-folder')
     .description('Create a mail folder')
     .requiredOption('--name <name>', 'Folder display name')
-    .option('--parent <parentFolderId>', 'Parent folder ID (default: root)')
+    .option('--parent <name>', 'Parent folder name, path or ID (default: root)')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();
       const endpoint = opts.parent
-        ? `/me/mailFolders/${encodeURIComponent(opts.parent)}/childFolders`
+        ? `/me/mailFolders/${encodeURIComponent(await resolve(client, 'mail-folder', opts.parent))}/childFolders`
         : '/me/mailFolders';
       const response = await client.request(endpoint, {
         method: 'POST',
@@ -557,35 +509,25 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       if (upload) await addAttachments(client, created.id as string, files);
 
       if (opts.output !== 'json') {
-        info(`Draft created. ID: ${created.id}`);
+        success(`Draft created. ID: ${created.id}`);
       } else {
         console.log(formatOutput(created, 'json'));
       }
     }));
 
-  mail
+  addListOptions(mail
     .command('drafts')
-    .description('List draft emails')
-    .option('--top <n>', 'Number of drafts', '10')
+    .description('List draft emails'), { description: 'Number of drafts', default: '10' })
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();
-      // Drafts folder has well-known name "Drafts"
-      const folderId = await resolveFolderName(client, 'Drafts');
-      if (!folderId) {
-        throw new Error('Drafts folder not found.');
-      }
-      const response = await client.request(
-        `/me/mailFolders/${encodeURIComponent(folderId)}/messages`,
-        {
-          queryParams: {
-            '$top': opts.top,
-            '$select': 'id,subject,toRecipients,createdDateTime,lastModifiedDateTime,bodyPreview,hasAttachments',
-            '$orderby': 'lastModifiedDateTime desc',
-          },
-        }
-      );
-      console.log(formatOutput(await transformData(response.data, messageTransform(client, 'mail', {})), opts.output as OutputFormat));
+      await printList(client, '/me/mailFolders/drafts/messages', {
+        queryParams: {
+          '$top': opts.top,
+          '$select': 'id,subject,toRecipients,createdDateTime,lastModifiedDateTime,bodyPreview,hasAttachments',
+          '$orderby': 'lastModifiedDateTime desc',
+        },
+      }, opts, { transform: messageTransform(client, 'mail', {}) });
     }));
 
   mail
@@ -641,19 +583,15 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
           method: 'POST',
         });
       });
-      if (sent) info('Draft sent.');
+      if (sent) success('Draft sent.');
     }));
 
-  mail
+  addListOptions(mail
     .command('attachments <messageId>')
-    .description('List attachments for a message')
+    .description('List attachments for a message'))
     .addOption(outputOption())
     .action(handleErrors(async (messageId: string, opts) => {
-      const client = getClient();
-      const response = await client.request(
-        `/me/messages/${encodeURIComponent(messageId)}/attachments`
-      );
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(getClient(), `/me/messages/${encodeURIComponent(messageId)}/attachments`, {}, opts);
     }));
 
   mail
@@ -689,7 +627,8 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       if (opts.file) {
         const size = fs.statSync(opts.file).size;
         if (size > INLINE_ATTACHMENT_LIMIT) {
-          const result = await uploadLargeAttachment(client, messageId, opts.file, name, opts.contentType, size);
+          const res = await uploadLargeAttachment(client, messageId, opts.file, name, opts.contentType, size);
+          const result = client.isPreview(res) ? res.data : { message: 'Attachment uploaded', name, size };
           console.log(formatOutput(result, opts.output as OutputFormat));
           return;
         }
@@ -720,7 +659,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         `/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`,
         { method: 'DELETE' }
       );
-      info('Attachment deleted.');
+      success('Attachment deleted.');
     }));
 
   mail
@@ -733,23 +672,29 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       const response = await client.request(
         `/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`
       );
+      if (client.isPreview(response)) {
+        // --dry-run: nothing to save (DR-13)
+        console.log(formatOutput(response.data, 'json'));
+        return;
+      }
       const data = response.data as Record<string, unknown>;
       const name = data.name as string || 'attachment';
       const contentBytes = data.contentBytes as string;
       if (!contentBytes) {
-        throw new Error('No content found. This may be a reference attachment or item attachment.');
+        throw new CliError('No content found. This may be a reference attachment or item attachment.',
+          { code: 'unsupported_attachment', fix: 'run `ms365 mail attachment <messageId> <attachmentId>` to see its type' });
       }
       const outPath = safeOutputPath(name, { out: opts.out, force: opts.force, fallback: 'attachment' });
       const bytes = Buffer.from(contentBytes, 'base64');
       fs.writeFileSync(outPath, bytes);
-      info(`Saved to ${outPath} (${formatSize(bytes.length)})`);
+      success(`Saved to ${outPath} (${formatSize(bytes.length)})`);
     }));
 
   mail
     .command('reply <messageId>')
     .description('Reply to a message')
     .requiredOption('--body <body>', 'Reply body')
-    .option('--html', 'Send body as HTML')
+    .option('--html', 'Send body as HTML (goes via a reply draft so the quoted thread is kept)')
     .option('--reply-all', 'Reply to all recipients')
     .option('--attach <path>', 'Attach a file (repeatable; over 3 MB total goes via a draft + upload session)', collect, [])
     .option('--idempotency-key <key>', IDEMPOTENCY_HELP)
@@ -757,17 +702,22 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       const files = prepareAttachments(opts.attach);
       const client = getClient();
       const base = `/me/messages/${encodeURIComponent(messageId)}`;
-      const request = { messageId, replyAll: !!opts.replyAll, comment: opts.body, attachments: attachmentKeys(files) };
+      const create = `${base}/${opts.replyAll ? 'createReplyAll' : 'createReply'}`;
+      const html = !!opts.html;
+      const request = { messageId, replyAll: !!opts.replyAll, comment: opts.body, html, attachments: attachmentKeys(files) };
       const sent = await idempotentSend(client, opts.idempotencyKey, 'mail reply', request, async () => {
-        if (needsUploadSession(files)) {
-          await sendViaDraft(client, `${base}/${opts.replyAll ? 'createReplyAll' : 'createReply'}`, { comment: opts.body }, files);
+        if (html) {
+          // Graph treats `comment` as text and rejects it together with message.body, so patch the draft's body.
+          await sendViaDraft(client, create, {}, files, opts.body);
+        } else if (needsUploadSession(files)) {
+          await sendViaDraft(client, create, { comment: opts.body }, files);
         } else {
           const body: Record<string, unknown> = { comment: opts.body };
           if (files.length > 0) body.message = { attachments: files.map(inlineAttachment) };
           await client.request(`${base}/${opts.replyAll ? 'replyAll' : 'reply'}`, { method: 'POST', body: JSON.stringify(body) });
         }
       });
-      if (sent) info('Reply sent.');
+      if (sent) success('Reply sent.');
     }));
 
   // ── Forward ──────────────────────────────────────────────────
@@ -776,6 +726,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .description('Forward a message')
     .requiredOption('--to <addresses>', 'Comma-separated recipient emails')
     .option('--comment <text>', 'Comment to include with forward')
+    .option('--html', 'Send --comment as HTML (goes via a forward draft so the forwarded message is kept)')
     .option('--attach <path>', 'Attach a file (repeatable; over 3 MB total goes via a draft + upload session)', collect, [])
     .option('--idempotency-key <key>', IDEMPOTENCY_HELP)
     .action(handleErrors(async (messageId: string, opts) => {
@@ -783,17 +734,20 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       const client = getClient();
       const toRecipients = parseRecipients(opts.to);
       const base = `/me/messages/${encodeURIComponent(messageId)}`;
+      const html = !!opts.html;
       const body: Record<string, unknown> = { comment: opts.comment || '', toRecipients };
-      const request = { messageId, ...body, attachments: attachmentKeys(files) };
+      const request = { messageId, ...body, html, attachments: attachmentKeys(files) };
       const sent = await idempotentSend(client, opts.idempotencyKey, 'mail forward', request, async () => {
-        if (needsUploadSession(files)) {
+        if (html) {
+          await sendViaDraft(client, `${base}/createForward`, { toRecipients }, files, opts.comment || '');
+        } else if (needsUploadSession(files)) {
           await sendViaDraft(client, `${base}/createForward`, body, files);
         } else {
           if (files.length > 0) body.message = { attachments: files.map(inlineAttachment) };
           await client.request(`${base}/forward`, { method: 'POST', body: JSON.stringify(body) });
         }
       });
-      if (sent) info('Message forwarded.');
+      if (sent) success('Message forwarded.');
     }));
 
   // ── Mark read/unread ────────────────────────────────────────
@@ -806,7 +760,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         method: 'PATCH',
         body: JSON.stringify({ isRead: true }),
       });
-      info('Marked as read.');
+      success('Marked as read.');
     }));
 
   mail
@@ -818,7 +772,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         method: 'PATCH',
         body: JSON.stringify({ isRead: false }),
       });
-      info('Marked as unread.');
+      success('Marked as unread.');
     }));
 
   // ── Flag / unflag ───────────────────────────────────────────
@@ -842,7 +796,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         method: 'PATCH',
         body: JSON.stringify({ flag }),
       });
-      info('Message flagged.');
+      success('Message flagged.');
     }));
 
   mail
@@ -854,7 +808,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         method: 'PATCH',
         body: JSON.stringify({ flag: { flagStatus: 'notFlagged' } }),
       });
-      info('Flag removed.');
+      success('Flag removed.');
     }));
 
   mail
@@ -866,7 +820,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         method: 'PATCH',
         body: JSON.stringify({ flag: { flagStatus: 'complete' } }),
       });
-      info('Flag marked complete.');
+      success('Flag marked complete.');
     }));
 
   // ── Categories ──────────────────────────────────────────────
@@ -881,7 +835,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         method: 'PATCH',
         body: JSON.stringify({ categories }),
       });
-      info(`Categories set: ${categories.join(', ')}`);
+      success(`Categories set: ${categories.join(', ')}`);
     }));
 
   // Shared mailbox commands (require --org-mode)
@@ -890,7 +844,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .description('List shared mailbox messages (requires --org-mode)')
     .option('--filter <filter>', 'OData filter')
     .option('--select <fields>', 'Fields to return')
-    .option('--folder <folderId>', 'Mail folder ID'), { description: 'Number of messages', default: '10' })
+    .option('--folder <name>', 'Folder name, path or ID in that mailbox'), { description: 'Number of messages', default: '10' })
     .addOption(outputOption())
     .action(handleErrors(async (userId: string, opts) => {
       const client = getClient();
@@ -900,7 +854,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       if (opts.select) queryParams['$select'] = opts.select;
 
       const endpoint = opts.folder
-        ? `/users/${encodeURIComponent(userId)}/mailFolders/${encodeURIComponent(opts.folder)}/messages`
+        ? `/users/${encodeURIComponent(userId)}/mailFolders/${encodeURIComponent(await resolve(client, 'mail-folder', opts.folder, userId))}/messages`
         : `/users/${encodeURIComponent(userId)}/messages`;
 
       await printList(client, endpoint, { queryParams }, opts, { transform: messageTransform(client, 'mail', {}) });
@@ -930,33 +884,30 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .requiredOption('--subject <subject>', 'Email subject')
     .requiredOption('--body <body>', 'Email body')
     .option('--html', 'Body as HTML')
+    .option('--idempotency-key <key>', IDEMPOTENCY_HELP)
     .action(handleErrors(async (userId: string, opts) => {
       const client = getClient();
-      const toRecipients = parseRecipients(opts.to);
-
-      await client.request(`/users/${encodeURIComponent(userId)}/sendMail`, {
-        method: 'POST',
-        body: JSON.stringify({
-          message: {
-            subject: opts.subject,
-            body: { contentType: opts.html ? 'HTML' : 'Text', content: opts.body },
-            toRecipients,
-          },
-          saveToSentItems: true,
-        }),
+      const message = {
+        subject: opts.subject,
+        body: { contentType: opts.html ? 'HTML' : 'Text', content: opts.body },
+        toRecipients: parseRecipients(opts.to),
+      };
+      const sent = await idempotentSend(client, opts.idempotencyKey, 'mail shared-send', { userId, message }, async () => {
+        await client.request(`/users/${encodeURIComponent(userId)}/sendMail`, {
+          method: 'POST',
+          body: JSON.stringify({ message, saveToSentItems: true }),
+        });
       });
-      info('Email sent from shared mailbox.');
+      if (sent) success('Email sent from shared mailbox.');
     }));
 
   // ── Inbox rules ─────────────────────────────────────────────
-  mail
+  addListOptions(mail
     .command('rules')
-    .description('List inbox rules')
+    .description('List inbox rules'))
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
-      const client = getClient();
-      const response = await client.request('/me/mailFolders/inbox/messageRules');
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(getClient(), '/me/mailFolders/inbox/messageRules', {}, opts);
     }));
 
   mail
@@ -975,11 +926,11 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .requiredOption('--name <name>', 'Rule display name')
     .option('--from <addresses>', 'Comma-separated sender addresses to match')
     .option('--subject-contains <words>', 'Comma-separated words to match in subject')
-    .option('--move-to <folderId>', 'Move matching messages to folder ID')
+    .option('--move-to <name>', 'Move matching messages to this folder (name, path or ID)')
     .option('--forward-to <addresses>', 'Comma-separated addresses to forward to')
     .option('--delete', 'Delete matching messages')
     .option('--mark-read', 'Mark matching messages as read')
-    .option('--importance <level>', 'Set importance: low, normal, high')
+    .addOption(new Option('--importance <level>', 'Set importance').choices(['low', 'normal', 'high']))
     .option('--stop-processing', 'Stop processing subsequent rules')
     .option('--all-messages', 'Apply the rule to every incoming message (required when no condition is given)')
     .option('--disabled', 'Create the rule disabled')
@@ -999,9 +950,6 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       }
 
       const actions: Record<string, unknown> = {};
-      if (opts.moveTo) {
-        actions.moveToFolder = opts.moveTo;
-      }
       if (opts.forwardTo) {
         actions.forwardTo = parseRecipients(opts.forwardTo);
       }
@@ -1018,6 +966,11 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         actions.stopProcessingRules = true;
       }
 
+      const client = getClient();
+      if (opts.moveTo) {
+        actions.moveToFolder = await resolve(client, 'mail-folder', opts.moveTo);
+      }
+
       const rule: Record<string, unknown> = {
         displayName: opts.name,
         conditions,
@@ -1025,7 +978,6 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         isEnabled: !opts.disabled,
       };
 
-      const client = getClient();
       const response = await client.request('/me/mailFolders/inbox/messageRules', {
         method: 'POST',
         body: JSON.stringify(rule),
@@ -1037,7 +989,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .command('update-rule <ruleId>')
     .description('Update an inbox rule')
     .option('--name <name>', 'Rule display name')
-    .option('--enabled <bool>', 'Enable/disable rule (true/false)')
+    .addOption(new Option('--enabled <bool>', 'Enable/disable the rule').choices(['true', 'false']))
     .addOption(outputOption())
     .action(handleErrors(async (ruleId: string, opts) => {
       const client = getClient();
@@ -1068,10 +1020,10 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
   mail
     .command('batch-move <messageIds>')
     .description('Move multiple messages to a folder (comma-separated IDs; sent via JSON batching)')
-    .requiredOption('--folder <folderId>', 'Destination folder name or ID')
+    .requiredOption('--folder <name>', 'Destination folder name, path or ID')
     .action(handleErrors(async (messageIds: string, opts) => {
       const client = getClient();
-      const folderId = await resolveFolderName(client, opts.folder) || opts.folder;
+      const folderId = await resolve(client, 'mail-folder', opts.folder);
       const ids = messageIds.split(',').map(id => id.trim()).filter(Boolean);
       const results = await client.batch(ids.map(id => ({
         method: 'POST', url: `/me/messages/${encodeURIComponent(id)}/move`, body: { destinationId: folderId },
@@ -1086,7 +1038,7 @@ function reportBatch(ids: string[], results: BatchResult[], verb: string, suffix
   const failed = ids
     .map((id, i) => ({ id, r: results[i] }))
     .filter(({ r }) => !(r.status === 0 && (r.body as { dryRun?: boolean } | null)?.dryRun) && (r.status < 200 || r.status >= 300));
-  info(`${verb} ${ids.length - failed.length} message(s)${suffix ? ' ' + suffix : ''}.`);
+  success(`${verb} ${ids.length - failed.length} message(s)${suffix ? ' ' + suffix : ''}.`);
   if (failed.length > 0) {
     const detail = failed.map(({ id, r }) => {
       const msg = (r.body as { error?: { message?: string } } | null)?.error?.message ?? `status ${r.status}`;

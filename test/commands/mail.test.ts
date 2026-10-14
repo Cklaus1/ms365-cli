@@ -172,7 +172,7 @@ describe('mail list (M-24, M-30, M-31)', () => {
     const r = await run(['list', '--folder', "L'Été", '-o', 'json'], {
       routes: [['GET', '/me/mailFolders?', () => ({ value: [{ id: 'F1', displayName: "L'Été" }] })]],
     });
-    expect(r.calls[0].path).toContain("$filter=displayName eq 'L''Été'");
+    expect(r.calls[0].path).toBe('/me/mailFolders?$select=id,displayName,childFolderCount&$top=100');
     expect(r.calls[1].path.startsWith('/me/mailFolders/F1/messages')).toBe(true);
   });
 });
