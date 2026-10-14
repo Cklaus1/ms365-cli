@@ -1,6 +1,7 @@
+import fs from 'fs';
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
-import { formatOutput, type OutputFormat } from '../formatter.js';
+import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { outputOption, odataQuote, info } from '../utils.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 
@@ -125,4 +126,100 @@ export function registerExcelCommands(program: Command, getClient: () => GraphCl
       );
       info('Range sorted.');
     }));
+
+  const tablePath = (driveId: string, itemId: string, table: string) =>
+    `${wbPath(driveId, itemId)}/tables/${encodeURIComponent(table)}`;
+
+  excel
+    .command('tables <driveId> <itemId>')
+    .description('List tables in a workbook')
+    .addOption(outputOption())
+    .action(handleErrors(async (driveId: string, itemId: string, opts) => {
+      const client = getClient();
+      await printList(client, `${wbPath(driveId, itemId)}/tables`, {}, opts);
+    }));
+
+  excel
+    .command('table-rows <driveId> <itemId> <table>')
+    .description('List rows of a table (table name or ID)')
+    .option('--top <n>', 'Number of rows')
+    .addOption(outputOption())
+    .action(handleErrors(async (driveId: string, itemId: string, table: string, opts) => {
+      const client = getClient();
+      const queryParams: Record<string, string> = {};
+      if (opts.top) queryParams['$top'] = opts.top;
+      await printList(client, `${tablePath(driveId, itemId, table)}/rows`, { queryParams }, opts);
+    }));
+
+  excel
+    .command('add-rows <driveId> <itemId> <table>')
+    .description('Append rows to a table (table name or ID)')
+    .option('--values <json>', 'Rows as a JSON array of arrays (e.g. [["a",1],["b",2]])')
+    .option('--values-file <path>', 'Rows from a .json (array of arrays) or .csv file')
+    .addOption(outputOption())
+    .action(handleErrors(async (driveId: string, itemId: string, table: string, opts) => {
+      const values = readRows(opts.values, opts.valuesFile);
+      const client = getClient();
+      // POST tables/{id}/rows is the documented tableRowCollection add; body {values: [[...]]}.
+      const response = await client.request(`${tablePath(driveId, itemId, table)}/rows`, {
+        method: 'POST',
+        body: JSON.stringify({ values }),
+      });
+      console.log(formatOutput(response.data, opts.output as OutputFormat));
+    }));
+}
+
+const usageError = (msg: string, fix?: string) => new CliError(msg, { code: 'usage', exitCode: ExitCode.USAGE, fix });
+
+/** Rows for add-rows from exactly one of --values (JSON) or --values-file (.json or .csv). */
+function readRows(json: string | undefined, file: string | undefined): unknown[][] {
+  if ((json === undefined) === (file === undefined)) {
+    throw usageError('Pass exactly one of --values or --values-file', 'e.g. --values \'[["a",1]]\' or --values-file rows.csv');
+  }
+  let text = json;
+  if (file !== undefined) {
+    try {
+      text = fs.readFileSync(file, 'utf8');
+    } catch {
+      throw usageError(`Cannot read --values-file ${file}`);
+    }
+    if (/\.csv$/i.test(file)) return checkRows(parseCsv(text));
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text!);
+  } catch {
+    throw usageError('--values must be valid JSON: an array of arrays');
+  }
+  return checkRows(parsed);
+}
+
+function checkRows(rows: unknown): unknown[][] {
+  if (!Array.isArray(rows) || rows.length === 0 || !rows.every(Array.isArray)) {
+    throw usageError('Rows must be a non-empty array of arrays (one inner array per row)', 'e.g. [["a",1],["b",2]]');
+  }
+  return rows as unknown[][];
+}
+
+/** Comma-separated rows; double quotes wrap fields that hold commas, quotes ("") or newlines. */
+export function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = '';
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"' && text[i + 1] === '"') { field += '"'; i++; }
+      else if (ch === '"') quoted = false;
+      else field += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ',') { row.push(field); field = ''; }
+    else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      row.push(field); rows.push(row); row = []; field = '';
+    } else field += ch;
+  }
+  if (field !== '' || row.length) { row.push(field); rows.push(row); }
+  return rows;
 }

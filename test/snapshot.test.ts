@@ -20,6 +20,7 @@ import { registerWorkflowCommands } from '../src/commands/workflow.js';
 import { registerGroupsCommands } from '../src/commands/groups.js';
 import { registerMeetingsCommands } from '../src/commands/meetings.js';
 import { registerWatchCommands } from '../src/commands/watch.js';
+import { registerNotesCommands } from '../src/commands/notes.js';
 import type { GraphClient } from '../src/graph-client.js';
 
 /**
@@ -32,7 +33,7 @@ const MODULES: Register[] = [
   registerMailCommands, registerCalendarCommands, registerDriveCommands, registerTodoCommands,
   registerContactsCommands, registerTeamsCommands, registerSharePointCommands, registerPlannerCommands,
   registerOneNoteCommands, registerExcelCommands, registerSearchCommands, registerUserCommands,
-  registerWorkflowCommands, registerGroupsCommands, registerMeetingsCommands, registerWatchCommands,
+  registerWorkflowCommands, registerGroupsCommands, registerMeetingsCommands, registerWatchCommands, registerNotesCommands,
 ];
 
 let tmp: string;

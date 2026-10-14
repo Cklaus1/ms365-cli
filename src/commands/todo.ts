@@ -169,4 +169,66 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
+  // ── Checklist items (steps) ─────────────────────────────────
+  const checklistPath = async (client: GraphClient, listArg: string, taskId: string) => {
+    const listId = await resolve(client, 'todo-list', listArg);
+    return `/me/todo/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(taskId)}/checklistItems`;
+  };
+
+  todo
+    .command('checklist')
+    .argument('<listId>', 'To Do list ID or name')
+    .argument('<taskId>', 'Task ID')
+    .description('List checklist items (steps) of a task')
+    .addOption(outputOption())
+    .action(handleErrors(async (listArg: string, taskId: string, opts) => {
+      const client = getClient();
+      await printList(client, await checklistPath(client, listArg, taskId), {}, opts);
+    }));
+
+  todo
+    .command('check-add')
+    .argument('<listId>', 'To Do list ID or name')
+    .argument('<taskId>', 'Task ID')
+    .description('Add a checklist item to a task')
+    .requiredOption('--title <title>', 'Checklist item text')
+    .addOption(outputOption())
+    .action(handleErrors(async (listArg: string, taskId: string, opts) => {
+      const client = getClient();
+      const response = await client.request(await checklistPath(client, listArg, taskId), {
+        method: 'POST',
+        body: JSON.stringify({ displayName: opts.title }),
+      });
+      console.log(formatOutput(response.data, opts.output as OutputFormat));
+    }));
+
+  todo
+    .command('check-done')
+    .argument('<listId>', 'To Do list ID or name')
+    .argument('<taskId>', 'Task ID')
+    .argument('<itemId>', 'Checklist item ID')
+    .description('Tick a checklist item (--undo to untick)')
+    .option('--undo', 'Mark the item not done')
+    .addOption(outputOption())
+    .action(handleErrors(async (listArg: string, taskId: string, itemId: string, opts) => {
+      const client = getClient();
+      const response = await client.request(`${await checklistPath(client, listArg, taskId)}/${encodeURIComponent(itemId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ isChecked: !opts.undo }),
+      });
+      console.log(formatOutput(response.data, opts.output as OutputFormat));
+    }));
+
+  todo
+    .command('check-delete')
+    .argument('<listId>', 'To Do list ID or name')
+    .argument('<taskId>', 'Task ID')
+    .argument('<itemId>', 'Checklist item ID')
+    .description('Delete a checklist item')
+    .action(handleErrors(async (listArg: string, taskId: string, itemId: string) => {
+      if (!await confirm(`Delete checklist item ${itemId.substring(0, 16)}...?`)) return;
+      const client = getClient();
+      await client.request(`${await checklistPath(client, listArg, taskId)}/${encodeURIComponent(itemId)}`, { method: 'DELETE' });
+      info('Checklist item deleted.');
+    }));
 }

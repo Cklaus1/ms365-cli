@@ -44,6 +44,7 @@ const PERSONAL_SCOPES = [
   'MailboxSettings.ReadWrite',
   'User.ReadWrite',
   'Files.Read.All',
+  'ShortNotes.ReadWrite',
 ];
 
 const ORG_SCOPES = [

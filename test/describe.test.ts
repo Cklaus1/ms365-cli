@@ -26,6 +26,7 @@ import { registerAuditCommands } from '../src/commands/audit.js';
 import { registerDescribeCommand } from '../src/commands/describe.js';
 import { registerMcpCommands } from '../src/commands/mcp.js';
 import { registerResolveCommands } from '../src/commands/resolve.js';
+import { registerNotesCommands } from '../src/commands/notes.js';
 import { commandMeta, catalogPaths } from '../src/catalog.js';
 import type { GraphClient } from '../src/graph-client.js';
 import type { AuthManager } from '../src/auth.js';
@@ -57,6 +58,7 @@ const MODULES: Module[] = [
   { file: 'describe.ts', register: (p) => registerDescribeCommand(p) },
   { file: 'mcp.ts', register: (p) => registerMcpCommands(p) },
   { file: 'resolve.ts', register: (p, g) => registerResolveCommands(p, g) },
+  { file: 'notes.ts', register: (p, g) => registerNotesCommands(p, g) },
 ];
 
 const noAuth = (() => { throw new Error('describe must not touch auth'); }) as () => AuthManager;
@@ -115,7 +117,7 @@ describe('ms365 describe --json', () => {
   it('reports option defaults and mandatory options', async () => {
     const { json } = await describeJson('search', 'query');
     const entity = json.commands[0].options.find((o: { long: string }) => o.long === '--entity');
-    expect(entity).toMatchObject({ flags: '--entity <types>', takesValue: true, default: 'driveItem', choices: null });
+    expect(entity).toMatchObject({ flags: '--entity <types>', takesValue: true, default: 'message,event,driveItem', choices: null });
     const all = (await describeJson()).json.commands.flatMap((c: { options: Array<{ required: boolean }> }) => c.options);
     expect(all.some((o: { required: boolean }) => o.required)).toBe(true);
   });

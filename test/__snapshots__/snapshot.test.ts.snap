@@ -176,6 +176,15 @@ exports[`dry-run endpoint snapshot (every command) > calendar view 1`] = `
 }
 `;
 
+exports[`dry-run endpoint snapshot (every command) > chat create 1`] = `
+{
+  "argv": "chat create --members x",
+  "error": "Error: Invalid email address: "x"",
+  "exitCode": 2,
+  "requests": [],
+}
+`;
+
 exports[`dry-run endpoint snapshot (every command) > chat get 1`] = `
 {
   "argv": "chat get CHATID",
@@ -507,6 +516,15 @@ exports[`dry-run endpoint snapshot (every command) > drive upload 1`] = `
 }
 `;
 
+exports[`dry-run endpoint snapshot (every command) > excel add-rows 1`] = `
+{
+  "argv": "excel add-rows /Docs/a.txt ITEMID TABLE",
+  "error": "Error: Pass exactly one of --values or --values-file (fix: e.g. --values '[["a",1]]' or --values-file rows.csv)",
+  "exitCode": 2,
+  "requests": [],
+}
+`;
+
 exports[`dry-run endpoint snapshot (every command) > excel create-chart 1`] = `
 {
   "argv": "excel create-chart /Docs/a.txt ITEMID WORKSHEETID --type text/plain --source x --series-by {}",
@@ -545,6 +563,28 @@ exports[`dry-run endpoint snapshot (every command) > excel sort-range 1`] = `
   "exitCode": 0,
   "requests": [
     "[dry-run] POST https://graph.microsoft.com/v1.0/drives/%2FDocs%2Fa.txt/items/ITEMID/workbook/worksheets/WORKSHEETID/range(address='ADDRESS')/sort/apply",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > excel table-rows 1`] = `
+{
+  "argv": "excel table-rows /Docs/a.txt ITEMID TABLE",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/drives/%2FDocs%2Fa.txt/items/ITEMID/workbook/tables/TABLE/rows",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > excel tables 1`] = `
+{
+  "argv": "excel tables /Docs/a.txt ITEMID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/drives/%2FDocs%2Fa.txt/items/ITEMID/workbook/tables",
   ],
 }
 `;
@@ -1114,6 +1154,59 @@ exports[`dry-run endpoint snapshot (every command) > meetings transcripts 1`] = 
 }
 `;
 
+exports[`dry-run endpoint snapshot (every command) > notes create 1`] = `
+{
+  "argv": "notes create --body x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/notes",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > notes delete 1`] = `
+{
+  "argv": "notes delete ID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] DELETE https://graph.microsoft.com/v1.0/me/notes/ID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > notes get 1`] = `
+{
+  "argv": "notes get ID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/notes/ID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > notes list 1`] = `
+{
+  "argv": "notes list",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/notes",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > notes update 1`] = `
+{
+  "argv": "notes update ID",
+  "error": "Error: Nothing to update (fix: Pass --body and/or --subject)",
+  "exitCode": 2,
+  "requests": [],
+}
+`;
+
 exports[`dry-run endpoint snapshot (every command) > onenote create-page 1`] = `
 {
   "argv": "onenote create-page SECTIONID --title x --content aGVsbG8=",
@@ -1425,6 +1518,7 @@ exports[`dry-run endpoint snapshot (every command) > search query 1`] = `
   "exitCode": 0,
   "requests": [
     "[dry-run] POST https://graph.microsoft.com/v1.0/search/query",
+    "[dry-run] POST https://graph.microsoft.com/v1.0/search/query",
   ],
 }
 `;
@@ -1656,6 +1750,54 @@ exports[`dry-run endpoint snapshot (every command) > teams send-channel-message 
     "[dry-run] GET https://graph.microsoft.com/v1.0/me/joinedTeams",
     "[dry-run] GET https://graph.microsoft.com/v1.0/teams/TEAMID/channels",
     "[dry-run] POST https://graph.microsoft.com/v1.0/teams/TEAMID/channels/CHANNELID/messages",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > todo check-add 1`] = `
+{
+  "argv": "todo check-add LISTID TASKID --title x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/todo/lists",
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/todo/lists/LISTID/tasks/TASKID/checklistItems",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > todo check-delete 1`] = `
+{
+  "argv": "todo check-delete LISTID TASKID ITEMID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/todo/lists",
+    "[dry-run] DELETE https://graph.microsoft.com/v1.0/me/todo/lists/LISTID/tasks/TASKID/checklistItems/ITEMID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > todo check-done 1`] = `
+{
+  "argv": "todo check-done LISTID TASKID ITEMID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/todo/lists",
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/todo/lists/LISTID/tasks/TASKID/checklistItems/ITEMID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > todo checklist 1`] = `
+{
+  "argv": "todo checklist LISTID TASKID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/todo/lists",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/todo/lists/LISTID/tasks/TASKID/checklistItems",
   ],
 }
 `;

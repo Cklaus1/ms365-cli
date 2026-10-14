@@ -1,8 +1,8 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
-import { outputOption, info } from '../utils.js';
-import { handleErrors } from '../errors.js';
+import { outputOption, info, validateEmail } from '../utils.js';
+import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { resolve } from '../resolve.js';
 import { addContentOptions, contentOptions, htmlToText, messageTransform } from '../content.js';
 
@@ -99,18 +99,15 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
     .description('Send a message to a channel')
     .requiredOption('--body <body>', 'Message body')
     .option('--html', 'Body is HTML')
+    .option('--mention <upn>', '@mention a user by UPN/email (repeatable)', collect, [])
     .action(handleErrors(async (teamArg: string, channelArg: string, opts) => {
+      const upns = mentionUpns(opts.mention);
       const client = getClient();
       const teamId = await resolve(client, 'team', teamArg);
       const channelId = await resolve(client, 'channel', channelArg, teamId);
       await client.request(
         `/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            body: { contentType: opts.html ? 'html' : 'text', content: opts.body },
-          }),
-        }
+        { method: 'POST', body: JSON.stringify(await messagePayload(client, opts.body, !!opts.html, upns)) }
       );
       info('Channel message sent.');
     }));
@@ -186,17 +183,43 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
     }));
 
   chat
+    .command('create')
+    .description('Create a 1:1 chat (one member) or group chat (two or more)')
+    .requiredOption('--members <emails>', 'Comma-separated UPNs/emails of the other members')
+    .option('--topic <topic>', 'Group chat topic')
+    .addOption(outputOption())
+    .action(handleErrors(async (opts) => {
+      const upns = String(opts.members).split(',').filter(e => e.trim()).map(usageEmail);
+      if (upns.length === 0) throw usage('--members needs at least one email');
+      const chatType = upns.length === 1 ? 'oneOnOne' : 'group';
+      if (opts.topic && chatType === 'oneOnOne') throw usage('--topic applies to group chats only (two or more members)');
+      const client = getClient();
+      // The signed-in user must be listed as a member too.
+      const me = (await client.request('/me', { queryParams: { $select: 'id' } })).data as { id?: string };
+      const member = (user: string) => ({
+        '@odata.type': '#microsoft.graph.aadUserConversationMember',
+        roles: ['owner'],
+        'user@odata.bind': `https://graph.microsoft.com/v1.0/users('${user}')`,
+      });
+      const chatBody: Record<string, unknown> = { chatType };
+      if (opts.topic) chatBody.topic = opts.topic;
+      chatBody.members = [member(me.id ?? '<me>'), ...upns.map(member)];
+      const response = await client.request('/chats', { method: 'POST', body: JSON.stringify(chatBody) });
+      console.log(formatOutput(response.data, opts.output as OutputFormat));
+    }));
+
+  chat
     .command('send <chatId>')
     .description('Send a chat message')
     .requiredOption('--body <body>', 'Message body')
     .option('--html', 'Body is HTML')
+    .option('--mention <upn>', '@mention a user by UPN/email (repeatable)', collect, [])
     .action(handleErrors(async (chatId: string, opts) => {
+      const upns = mentionUpns(opts.mention);
       const client = getClient();
       await client.request(`/chats/${encodeURIComponent(chatId)}/messages`, {
         method: 'POST',
-        body: JSON.stringify({
-          body: { contentType: opts.html ? 'html' : 'text', content: opts.body },
-        }),
+        body: JSON.stringify(await messagePayload(client, opts.body, !!opts.html, upns)),
       });
       info('Message sent.');
     }));
@@ -237,4 +260,51 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
 
 function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+const usage = (msg: string) => new CliError(msg, { code: 'usage', exitCode: ExitCode.USAGE });
+
+function usageEmail(email: string): string {
+  try {
+    return validateEmail(email);
+  } catch (e) {
+    throw usage((e as Error).message);
+  }
+}
+
+function collect(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
+function mentionUpns(values: string[] | undefined): string[] {
+  return (values ?? []).map(usageEmail);
+}
+
+/**
+ * chatMessage body with @mentions: each mentioned user becomes `<at id="N">displayName</at>`
+ * in an HTML body (replacing the first "@displayName" in the text, else appended) plus a
+ * matching `mentions[N]` entry. Without mentions the body is sent as given.
+ */
+async function messagePayload(client: GraphClient, text: string, html: boolean, upns: string[]): Promise<Record<string, unknown>> {
+  if (upns.length === 0) return { body: { contentType: html ? 'html' : 'text', content: text } };
+  let content = html ? text : escapeHtml(text);
+  const mentions = [];
+  for (const [n, upn] of upns.entries()) {
+    const user = (await client.request(`/users/${encodeURIComponent(upn)}`, { queryParams: { $select: 'id,displayName' } })).data as
+      { id?: string; displayName?: string };
+    if (!user.id && !client.isDryRun()) {
+      throw new CliError(`No user found for ${upn}`, { code: 'not_found', exitCode: ExitCode.NOT_FOUND });
+    }
+    const displayName = user.displayName ?? upn;
+    const tag = `<at id="${n}">${escapeHtml(displayName)}</at>`;
+    const needle = `@${escapeHtml(displayName)}`;
+    const at = content.indexOf(needle);
+    content = at >= 0 ? content.slice(0, at) + tag + content.slice(at + needle.length) : `${content} ${tag}`;
+    mentions.push({
+      id: n,
+      mentionText: displayName,
+      mentioned: { user: { id: user.id ?? upn, displayName, userIdentityType: 'aadUser' } },
+    });
+  }
+  return { body: { contentType: 'html', content }, mentions };
 }

@@ -33,6 +33,7 @@ const PERMISSION_GROUPS = {
   'Tasks / To Do (read/write)': ['Tasks.ReadWrite'],
   'Contacts (read/write)': ['Contacts.ReadWrite'],
   'OneNote (read/create)': ['Notes.Read', 'Notes.Create'],
+  'Outlook quick-capture notes (read/write)': ['ShortNotes.ReadWrite'],
   'People (read)': ['People.Read'],
   'Presence (read/write)': ['Presence.Read', 'Presence.ReadWrite'],
   'User profile (read/write, incl. photo)': ['User.Read', 'User.ReadWrite'],
