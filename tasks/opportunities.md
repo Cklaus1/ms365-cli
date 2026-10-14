@@ -29,3 +29,7 @@ Things discovered mid-build that have no assigned task. Each entry gives a propo
 
 - **[P2] `auth scopes`/`auth status` under `--dry-run` still build an AuthManager** and may refresh the token cache (a local side effect, DR-22 class). (core-1)
 - **[P3] MCP dry-run results return only the stdout placeholder**; the stderr trace isn't included in the tool result. (core-1, for the B10 MCP track)
+- **[P3] `drive upload` "Uploading…" is written with `console.error`**, so `--quiet` doesn't suppress it. (B4)
+- **[P3] `digest` dry-run trace under-counts the per-list GETs.** (B7)
+- **[P3] `user set-presence --duration` takes ISO 8601 (`PT30M`)** while the other duration options take `30m`. Unify on one form. (FIN)
+- **[P3] The snapshot records only the first error line** to stay reviewable. A full-stderr variant could catch more regressions. (FIN)

@@ -1,6 +1,7 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { detectShape, defaultColumns } from '../src/columns.js';
 import { formatOutput, setFields } from '../src/formatter.js';
+import { setQuiet } from '../src/utils.js';
 
 const message = {
   '@odata.etag': 'W/"CQAAABYAAAA"',
@@ -319,6 +320,27 @@ describe('table output uses default columns', () => {
     expect(formatOutput(data, 'csv').split('\n')[0]).toContain('bodyPreview');
     expect(formatOutput(data, 'text')).toContain('bodyPreview');
     expect(formatOutput(data, 'yaml')).toContain('bodyPreview');
+  });
+});
+
+describe('default-columns footer hint (F9)', () => {
+  const HINT = '(showing default columns; use --fields id,... or -o json for all fields)';
+  const stderrOf = (fn: () => void) => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((s: string) => { lines.push(s); });
+    try { fn(); } finally { spy.mockRestore(); setQuiet(false); }
+    return lines;
+  };
+
+  it('prints one hint on stderr when the table drops columns', () => {
+    expect(stderrOf(() => formatOutput({ value: [message] }, 'table'))).toEqual([HINT]);
+  });
+
+  it('is silent when every column shows, under --quiet, and for json/ndjson/csv', () => {
+    expect(stderrOf(() => formatOutput({ value: [{ a: '1', b: '2' }] }, 'table'))).toEqual([]);
+    expect(stderrOf(() => { setFields(['id', 'subject']); formatOutput({ value: [message] }, 'table'); })).toEqual([]);
+    expect(stderrOf(() => { setQuiet(true); formatOutput({ value: [message] }, 'table'); })).toEqual([]);
+    for (const f of ['json', 'ndjson', 'csv'] as const) expect(stderrOf(() => formatOutput({ value: [message] }, f))).toEqual([]);
   });
 });
 

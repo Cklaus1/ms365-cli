@@ -6,7 +6,7 @@ import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import {
   truncate, parseRecipients, formatSize, addListOptions, outputOption, confirm, info, success,
-  kqlQuote, safeOutputPath, resolveTimeZone, parseTime, toGraphDateTime,
+  kqlQuote, safeOutputPath, resolveTimeZone, parseTime, toGraphDateTime, fromGet,
 } from '../utils.js';
 import { detectMimeType } from '../mime.js';
 import { idempotentSend, IDEMPOTENCY_HELP } from '../idempotency.js';
@@ -102,7 +102,7 @@ async function prependHtml(client: GraphClient, draftId: string, html: string): 
     queryParams: { '$select': 'body' }, headers: { Prefer: 'outlook.body-content-type="html"' },
   });
   const existing = client.isPreview(current)
-    ? '<from GET>'
+    ? fromGet()
     : String((current.data as { body?: { content?: string } }).body?.content ?? '');
   const open = /<body[^>]*>/i.exec(existing);
   const content = open ? existing.slice(0, open.index + open[0].length) + html + existing.slice(open.index + open[0].length) : html + existing;
@@ -1011,10 +1011,11 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .description('Mark multiple messages as read (comma-separated IDs; sent via JSON batching)')
     .action(handleErrors(async (messageIds: string) => {
       const ids = messageIds.split(',').map(id => id.trim()).filter(Boolean);
-      const results = await getClient().batch(ids.map(id => ({
+      const client = getClient();
+      const results = await client.batch(ids.map(id => ({
         method: 'PATCH', url: `/me/messages/${encodeURIComponent(id)}`, body: { isRead: true },
       })));
-      reportBatch(ids, results, 'Marked', 'as read');
+      reportBatch(client, ids, results, 'Marked', 'as read');
     }));
 
   mail
@@ -1028,16 +1029,16 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       const results = await client.batch(ids.map(id => ({
         method: 'POST', url: `/me/messages/${encodeURIComponent(id)}/move`, body: { destinationId: folderId },
       })));
-      reportBatch(ids, results, 'Moved', '');
+      reportBatch(client, ids, results, 'Moved', '');
     }));
 
 }
 
 /** Summarize batch results on stderr; fail (exit 1) when any item failed. */
-function reportBatch(ids: string[], results: BatchResult[], verb: string, suffix: string): void {
+function reportBatch(client: GraphClient, ids: string[], results: BatchResult[], verb: string, suffix: string): void {
   const failed = ids
     .map((id, i) => ({ id, r: results[i] }))
-    .filter(({ r }) => !(r.status === 0 && (r.body as { dryRun?: boolean } | null)?.dryRun) && (r.status < 200 || r.status >= 300));
+    .filter(({ r }) => !client.isPreview(r) && (r.status < 200 || r.status >= 300));
   success(`${verb} ${ids.length - failed.length} message(s)${suffix ? ' ' + suffix : ''}.`);
   if (failed.length > 0) {
     const detail = failed.map(({ id, r }) => {

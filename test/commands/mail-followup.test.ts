@@ -314,7 +314,7 @@ describe('DR-T4/DR-T5/DR-T6: dry-run prints no invented outcomes (DR-1, DR-12, D
       expect(r.exitCode, argv.join(' ')).toBe(0);
       const status = r.stderr.split('\n').filter(l => !l.startsWith('[dry-run]'));
       expect(status.join('\n'), argv.join(' ')).not.toMatch(STATUS);
-      expect(r.stderr.trim().split('\n').at(-1), argv.join(' ')).toMatch(/^\[dry-run\] \d+ request\(s\) previewed; nothing was sent\.$/);
+      expect(r.stderr.trim().split('\n').at(-1), argv.join(' ')).toMatch(/^\[dry-run\] \d+ request\(s\) previewed; nothing was sent(; bodies use placeholders for values read from Graph)?\.$/);
     }
   });
 

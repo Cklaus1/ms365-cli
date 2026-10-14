@@ -65,7 +65,17 @@ let previewed = 0;
 export function notePreview(): void { previewed++; }
 /** Requests previewed since the last reset (handleErrors resets it per command). */
 export function previewCount(): number { return previewed; }
-export function resetPreviewCount(): void { previewed = 0; }
+/** Start a command's dry-run bookkeeping: no requests previewed, no placeholder used. */
+export function resetPreviewCount(): void { previewed = 0; placeholderUsed = false; }
+
+let placeholderUsed = false;
+/** The `<from GET>` stand-in for a value only the real run reads from Graph; the dry-run trailer then says so (DR-11). */
+export function fromGet(): string {
+  placeholderUsed = true;
+  return '<from GET>';
+}
+/** True when fromGet() was used since the last reset. */
+export function usedPlaceholder(): boolean { return placeholderUsed; }
 
 /** A post-write confirmation ("Email sent."): like info(), but silent under --dry-run, where nothing happened (F2). */
 export function success(msg: string): void {

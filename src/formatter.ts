@@ -1,6 +1,7 @@
 import type { GraphClient, GraphRequestOptions } from './graph-client.js';
 import { CliError, ExitCode } from './errors.js';
 import { defaultColumns } from './columns.js';
+import { info } from './utils.js';
 
 export type OutputFormat = 'json' | 'ndjson' | 'table' | 'csv' | 'text' | 'yaml';
 
@@ -233,6 +234,8 @@ function formatTable(data: unknown): string {
   }
   const columns = tableColumns(items, Array.from(keySet));
   if (columns.length === 0) return JSON.stringify(data, null, 2);
+  // F9: the defaults leave out id and the long tail; say how to get them (stderr, so stdout stays the table).
+  if (columns.length < keySet.size) info('(showing default columns; use --fields id,... or -o json for all fields)');
 
   // Calculate column widths (capped at 50)
   const widths: Record<string, number> = {};

@@ -279,7 +279,7 @@ export function markTeamsMessage(item: Record<string, unknown>, userTenant: stri
 export type ItemTransform = (items: unknown[]) => Promise<unknown[]>;
 
 function isMessage(item: unknown): item is Record<string, unknown> {
-  return !!item && typeof item === 'object' && !Array.isArray(item) && !(item as { dryRun?: boolean }).dryRun;
+  return !!item && typeof item === 'object' && !Array.isArray(item);
 }
 
 /**
@@ -302,7 +302,8 @@ export function messageTransform(client: GraphClient, kind: 'mail' | 'teams', op
     }
   };
   return async (items) => {
-    if (!items.some(isMessage)) return items;
+    // Under --dry-run every item is the request placeholder, not a message.
+    if (client.isDryRun() || !items.some(isMessage)) return items;
     const id = await (identity ??= lookup());
     return items.map((item) => {
       if (!isMessage(item)) return item;

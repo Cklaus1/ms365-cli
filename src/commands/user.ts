@@ -203,9 +203,9 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
         }
         throw err;
       }
+      if (client.isPreview(response)) return; // nothing downloaded
       const data = response.data as { contentBytes?: string };
-      if (!data.contentBytes) return; // dry-run: nothing downloaded
-      fs.writeFileSync(outPath, Buffer.from(data.contentBytes, 'base64'));
+      fs.writeFileSync(outPath, Buffer.from(data.contentBytes ?? '', 'base64'));
       info(`Photo saved to ${outPath}`);
     }));
 

@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
-import { addListOptions, outputOption, success, validateEmail } from '../utils.js';
+import { addListOptions, outputOption, success, odataQuote, validateEmail } from '../utils.js';
 import { idempotentSend, IDEMPOTENCY_HELP } from '../idempotency.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { resolve } from '../resolve.js';
@@ -191,7 +191,7 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       const member = (user: string) => ({
         '@odata.type': '#microsoft.graph.aadUserConversationMember',
         roles: ['owner'],
-        'user@odata.bind': `https://graph.microsoft.com/v1.0/users('${user}')`,
+        'user@odata.bind': `https://graph.microsoft.com/v1.0/users('${odataQuote(user)}')`,
       });
       const chatBody: Record<string, unknown> = { chatType };
       if (opts.topic) chatBody.topic = opts.topic;

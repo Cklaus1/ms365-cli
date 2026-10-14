@@ -8,7 +8,7 @@ import {
   setErrorFormat, handleErrors, setExitHandler, resetExitHandler,
 } from '../src/errors.js';
 import { graphError } from '../src/graph-client.js';
-import { confirm, setDryRun, setQuiet, notePreview } from '../src/utils.js';
+import { confirm, setDryRun, setQuiet, notePreview, fromGet } from '../src/utils.js';
 
 afterEach(() => {
   resetExitHandler();
@@ -113,6 +113,12 @@ describe('handleErrors', () => {
       setDryRun(true);
       notePreview(); // left over from an earlier command: reset at the start of each action
       expect(await stderrOf(async () => { notePreview(); notePreview(); })).toEqual(['[dry-run] 2 request(s) previewed; nothing was sent.']);
+    });
+    it('notes placeholders when a body used <from GET> in this command (DR-11)', async () => {
+      setDryRun(true);
+      expect(await stderrOf(async () => { notePreview(); expect(fromGet()).toBe('<from GET>'); notePreview(); }))
+        .toEqual(['[dry-run] 2 request(s) previewed; nothing was sent; bodies use placeholders for values read from Graph.']);
+      expect(await stderrOf(async () => { notePreview(); })).toEqual(['[dry-run] 1 request(s) previewed; nothing was sent.']);
     });
     it('is absent without --dry-run, under --quiet, and on failure', async () => {
       expect(await stderrOf(async () => { notePreview(); })).toEqual([]);

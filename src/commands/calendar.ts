@@ -2,7 +2,7 @@ import { Command, InvalidArgumentError, Option } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import {
-  addListOptions, outputOption, confirm, info, success, validateEmail, resolveTimeZone, preferTimeZone, parseTime, parseGraphDateTime, toIsoWithOffset,
+  addListOptions, outputOption, confirm, info, success, validateEmail, resolveTimeZone, preferTimeZone, parseTime, parseGraphDateTime, toIsoWithOffset, fromGet,
 } from '../utils.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { fingerprint, isDryRun, withIdempotency } from '../idempotency.js';
@@ -43,8 +43,6 @@ function parseInterval(value: string): string {
   return String(n);
 }
 
-/** Under --dry-run the event zone comes from a previewed GET, so the PATCH shows where it would go (DR-17, F5). */
-const FROM_GET = '<from GET>';
 
 const CALENDAR_COLORS = ['auto', 'lightBlue', 'lightGreen', 'lightOrange', 'lightGray', 'lightYellow', 'lightTeal', 'lightPink', 'lightBrown', 'lightRed', 'maxColor'];
 const colorOption = () => new Option('--color <color>', 'Calendar color').choices(CALENDAR_COLORS);
@@ -228,7 +226,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
           const existing = await client.request(endpoint, { queryParams: { $select: 'originalStartTimeZone' } });
           const eventTz = (existing.data as { originalStartTimeZone?: string }).originalStartTimeZone;
           if (client.isPreview(existing)) {
-            toGraph = (input) => ({ dateTime: graphTime(input, resolveTimeZone()).dateTime, timeZone: FROM_GET });
+            toGraph = (input) => ({ dateTime: graphTime(input, resolveTimeZone()).dateTime, timeZone: fromGet() });
           } else {
             toGraph = eventTz ? (input) => eventZoneTime(input, eventTz) : (input) => graphTime(input, resolveTimeZone());
           }
@@ -407,7 +405,8 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
       const start = opts.start ? parseTime(opts.start, { tz }) : parseTime('now', { tz });
       const end = opts.end ? parseTime(opts.end, { tz }) : parseTime('+7d', { tz, now: start.date });
 
-      const response = await getClient().request('/me/findMeetingTimes', {
+      const client = getClient();
+      const response = await client.request('/me/findMeetingTimes', {
         method: 'POST',
         headers: preferTimeZone(tz),
         body: JSON.stringify({
@@ -420,11 +419,11 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
         }),
       });
 
-      const data = response.data as { meetingTimeSuggestions?: MeetingTimeSuggestion[]; emptySuggestionsReason?: string; dryRun?: boolean };
-      if (data.dryRun) {
-        console.log(formatOutput(data, opts.output as OutputFormat));
+      if (client.isPreview(response)) {
+        console.log(formatOutput(response.data, opts.output as OutputFormat));
         return;
       }
+      const data = response.data as { meetingTimeSuggestions?: MeetingTimeSuggestion[]; emptySuggestionsReason?: string };
       // Normalize to ISO with the user's offset, whether or not Graph honored the Prefer header.
       const iso = (t: { dateTime: string; timeZone?: string }) => toIsoWithOffset(parseGraphDateTime(t, tz), tz);
       const value = (data.meetingTimeSuggestions ?? []).map(s => ({

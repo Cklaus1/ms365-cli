@@ -14,14 +14,13 @@ const TIME_HELP = 'ISO 8601 or natural ("tomorrow 15:00", "next mon 9:30", "+2h"
 const MEETING_ARG = 'online meeting id or Teams join URL';
 
 const isUrl = (s: string) => /^https?:\/\//i.test(s);
-const isDryRun = (data: unknown) => !!(data as { dryRun?: boolean } | null)?.dryRun;
 
 /** Look up an online meeting by its Teams join URL (the link calendar events carry). */
 async function meetingByJoinUrl(client: GraphClient, joinUrl: string): Promise<Record<string, unknown>> {
   const response = await client.request('/me/onlineMeetings', {
     queryParams: { $filter: `JoinWebUrl eq '${odataQuote(joinUrl)}'` },
   });
-  if (isDryRun(response.data)) return response.data as Record<string, unknown>;
+  if (client.isPreview(response)) return response.data as Record<string, unknown>;
   const meeting = (response.data as { value?: Array<Record<string, unknown>> }).value?.[0];
   if (!meeting) {
     throw new CliError('No online meeting found for that join URL', {
@@ -44,7 +43,7 @@ async function meetingPath(client: GraphClient, idOrUrl: string): Promise<string
 async function latestId(client: GraphClient, collection: string, given: string | undefined, kind: string): Promise<string> {
   if (given) return encodeURIComponent(given);
   const response = await client.request(collection);
-  if (isDryRun(response.data)) return 'LATEST';
+  if (client.isPreview(response)) return 'LATEST';
   const items = (response.data as { value?: Array<{ id: string; createdDateTime?: string }> }).value ?? [];
   const latest = items.reduce<{ id: string; createdDateTime?: string } | undefined>(
     (best, it) => (!best || (it.createdDateTime ?? '') > (best.createdDateTime ?? '') ? it : best), undefined);
@@ -156,11 +155,12 @@ export function registerMeetingsCommands(program: Command, getClient: () => Grap
         queryParams: { $format: 'text/vtt' },
         responseType: 'text',
       });
-      if (typeof response.data !== 'string') {
-        console.log(formatOutput(response.data, 'json')); // --dry-run
+      if (client.isPreview(response)) {
+        console.log(formatOutput(response.data, 'json'));
         return;
       }
-      const text = opts.format === 'txt' ? vttToText(response.data) : response.data;
+      const vtt = response.data as string;
+      const text = opts.format === 'txt' ? vttToText(vtt) : vtt;
       if (target === null) {
         process.stdout.write(text);
         return;

@@ -14,12 +14,12 @@ import type { ReadableStream as WebReadableStream } from 'stream/web';
 /** Fetch a /content endpoint and stream its body to `target` (a file path) or stdout. */
 async function download(client: GraphClient, endpoint: string, target: string | null): Promise<void> {
   const response = await client.request(endpoint, { responseType: 'stream' });
-  if (!response.stream) {
-    // --dry-run (or an empty body): nothing to save
+  if (client.isPreview(response)) {
     console.log(formatOutput(response.data, 'json'));
     return;
   }
-  const body = Readable.fromWeb(response.stream as WebReadableStream<Uint8Array>);
+  // A body-less answer (204) saves an empty file.
+  const body = response.stream ? Readable.fromWeb(response.stream as WebReadableStream<Uint8Array>) : Readable.from([]);
   if (target === null) {
     for await (const chunk of body) {
       if (!process.stdout.write(chunk)) await once(process.stdout, 'drain');

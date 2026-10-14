@@ -3,11 +3,9 @@ import { GraphClient } from '../graph-client.js';
 import { formatOutput } from '../formatter.js';
 import { CliError, ExitCode, handleErrors } from '../errors.js';
 import {
-  parseDate, outputOption, info, success, resolveTimeZone, preferTimeZone, parseGraphDateTime, dayRange, toGraphDateTime,
+  parseDate, outputOption, info, success, resolveTimeZone, preferTimeZone, parseGraphDateTime, dayRange, toGraphDateTime, fromGet,
 } from '../utils.js';
 
-/** Under --dry-run, stands in for a value the real run reads from Graph (DR-11, F5). */
-const FROM_GET = '<from GET>';
 /** Under --dry-run, stands in for the list the real run picks from GET /me/todo/lists (DR-10). */
 const FIRST_LIST = '<first-list>';
 
@@ -244,7 +242,7 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
         queryParams: { '$select': 'subject,from,bodyPreview,webLink,receivedDateTime' },
       });
       const msg: Record<string, unknown> = client.isPreview(msgRes)
-        ? { subject: FROM_GET, from: { emailAddress: { name: FROM_GET, address: FROM_GET } }, receivedDateTime: FROM_GET, bodyPreview: FROM_GET, webLink: FROM_GET }
+        ? { subject: fromGet(), from: { emailAddress: { name: fromGet(), address: fromGet() } }, receivedDateTime: fromGet(), bodyPreview: fromGet(), webLink: fromGet() }
         : msgRes.data as Record<string, unknown>;
       const from = (msg.from as Record<string, unknown>)?.emailAddress as Record<string, unknown>;
 
@@ -440,9 +438,9 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
       const file = fileRes.data as Record<string, unknown>;
       // Under dry-run the file's fields are only known to the real run (DR-11)
       const preview = client.isPreview(fileRes);
-      const field = (v: unknown) => preview ? FROM_GET : escapeHtml(String(v ?? ''));
+      const field = (v: unknown) => preview ? fromGet() : escapeHtml(String(v ?? ''));
 
-      const sizeKb = preview ? FROM_GET : String(Math.round((file.size as number || 0) / 1024));
+      const sizeKb = preview ? fromGet() : String(Math.round((file.size as number || 0) / 1024));
       const name = field(file.name);
       const intro = opts.message ? escapeHtml(opts.message) : `New file shared: <b>${name}</b>`;
       const body = [

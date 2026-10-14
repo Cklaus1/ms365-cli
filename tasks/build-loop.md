@@ -163,3 +163,7 @@ DONE = all scheduled tasks DONE or BLOCKED-and-logged
 
 ## Divergence log
 - QP-7: folder listings add `childFolderCount` to `$select` so the BFS skips leaf folders (otherwise up to 500 requests). The QP-8 snapshot lines will include it. Follow-ups: QP-8 imports `WELL_KNOWN_FOLDERS` from resolve.ts; QP-9 adds Mail.Read (Mail.Read.Shared with `--user`) for mail-folder in the catalog.
+- FIN: the snapshot sampler must give `user upload-photo` a .jpg and `user set-timezone` a valid zone (UTC). (B6)
+- FIN: DR-11 asks the dry-run trailer (errors.ts) to add "bodies use placeholders for values read from Graph" when a placeholder was used. B7 left it because errors.ts was out of its scope.
+- Opportunity (B7): under dry-run, `digest` can't trace the per-list task GETs (no lists come back), so the trace under-reports the real request count.
+- XT7: MCP resource URIs are `ms365://watch/*` (the orchestrator's brief) rather than the spec's `ms365://delta/*`; reads return raw NDJSON.

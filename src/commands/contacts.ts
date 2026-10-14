@@ -119,14 +119,14 @@ export function registerContactsCommands(program: Command, getClient: () => Grap
     }));
 
   // ── Contact folders ─────────────────────────────────────────
-  contacts
+  addListOptions(contacts
     .command('folders')
-    .description('List contact folders')
+    .description('List contact folders'), { description: 'Number of folders' })
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
-      const client = getClient();
-      const response = await client.request('/me/contactFolders');
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      const queryParams: Record<string, string> = {};
+      if (opts.top) queryParams['$top'] = String(opts.top);
+      await printList(getClient(), '/me/contactFolders', { queryParams }, opts);
     }));
 
   contacts

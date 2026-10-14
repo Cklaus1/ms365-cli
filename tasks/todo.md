@@ -15,39 +15,39 @@ Derived from commits. Waves are defined in tasks/build-loop.md.
 - [x] VT3
 
 ## W2
-- [ ] DR-T1
-- [ ] DR-T2
-- [ ] DR-T3
-- [ ] XT4
-- [ ] RT-5
-- [ ] QP-2
-- [ ] QP-9
+- [x] DR-T1
+- [x] DR-T2
+- [x] DR-T3
+- [x] XT4
+- [x] RT-5
+- [x] QP-2
+- [x] QP-9
 - [x] VT6
 
 ## W3
-- [ ] RT-2
-- [ ] RT-6
-- [ ] RT-8
-- [ ] QP-8
-- [ ] QP-5
-- [ ] DR-T4
-- [ ] DR-T5
-- [ ] DR-T6
-- [ ] VT7
-- [ ] RT-7
-- [ ] RT-9
-- [ ] QP-1
-- [ ] QP-3
-- [ ] VT4
-- [ ] XT9
-- [ ] QP-4
-- [ ] XT6
-- [ ] VT2
-- [ ] VT5
+- [x] RT-2
+- [x] RT-6
+- [x] RT-8
+- [x] QP-8
+- [x] QP-5
+- [x] DR-T4
+- [x] DR-T5
+- [x] DR-T6
+- [x] VT7
+- [x] RT-7
+- [x] RT-9
+- [x] QP-1
+- [x] QP-3
+- [x] VT4
+- [x] XT9
+- [x] QP-4
+- [x] XT6
+- [x] VT2
+- [x] VT5
 
 ## W4
-- [ ] XT5
-- [ ] XT7
+- [x] XT5
+- [x] XT7
 - [ ] DR-T7
 - [ ] QP-6
 - [ ] VT9

@@ -54,7 +54,7 @@ function plannerRequest(client: GraphClient, endpoint: string, options?: GraphRe
 async function autoFetchETag(client: GraphClient, endpoint: string): Promise<string> {
   const response = await plannerRequest(client, endpoint);
   const data = response.data as Record<string, unknown> | undefined;
-  if (data?.dryRun) return 'W/"dry-run"';
+  if (client.isPreview(response)) return 'W/"dry-run"';
   const etag = data?.['@odata.etag'] ?? response.headers?.get('ETag');
   if (typeof etag === 'string' && etag) return etag;
   throw new CliError(`Could not auto-fetch ETag for ${endpoint}. Provide --etag manually.`);

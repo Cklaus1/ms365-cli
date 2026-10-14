@@ -69,5 +69,25 @@ else skipc "mcp tools/list"; fi
 # 9. confirmation refused (non-TTY) exits 7
 check "confirm refused exit 7" 7 env MS365_CLI_TOKEN=dummy $CLI todo delete L T < /dev/null && ok "confirm refused exit 7"
 
+# 10. dry-run needs no client ID, no config and no home (DR AC5): exits 0 and writes nothing
+mkdir -p "$TMP/empty-home" "$TMP/empty-cfg"
+check "dry-run without client ID" 0 env HOME="$TMP/empty-home" MS365_CLI_CONFIG_DIR="$TMP/empty-cfg" MS365_CLI_CLIENT_ID= MS365_CLI_TOKEN= \
+  $CLI --dry-run mail send --to a@b.com --subject s --body b && {
+  if [ -n "$(find "$TMP/empty-home" "$TMP/empty-cfg" -mindepth 1)" ]; then bad "dry-run without client ID (wrote files)";
+  else ok "dry-run without client ID"; fi; }
+
+# 11. the dry-run trace is stderr-only for other families too (DR AC4): cal create -o json stays parseable
+check "dry-run trace on stderr" 0 $CLI --dry-run calendar create --subject s --start 2026-10-20T10:00 --end 2026-10-20T11:00 --timezone UTC -o json && {
+  if grep -q "\[dry-run\]" "$TMP/out"; then bad "dry-run trace leaked to stdout (cal create)";
+  elif ! grep -q "\[dry-run\] POST https://graph.microsoft.com/v1.0/me/events" "$TMP/err"; then bad "cal create trace missing on stderr";
+  elif node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); if(d.dryRun!==true||!d.body) process.exit(1)' "$TMP/out"; then ok "dry-run trace on stderr";
+  else bad "cal create -o json stdout shape"; fi; }
+
+# 12. a stdin password is redacted from the preview (DR AC3)
+check "dry-run password redacted" 0 sh -c "printf 's3cret' | $CLI --dry-run drive share D I --scope anonymous --password-stdin" && {
+  if grep -q "s3cret" "$TMP/out" "$TMP/err"; then bad "password leaked in dry-run output";
+  elif grep -q "<redacted>" "$TMP/out" "$TMP/err"; then ok "dry-run password redacted";
+  else bad "dry-run password not shown as <redacted>"; fi; }
+
 echo "smoke: pass=$pass fail=$fail skip=$skip"
 [ "$fail" = 0 ]
