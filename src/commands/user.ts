@@ -1,8 +1,8 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
-import { handleErrors } from '../errors.js';
-import { outputOption, info } from '../utils.js';
+import { handleErrors, CliError, ExitCode } from '../errors.js';
+import { outputOption, info, parseTime, resolveTimeZone, safeOutputPath } from '../utils.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -41,7 +41,7 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
       if (opts.select) queryParams['$select'] = opts.select;
 
       const response = opts.all
-        ? await client.requestAllPages('/users', { queryParams })
+        ? await client.requestAllPages('/users', { queryParams }, opts.pageLimit ? parseInt(opts.pageLimit) : undefined, opts.pageDelay ? parseInt(opts.pageDelay) : undefined)
         : await client.request('/users', { queryParams });
 
       console.log(formatOutput(response.data, opts.output as OutputFormat));
@@ -65,10 +65,18 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
     .option('--internal <message>', 'Auto-reply for internal senders (HTML)')
     .option('--external <message>', 'Auto-reply for external senders (HTML)')
     .option('--audience <audience>', 'External audience: all, contactsOnly, none', 'all')
-    .option('--start <datetime>', 'Schedule start (ISO 8601, required if scheduled)')
-    .option('--end <datetime>', 'Schedule end (ISO 8601, required if scheduled)')
+    .option('--start <datetime>', 'Schedule start (ISO 8601 or e.g. "tomorrow 9:00"; required if scheduled)')
+    .option('--end <datetime>', 'Schedule end (ISO 8601 or e.g. "+3d"; required if scheduled)')
+    .option('--timezone <tz>', 'IANA time zone for --start/--end (default: MS365_CLI_TIMEZONE or system zone)')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
+      if (opts.status === 'scheduled' && !(opts.start && opts.end)) {
+        throw new CliError('--status scheduled requires both --start and --end.', { code: 'usage', exitCode: ExitCode.USAGE });
+      }
+      const tz = resolveTimeZone(opts.timezone);
+      const start = opts.start ? parseTime(opts.start, { tz }) : undefined;
+      const end = opts.end ? parseTime(opts.end, { tz }) : undefined;
+
       const client = getClient();
       const settings: Record<string, unknown> = {
         status: opts.status,
@@ -81,9 +89,9 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
       if (opts.external) {
         settings.externalReplyMessage = opts.external;
       }
-      if (opts.start && opts.end) {
-        settings.scheduledStartDateTime = { dateTime: opts.start, timeZone: 'UTC' };
-        settings.scheduledEndDateTime = { dateTime: opts.end, timeZone: 'UTC' };
+      if (start && end) {
+        settings.scheduledStartDateTime = { dateTime: start.dateTime, timeZone: start.timeZone };
+        settings.scheduledEndDateTime = { dateTime: end.dateTime, timeZone: end.timeZone };
       }
 
       const response = await client.request('/me/mailboxSettings', {
@@ -163,18 +171,25 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
     .command('download-photo')
     .description('Download profile photo')
     .option('--out <path>', 'Output file path', 'profile-photo.jpg')
+    .option('--force', 'Overwrite --out if it already exists')
     .action(handleErrors(async (opts) => {
+      const outPath = safeOutputPath(opts.out, { out: opts.out, force: opts.force });
       const client = getClient();
-      const response = await client.request('/me/photo/$value');
-      const data = response.data as Record<string, unknown>;
-
-      if (data.contentBytes) {
-        const outPath = path.resolve(opts.out);
-        fs.writeFileSync(outPath, Buffer.from(data.contentBytes as string, 'base64'));
-        console.log(`Photo saved to ${outPath}`);
-      } else {
-        console.log('No profile photo found.');
+      let response;
+      try {
+        response = await client.request('/me/photo/$value', { responseType: 'binary' });
+      } catch (err) {
+        if (err instanceof CliError && err.status === 404) {
+          info('No profile photo found.');
+          process.exitCode = ExitCode.NOT_FOUND;
+          return;
+        }
+        throw err;
       }
+      const data = response.data as { contentBytes?: string };
+      if (!data.contentBytes) return; // dry-run: nothing downloaded
+      fs.writeFileSync(outPath, Buffer.from(data.contentBytes, 'base64'));
+      info(`Photo saved to ${outPath}`);
     }));
 
   user
