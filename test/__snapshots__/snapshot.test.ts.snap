@@ -1,0 +1,1870 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`dry-run endpoint snapshot (every command) > calendar accept 1`] = `
+{
+  "argv": "calendar accept EVENTID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/events/EVENTID/accept",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > calendar create 1`] = `
+{
+  "argv": "calendar create --subject x --start 2026-10-20T10:00 --end 2026-10-20T10:00",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/events",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > calendar create-calendar 1`] = `
+{
+  "argv": "calendar create-calendar --name x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/calendars",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > calendar decline 1`] = `
+{
+  "argv": "calendar decline EVENTID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/events/EVENTID/decline",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > calendar delete 1`] = `
+{
+  "argv": "calendar delete EVENTID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] DELETE https://graph.microsoft.com/v1.0/me/events/EVENTID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > calendar events 1`] = `
+{
+  "argv": "calendar events",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/events?$top=10",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > calendar free-busy 1`] = `
+{
+  "argv": "calendar free-busy --emails a@contoso.com --start 2026-10-20T10:00 --end 2026-10-20T10:00",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/calendar/getSchedule",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > calendar get 1`] = `
+{
+  "argv": "calendar get EVENTID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/events/EVENTID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > calendar list 1`] = `
+{
+  "argv": "calendar list",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/calendars",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > calendar room-lists 1`] = `
+{
+  "argv": "calendar room-lists",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/places/microsoft.graph.roomlist",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > calendar rooms 1`] = `
+{
+  "argv": "calendar rooms",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/places/microsoft.graph.room",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > calendar tentative 1`] = `
+{
+  "argv": "calendar tentative EVENTID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/events/EVENTID/tentativelyAccept",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > calendar update 1`] = `
+{
+  "argv": "calendar update EVENTID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/events/EVENTID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > calendar update-calendar 1`] = `
+{
+  "argv": "calendar update-calendar CALENDARID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/calendars/CALENDARID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > calendar view 1`] = `
+{
+  "argv": "calendar view --start 2026-10-20T10:00 --end 2026-10-20T10:00",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-20T17%3A00%3A00.000Z&endDateTime=2026-10-20T17%3A00%3A00.000Z",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > chat get 1`] = `
+{
+  "argv": "chat get CHATID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/chats/CHATID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > chat list 1`] = `
+{
+  "argv": "chat list",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/chats",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > chat messages 1`] = `
+{
+  "argv": "chat messages CHATID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/chats/CHATID/messages",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > chat reply 1`] = `
+{
+  "argv": "chat reply CHATID MESSAGEID --body x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/chats/CHATID/messages/MESSAGEID",
+    "[dry-run] POST https://graph.microsoft.com/v1.0/chats/CHATID/messages",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > chat send 1`] = `
+{
+  "argv": "chat send CHATID --body x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/chats/CHATID/messages",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > contacts create 1`] = `
+{
+  "argv": "contacts create --given-name x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/contacts",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > contacts create-folder 1`] = `
+{
+  "argv": "contacts create-folder --name x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/contactFolders",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > contacts delete 1`] = `
+{
+  "argv": "contacts delete CONTACTID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] DELETE https://graph.microsoft.com/v1.0/me/contacts/CONTACTID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > contacts folder-contacts 1`] = `
+{
+  "argv": "contacts folder-contacts FOLDERID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/contactFolders/FOLDERID/contacts",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > contacts folders 1`] = `
+{
+  "argv": "contacts folders",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/contactFolders",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > contacts get 1`] = `
+{
+  "argv": "contacts get CONTACTID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/contacts/CONTACTID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > contacts list 1`] = `
+{
+  "argv": "contacts list",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/contacts",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > contacts update 1`] = `
+{
+  "argv": "contacts update CONTACTID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/contacts/CONTACTID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > contacts update-folder 1`] = `
+{
+  "argv": "contacts update-folder FOLDERID --name x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/contactFolders/FOLDERID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > drive cat 1`] = `
+{
+  "argv": "drive cat /Docs/a.txt",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/drive/root:/Docs/a.txt:/content",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > drive cp 1`] = `
+{
+  "argv": "drive cp <tmp>/sample.txt /Docs/a.txt",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] PUT https://graph.microsoft.com/v1.0/me/drive/root:/Docs/a.txt:/content",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > drive delete 1`] = `
+{
+  "argv": "drive delete /Docs/a.txt ITEMID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] DELETE https://graph.microsoft.com/v1.0/drives/%2FDocs%2Fa.txt/items/ITEMID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > drive download 1`] = `
+{
+  "argv": "drive download /Docs/a.txt ITEMID CHILDID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/drives/%2FDocs%2Fa.txt/items/ITEMID/children/CHILDID/content",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > drive download-shared 1`] = `
+{
+  "argv": "drive download-shared SHAREID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/shares/SHAREID/driveItem/content",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > drive files 1`] = `
+{
+  "argv": "drive files /Docs/a.txt FOLDERID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/drives/%2FDocs%2Fa.txt/items/FOLDERID/children",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > drive info 1`] = `
+{
+  "argv": "drive info /Docs/a.txt ITEMID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/drives/%2FDocs%2Fa.txt/items/ITEMID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > drive list 1`] = `
+{
+  "argv": "drive list",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/drives",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > drive ls 1`] = `
+{
+  "argv": "drive ls",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/drive/root/children",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > drive mkdir 1`] = `
+{
+  "argv": "drive mkdir /Docs/a.txt PARENTID NAME",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/drives/%2FDocs%2Fa.txt/items/PARENTID/children",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > drive permissions 1`] = `
+{
+  "argv": "drive permissions /Docs/a.txt ITEMID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/drives/%2FDocs%2Fa.txt/items/ITEMID/permissions",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > drive quota 1`] = `
+{
+  "argv": "drive quota",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/drive?$select=quota",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > drive root 1`] = `
+{
+  "argv": "drive root /Docs/a.txt",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/drives/%2FDocs%2Fa.txt/root",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > drive search 1`] = `
+{
+  "argv": "drive search QUERY",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/drive/root/search(q='QUERY')?$top=25",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > drive share 1`] = `
+{
+  "argv": "drive share /Docs/a.txt ITEMID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/drives/%2FDocs%2Fa.txt/items/ITEMID/createLink",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > drive upload 1`] = `
+{
+  "argv": "drive upload /Docs/a.txt PARENTID <tmp>/sample.txt",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] PUT https://graph.microsoft.com/v1.0/drives/%2FDocs%2Fa.txt/items/PARENTID:/sample.txt:/content",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > excel create-chart 1`] = `
+{
+  "argv": "excel create-chart /Docs/a.txt ITEMID WORKSHEETID --type text/plain --source x --series-by {}",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/drives/%2FDocs%2Fa.txt/items/ITEMID/workbook/worksheets/WORKSHEETID/charts/add",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > excel format-range 1`] = `
+{
+  "argv": "excel format-range /Docs/a.txt ITEMID WORKSHEETID ADDRESS",
+  "error": "Error: No formatting option given (fix: Pass at least one of --font-bold, --font-color, --fill-color)",
+  "exitCode": 2,
+  "requests": [],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > excel range 1`] = `
+{
+  "argv": "excel range /Docs/a.txt ITEMID WORKSHEETID ADDRESS",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/drives/%2FDocs%2Fa.txt/items/ITEMID/workbook/worksheets/WORKSHEETID/range(address='ADDRESS')",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > excel sort-range 1`] = `
+{
+  "argv": "excel sort-range /Docs/a.txt ITEMID WORKSHEETID ADDRESS --fields [{"key":0,"ascending":true}]",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/drives/%2FDocs%2Fa.txt/items/ITEMID/workbook/worksheets/WORKSHEETID/range(address='ADDRESS')/sort/apply",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > excel worksheets 1`] = `
+{
+  "argv": "excel worksheets /Docs/a.txt ITEMID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/drives/%2FDocs%2Fa.txt/items/ITEMID/workbook/worksheets",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > groups distribution-lists 1`] = `
+{
+  "argv": "groups distribution-lists",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/groups?$filter=mailEnabled%20eq%20true%20and%20securityEnabled%20eq%20false&$select=id%2CdisplayName%2Cmail%2Cdescription%2CmembershipRule&$top=25",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > groups get 1`] = `
+{
+  "argv": "groups get GROUPID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/groups/GROUPID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > groups list 1`] = `
+{
+  "argv": "groups list",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/groups?$top=25",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > groups members 1`] = `
+{
+  "argv": "groups members GROUPID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/groups/GROUPID/members",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > groups my 1`] = `
+{
+  "argv": "groups my",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/memberOf/microsoft.graph.group?$top=50",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > groups owners 1`] = `
+{
+  "argv": "groups owners GROUPID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/groups/GROUPID/owners",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > groups teams 1`] = `
+{
+  "argv": "groups teams",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/groups?$filter=resourceProvisioningOptions%2FAny(x%3Ax%20eq%20'Team')&$select=id%2CdisplayName%2Cmail%2Cdescription&$top=25",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail add-attachment 1`] = `
+{
+  "argv": "mail add-attachment MESSAGEID --content-type text/plain",
+  "error": "Error: Pass exactly one of --content or --file.",
+  "exitCode": 2,
+  "requests": [],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail attachment 1`] = `
+{
+  "argv": "mail attachment MESSAGEID ATTACHMENTID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/messages/MESSAGEID/attachments/ATTACHMENTID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail attachments 1`] = `
+{
+  "argv": "mail attachments MESSAGEID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/messages/MESSAGEID/attachments",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail batch-move 1`] = `
+{
+  "argv": "mail batch-move ID1,ID2 --folder x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/mailFolders?$filter=displayName%20eq%20'x'&$select=id%2CdisplayName&$top=1",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/mailFolders?$select=id%2CdisplayName&$top=100",
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/messages/ID1/move",
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/messages/ID2/move",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail batch-read 1`] = `
+{
+  "argv": "mail batch-read ID1,ID2",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/messages/ID1",
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/messages/ID2",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail categorize 1`] = `
+{
+  "argv": "mail categorize MESSAGEID --categories {}",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/messages/MESSAGEID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail complete 1`] = `
+{
+  "argv": "mail complete MESSAGEID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/messages/MESSAGEID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail create-folder 1`] = `
+{
+  "argv": "mail create-folder --name x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/mailFolders",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail create-rule 1`] = `
+{
+  "argv": "mail create-rule --name x",
+  "error": "Error: Refusing to create a rule with no conditions: it would act on every incoming message. (fix: add --from or --subject-contains, or pass --all-messages to confirm)",
+  "exitCode": 2,
+  "requests": [],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail delete 1`] = `
+{
+  "argv": "mail delete MESSAGEID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] DELETE https://graph.microsoft.com/v1.0/me/messages/MESSAGEID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail delete-attachment 1`] = `
+{
+  "argv": "mail delete-attachment MESSAGEID ATTACHMENTID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] DELETE https://graph.microsoft.com/v1.0/me/messages/MESSAGEID/attachments/ATTACHMENTID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail download-attachment 1`] = `
+{
+  "argv": "mail download-attachment MESSAGEID ATTACHMENTID",
+  "error": "Error: No content found. This may be a reference attachment or item attachment.",
+  "exitCode": 1,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/messages/MESSAGEID/attachments/ATTACHMENTID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail draft 1`] = `
+{
+  "argv": "mail draft --to a@contoso.com --subject x --body x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/messages",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail drafts 1`] = `
+{
+  "argv": "mail drafts",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/mailFolders/drafts/messages?$top=10&$select=id%2Csubject%2CtoRecipients%2CcreatedDateTime%2ClastModifiedDateTime%2CbodyPreview%2ChasAttachments&$orderby=lastModifiedDateTime%20desc",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail flag 1`] = `
+{
+  "argv": "mail flag MESSAGEID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/messages/MESSAGEID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail folder 1`] = `
+{
+  "argv": "mail folder NAME",
+  "error": "Error: Folder "NAME" not found. Run: ms365 mail folders -o table",
+  "exitCode": 1,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/mailFolders?$filter=displayName%20eq%20'NAME'&$select=id%2CdisplayName&$top=1",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/mailFolders?$select=id%2CdisplayName&$top=100",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail folders 1`] = `
+{
+  "argv": "mail folders",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/mailFolders?$select=id%2CdisplayName%2CparentFolderId%2CchildFolderCount%2CtotalItemCount%2CunreadItemCount&$top=100",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail forward 1`] = `
+{
+  "argv": "mail forward MESSAGEID --to a@contoso.com",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/messages/MESSAGEID/forward",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail get 1`] = `
+{
+  "argv": "mail get MESSAGEID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/messages/MESSAGEID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail list 1`] = `
+{
+  "argv": "mail list",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/messages?$top=10",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail mark-read 1`] = `
+{
+  "argv": "mail mark-read MESSAGEID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/messages/MESSAGEID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail mark-unread 1`] = `
+{
+  "argv": "mail mark-unread MESSAGEID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/messages/MESSAGEID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail move 1`] = `
+{
+  "argv": "mail move MESSAGEID --folder x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/messages/MESSAGEID/move",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail read 1`] = `
+{
+  "argv": "mail read MESSAGEID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/messages/MESSAGEID?$select=id%2Csubject%2Cfrom%2CtoRecipients%2CccRecipients%2CreceivedDateTime%2CsentDateTime%2Cbody%2CbodyPreview%2ChasAttachments%2Cimportance%2Ccategories%2Cflag%2CisRead%2CconversationId%2CinternetMessageId",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail reply 1`] = `
+{
+  "argv": "mail reply MESSAGEID --body x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/messages/MESSAGEID/reply",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail rule 1`] = `
+{
+  "argv": "mail rule RULEID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messageRules/RULEID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail rules 1`] = `
+{
+  "argv": "mail rules",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messageRules",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail send 1`] = `
+{
+  "argv": "mail send --to a@contoso.com --subject x --body x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/sendMail",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail send-draft 1`] = `
+{
+  "argv": "mail send-draft MESSAGEID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/messages/MESSAGEID/send",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail shared-get 1`] = `
+{
+  "argv": "mail shared-get USERID MESSAGEID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/users/USERID/messages/MESSAGEID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail shared-list 1`] = `
+{
+  "argv": "mail shared-list USERID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/users/USERID/messages?$top=10",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail shared-send 1`] = `
+{
+  "argv": "mail shared-send USERID --to a@contoso.com --subject x --body x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/users/USERID/sendMail",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail triage 1`] = `
+{
+  "argv": "mail triage",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/messages?$top=20&$select=id%2Csubject%2Cfrom%2CreceivedDateTime%2ChasAttachments%2Cimportance%2Ccategories%2Cflag%2CisRead%2CbodyPreview&$orderby=receivedDateTime%20desc&$filter=receivedDateTime%20ge%201900-01-01T00%3A00%3A00Z%20and%20(isRead%20eq%20false)",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail unflag 1`] = `
+{
+  "argv": "mail unflag MESSAGEID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/messages/MESSAGEID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail update-draft 1`] = `
+{
+  "argv": "mail update-draft MESSAGEID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/messages/MESSAGEID?$select=isDraft",
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/messages/MESSAGEID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail update-rule 1`] = `
+{
+  "argv": "mail update-rule RULEID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messageRules/RULEID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > onenote create-page 1`] = `
+{
+  "argv": "onenote create-page SECTIONID --title x --content aGVsbG8=",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/onenote/sections/SECTIONID/pages",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > onenote notebooks 1`] = `
+{
+  "argv": "onenote notebooks",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/onenote/notebooks",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > onenote page 1`] = `
+{
+  "argv": "onenote page PAGEID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/onenote/pages/PAGEID/content",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > onenote pages 1`] = `
+{
+  "argv": "onenote pages SECTIONID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/onenote/sections/SECTIONID/pages",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > onenote sections 1`] = `
+{
+  "argv": "onenote sections NOTEBOOKID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/onenote/notebooks/NOTEBOOKID/sections",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > planner bucket 1`] = `
+{
+  "argv": "planner bucket BUCKETID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/planner/buckets/BUCKETID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > planner bucket-tasks 1`] = `
+{
+  "argv": "planner bucket-tasks BUCKETID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/planner/buckets/BUCKETID/tasks",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > planner buckets 1`] = `
+{
+  "argv": "planner buckets PLANID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/planner/plans/PLANID/buckets",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > planner create-bucket 1`] = `
+{
+  "argv": "planner create-bucket --plan x --name x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/planner/buckets",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > planner create-plan 1`] = `
+{
+  "argv": "planner create-plan --title x --group x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/planner/plans",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > planner create-task 1`] = `
+{
+  "argv": "planner create-task --plan x --title x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/planner/tasks",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > planner delete-bucket 1`] = `
+{
+  "argv": "planner delete-bucket BUCKETID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/planner/buckets/BUCKETID",
+    "[dry-run] DELETE https://graph.microsoft.com/v1.0/planner/buckets/BUCKETID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > planner delete-plan 1`] = `
+{
+  "argv": "planner delete-plan PLANID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/planner/plans/PLANID",
+    "[dry-run] DELETE https://graph.microsoft.com/v1.0/planner/plans/PLANID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > planner delete-task 1`] = `
+{
+  "argv": "planner delete-task TASKID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/planner/tasks/TASKID",
+    "[dry-run] DELETE https://graph.microsoft.com/v1.0/planner/tasks/TASKID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > planner my-tasks 1`] = `
+{
+  "argv": "planner my-tasks",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/planner/tasks",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > planner plan 1`] = `
+{
+  "argv": "planner plan PLANID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/planner/plans/PLANID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > planner plan-details 1`] = `
+{
+  "argv": "planner plan-details PLANID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/planner/plans/PLANID/details",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > planner plans 1`] = `
+{
+  "argv": "planner plans",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/planner/plans",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > planner task 1`] = `
+{
+  "argv": "planner task TASKID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/planner/tasks/TASKID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > planner task-details 1`] = `
+{
+  "argv": "planner task-details TASKID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/planner/tasks/TASKID/details",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > planner tasks 1`] = `
+{
+  "argv": "planner tasks PLANID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/planner/plans/PLANID/tasks",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > planner update-bucket 1`] = `
+{
+  "argv": "planner update-bucket BUCKETID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/planner/buckets/BUCKETID",
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/planner/buckets/BUCKETID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > planner update-plan 1`] = `
+{
+  "argv": "planner update-plan PLANID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/planner/plans/PLANID",
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/planner/plans/PLANID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > planner update-plan-details 1`] = `
+{
+  "argv": "planner update-plan-details PLANID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/planner/plans/PLANID/details",
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/planner/plans/PLANID/details",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > planner update-task 1`] = `
+{
+  "argv": "planner update-task TASKID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/planner/tasks/TASKID",
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/planner/tasks/TASKID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > planner update-task-details 1`] = `
+{
+  "argv": "planner update-task-details TASKID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/planner/tasks/TASKID/details",
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/planner/tasks/TASKID/details",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > search people 1`] = `
+{
+  "argv": "search people",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/people?$top=10",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > search query 1`] = `
+{
+  "argv": "search query QUERY",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/search/query",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > sharepoint delta 1`] = `
+{
+  "argv": "sharepoint delta",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/sites/delta()",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > sharepoint drive 1`] = `
+{
+  "argv": "sharepoint drive SITEID /Docs/a.txt",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/sites/SITEID/drives/%2FDocs%2Fa.txt",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > sharepoint drives 1`] = `
+{
+  "argv": "sharepoint drives SITEID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/sites/SITEID/drives",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > sharepoint item 1`] = `
+{
+  "argv": "sharepoint item SITEID ITEMID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/sites/SITEID/items/ITEMID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > sharepoint items 1`] = `
+{
+  "argv": "sharepoint items SITEID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/sites/SITEID/items",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > sharepoint list 1`] = `
+{
+  "argv": "sharepoint list SITEID LISTID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/sites/SITEID/lists/LISTID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > sharepoint list-item 1`] = `
+{
+  "argv": "sharepoint list-item SITEID LISTID ITEMID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/sites/SITEID/lists/LISTID/items/ITEMID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > sharepoint list-items 1`] = `
+{
+  "argv": "sharepoint list-items SITEID LISTID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/sites/SITEID/lists/LISTID/items",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > sharepoint lists 1`] = `
+{
+  "argv": "sharepoint lists SITEID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/sites/SITEID/lists",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > sharepoint search 1`] = `
+{
+  "argv": "sharepoint search QUERY",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/sites?search=QUERY",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > sharepoint site 1`] = `
+{
+  "argv": "sharepoint site SITEID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/sites/SITEID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > sharepoint site-by-path 1`] = `
+{
+  "argv": "sharepoint site-by-path HOSTNAME /Docs/a.txt",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/sites/HOSTNAME:/Docs/a.txt",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > teams channel 1`] = `
+{
+  "argv": "teams channel TEAMID CHANNELID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/teams/TEAMID/channels/CHANNELID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > teams channel-messages 1`] = `
+{
+  "argv": "teams channel-messages TEAMID CHANNELID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/teams/TEAMID/channels/CHANNELID/messages",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > teams channels 1`] = `
+{
+  "argv": "teams channels TEAMID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/teams/TEAMID/channels",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > teams get 1`] = `
+{
+  "argv": "teams get TEAMID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/teams/TEAMID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > teams list 1`] = `
+{
+  "argv": "teams list",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/joinedTeams",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > teams members 1`] = `
+{
+  "argv": "teams members TEAMID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/teams/TEAMID/members",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > teams reply-channel-message 1`] = `
+{
+  "argv": "teams reply-channel-message TEAMID CHANNELID MESSAGEID --body x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/teams/TEAMID/channels/CHANNELID/messages/MESSAGEID/replies",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > teams send-channel-message 1`] = `
+{
+  "argv": "teams send-channel-message TEAMID CHANNELID --body x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/teams/TEAMID/channels/CHANNELID/messages",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > todo create 1`] = `
+{
+  "argv": "todo create LISTID --title x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/todo/lists/LISTID/tasks",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > todo create-list 1`] = `
+{
+  "argv": "todo create-list --name x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/todo/lists",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > todo delete 1`] = `
+{
+  "argv": "todo delete LISTID TASKID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] DELETE https://graph.microsoft.com/v1.0/me/todo/lists/LISTID/tasks/TASKID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > todo get 1`] = `
+{
+  "argv": "todo get LISTID TASKID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/todo/lists/LISTID/tasks/TASKID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > todo lists 1`] = `
+{
+  "argv": "todo lists",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/todo/lists",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > todo tasks 1`] = `
+{
+  "argv": "todo tasks LISTID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/todo/lists/LISTID/tasks",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > todo update 1`] = `
+{
+  "argv": "todo update LISTID TASKID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/todo/lists/LISTID/tasks/TASKID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > todo update-list 1`] = `
+{
+  "argv": "todo update-list LISTID --name x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/todo/lists/LISTID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > user clear-presence 1`] = `
+{
+  "argv": "user clear-presence",
+  "error": "Error: Client ID not configured. Set MS365_CLI_CLIENT_ID or run: ms365 auth setup",
+  "exitCode": 1,
+  "requests": [],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > user download-photo 1`] = `
+{
+  "argv": "user download-photo",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/photo/$value",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > user list 1`] = `
+{
+  "argv": "user list",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/users",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > user mailbox-settings 1`] = `
+{
+  "argv": "user mailbox-settings",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/mailboxSettings",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > user me 1`] = `
+{
+  "argv": "user me",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > user ooo 1`] = `
+{
+  "argv": "user ooo",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/mailboxSettings/automaticRepliesSetting",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > user photo 1`] = `
+{
+  "argv": "user photo",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/photo",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > user presence 1`] = `
+{
+  "argv": "user presence",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/presence",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > user set-language 1`] = `
+{
+  "argv": "user set-language LOCALE",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/mailboxSettings",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > user set-ooo 1`] = `
+{
+  "argv": "user set-ooo --status x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/mailboxSettings",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > user set-presence 1`] = `
+{
+  "argv": "user set-presence --availability x --activity x",
+  "error": "Error: Client ID not configured. Set MS365_CLI_CLIENT_ID or run: ms365 auth setup",
+  "exitCode": 1,
+  "requests": [],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > user set-timezone 1`] = `
+{
+  "argv": "user set-timezone TIMEZONE",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/mailboxSettings",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > user upload-photo 1`] = `
+{
+  "argv": "user upload-photo <tmp>/sample.txt",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] PUT https://graph.microsoft.com/v1.0/me/photo/$value",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > user working-hours 1`] = `
+{
+  "argv": "user working-hours",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/mailboxSettings/workingHours",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > workflow digest 1`] = `
+{
+  "argv": "workflow digest",
+  "error": "Error: Cannot read properties of undefined (reading 'dateTime')",
+  "exitCode": 1,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-12T07%3A00%3A00.000Z&endDateTime=2026-10-19T07%3A00%3A00.000Z&$select=subject%2Cstart%2Cend%2CisAllDay&$orderby=start%2FdateTime&$top=100",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/mailFolders/inbox?$select=unreadItemCount",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/todo/lists?$top=10",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > workflow email-to-task 1`] = `
+{
+  "argv": "workflow email-to-task MESSAGEID",
+  "error": "Error: No To Do lists found. Create one first.",
+  "exitCode": 1,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/messages/MESSAGEID?$select=subject%2Cfrom%2CbodyPreview%2CwebLink%2CreceivedDateTime",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/todo/lists?$top=1",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > workflow file-announce 1`] = `
+{
+  "argv": "workflow file-announce /Docs/a.txt ITEMID --team x --channel x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/drives/%2FDocs%2Fa.txt/items/ITEMID?$select=name%2CwebUrl%2Csize%2ClastModifiedDateTime%2CcreatedBy",
+    "[dry-run] POST https://graph.microsoft.com/v1.0/teams/x/channels/x/messages",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > workflow focus-time 1`] = `
+{
+  "argv": "workflow focus-time",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-14T07%3A00%3A00.000Z&endDateTime=2026-10-15T07%3A00%3A00.000Z&$select=subject%2Cstart%2Cend%2CisAllDay%2CshowAs&$orderby=start%2FdateTime&$top=50",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > workflow meeting-prep 1`] = `
+{
+  "argv": "workflow meeting-prep",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-14T17%3A00%3A00.000Z&endDateTime=2026-10-15T17%3A00%3A00.000Z&$select=subject%2Cstart%2Cend%2Clocation%2Cbody%2Cattendees%2Corganizer%2ConlineMeeting%2CisAllDay%2CresponseStatus&$orderby=start%2FdateTime&$top=50",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > workflow standup 1`] = `
+{
+  "argv": "workflow standup",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-14T07%3A00%3A00.000Z&endDateTime=2026-10-15T07%3A00%3A00.000Z&$select=subject%2Cstart%2Cend%2Clocation%2CisAllDay%2Corganizer&$orderby=start%2FdateTime&$top=50",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/mailFolders/inbox?$select=unreadItemCount",
+  ],
+}
+`;

@@ -16,3 +16,5 @@ Things discovered mid-build that have no assigned task. Each entry gives a propo
 - **[P2] Calendar time-zone defaults.** `calendar.ts` `--timezone` defaults to `'UTC'`, which T11 is fixing (M-9). Logged by T12; no action needed if T11 covers it.
 - **[P3] free-busy --emails isn't validated**, and dry-run `cal update` prints the zone-read GET. (T11)
 - **[P3] Setup wizard with piped stdin.** With non-TTY stdin, the second prompt never gets its input and the wizard exits 0 silently (this predates the run). `setup.ts` `prompt()` duplicates the readline code in `confirm()`. (T18)
+- **[P3] `workflow digest --dry-run` crashes** with "Cannot read properties of undefined (reading 'dateTime')", because dry-run data has no `value` array. Found by the T20 snapshot.
+- **[P2] `user set-presence`/`clear-presence` need a client ID even under `--dry-run`**, and throw a plain `Error` (exit 1, not 3). Found by the T20 snapshot; overlaps with T17's discovery.
