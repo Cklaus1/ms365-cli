@@ -18,3 +18,6 @@ Things discovered mid-build that have no assigned task. Each entry gives a propo
 - **[P3] Setup wizard with piped stdin.** With non-TTY stdin, the second prompt never gets its input and the wizard exits 0 silently (this predates the run). `setup.ts` `prompt()` duplicates the readline code in `confirm()`. (T18)
 - **[P3] `workflow digest --dry-run` crashes** with "Cannot read properties of undefined (reading 'dateTime')", because dry-run data has no `value` array. Found by the T20 snapshot.
 - **[P2] `user set-presence`/`clear-presence` need a client ID even under `--dry-run`**, and throw a plain `Error` (exit 1, not 3). Found by the T20 snapshot; overlaps with T17's discovery.
+- **[P3] `mail reply --html` is ignored**; the comment is always sent as plain text. (T35)
+- **[P3] `auth accounts` marks "(active)" from the saved selection** even when `--account` is passed. (T40)
+- **[P3] Catalog scope approximations.** `search query` and `watch` list the union of their resource types' scopes, and `user list` uses `User.Read.All`. Per-option scopes would be more precise. (T30)
