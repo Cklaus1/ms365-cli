@@ -2,7 +2,13 @@ import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
-import { parseDate, outputOption, confirm, info } from '../utils.js';
+import { outputOption, confirm, info, parseTime } from '../utils.js';
+
+/** To Do due dates are whole days: midnight of the parsed date, in the user's zone. */
+function todoDue(input: string, tz?: string): { dateTime: string; timeZone: string } {
+  const t = parseTime(input, { tz });
+  return { dateTime: t.dateTime.slice(0, 10) + 'T00:00:00', timeZone: t.timeZone };
+}
 
 export function registerTodoCommands(program: Command, getClient: () => GraphClient): void {
   const todo = program.command('todo').description('Microsoft To Do tasks');
@@ -59,7 +65,8 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
     .description('Create a task')
     .requiredOption('--title <title>', 'Task title')
     .option('--body <body>', 'Task body/notes')
-    .option('--due <date>', 'Due date (YYYY-MM-DD)')
+    .option('--due <date>', 'Due date (YYYY-MM-DD, "tomorrow", "next fri", "+3d")')
+    .option('--timezone <tz>', 'IANA time zone for --due (default: MS365_CLI_TIMEZONE or local)')
     .option('--importance <level>', 'Importance: low, normal, high', 'normal')
     .addOption(outputOption())
     .action(handleErrors(async (listId: string, opts) => {
@@ -72,7 +79,7 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
         task.body = { contentType: 'text', content: opts.body };
       }
       if (opts.due) {
-        task.dueDateTime = { dateTime: parseDate(opts.due) + 'T00:00:00', timeZone: 'UTC' };
+        task.dueDateTime = todoDue(opts.due, opts.timezone);
       }
 
       const response = await client.request(
@@ -89,7 +96,8 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
     .option('--body <body>', 'Task body')
     .option('--status <status>', 'Status: notStarted, inProgress, completed, waitingOnOthers, deferred')
     .option('--importance <level>', 'Importance: low, normal, high')
-    .option('--due <date>', 'Due date (YYYY-MM-DD)')
+    .option('--due <date>', 'Due date (YYYY-MM-DD, "tomorrow", "next fri", "+3d")')
+    .option('--timezone <tz>', 'IANA time zone for --due (default: MS365_CLI_TIMEZONE or local)')
     .addOption(outputOption())
     .action(handleErrors(async (listId: string, taskId: string, opts) => {
       const client = getClient();
@@ -98,7 +106,7 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
       if (opts.status) patch.status = opts.status;
       if (opts.importance) patch.importance = opts.importance;
       if (opts.body) patch.body = { contentType: 'text', content: opts.body };
-      if (opts.due) patch.dueDateTime = { dateTime: parseDate(opts.due) + 'T00:00:00', timeZone: 'UTC' };
+      if (opts.due) patch.dueDateTime = todoDue(opts.due, opts.timezone);
 
       const response = await client.request(
         `/me/todo/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(taskId)}`,

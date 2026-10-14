@@ -1,29 +1,39 @@
 import { Command } from 'commander';
-import { GraphClient } from '../graph-client.js';
+import { GraphClient, type GraphRequestOptions } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
-import { handleErrors } from '../errors.js';
-import { parseDate, outputOption, confirm, info } from '../utils.js';
+import { handleErrors, CliError } from '../errors.js';
+import { outputOption, confirm, info, parseTime } from '../utils.js';
 
-/** Auto-fetch ETag from a Planner resource when --etag is not provided.
- *  Planner returns the ETag in the response body as @odata.etag before stripping.
- *  We do a raw fetch to read the header or body before OData props are removed. */
-async function autoFetchETag(client: GraphClient, endpoint: string): Promise<string> {
-  // Use the auth token to fetch the resource directly and extract the ETag
-  const token = await (client as any).auth.getToken();
-  const url = `https://graph.microsoft.com/v1.0${endpoint}`;
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-  });
-  if (!response.ok) {
-    throw new Error(`Failed to auto-fetch ETag (${response.status}). Provide --etag manually.`);
+const PREMIUM_HINT = "Premium plans (Project for the web) aren't available via the Graph Planner API";
+
+/** Planner request; a 403/404 on a plan or task may mean a Premium plan, so say so. */
+async function plannerRequest(client: GraphClient, endpoint: string, options?: GraphRequestOptions) {
+  try {
+    return await client.request(endpoint, options);
+  } catch (err) {
+    if (err instanceof CliError && (err.status === 403 || err.status === 404) && /^\/planner\/(plans|tasks)\b/.test(endpoint)) {
+      throw new CliError(err.message, {
+        code: err.code, exitCode: err.exitCode, status: err.status,
+        graphCode: err.graphCode, requestId: err.requestId, fix: PREMIUM_HINT,
+      });
+    }
+    throw err;
   }
-  // Try ETag header first, then body
-  const headerEtag = response.headers.get('ETag');
-  if (headerEtag) return headerEtag;
-  const body = await response.json();
-  const bodyEtag = body['@odata.etag'];
-  if (bodyEtag) return bodyEtag;
-  throw new Error('Could not auto-fetch ETag. Provide --etag manually.');
+}
+
+/** Fetch a Planner resource's ETag (body @odata.etag, else the ETag header) for If-Match. */
+async function autoFetchETag(client: GraphClient, endpoint: string): Promise<string> {
+  const response = await plannerRequest(client, endpoint);
+  const data = response.data as Record<string, unknown> | undefined;
+  if (data?.dryRun) return 'W/"dry-run"';
+  const etag = data?.['@odata.etag'] ?? response.headers?.get('ETag');
+  if (typeof etag === 'string' && etag) return etag;
+  throw new CliError(`Could not auto-fetch ETag for ${endpoint}. Provide --etag manually.`);
+}
+
+/** Planner dueDateTime is a UTC instant; resolve the user's input (date = local midnight). */
+function plannerDue(input: string, tz?: string): string {
+  return parseTime(input, { tz }).date.toISOString();
 }
 
 export function registerPlannerCommands(program: Command, getClient: () => GraphClient): void {
@@ -45,7 +55,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
     .addOption(outputOption())
     .action(handleErrors(async (planId: string, opts) => {
       const client = getClient();
-      const response = await client.request(`/planner/plans/${encodeURIComponent(planId)}`);
+      const response = await plannerRequest(client, `/planner/plans/${encodeURIComponent(planId)}`);
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
@@ -55,7 +65,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
     .addOption(outputOption())
     .action(handleErrors(async (planId: string, opts) => {
       const client = getClient();
-      const response = await client.request(`/planner/plans/${encodeURIComponent(planId)}/details`);
+      const response = await plannerRequest(client, `/planner/plans/${encodeURIComponent(planId)}/details`);
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
@@ -75,7 +85,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
     .addOption(outputOption())
     .action(handleErrors(async (planId: string, opts) => {
       const client = getClient();
-      const response = await client.request(`/planner/plans/${encodeURIComponent(planId)}/tasks`);
+      const response = await plannerRequest(client, `/planner/plans/${encodeURIComponent(planId)}/tasks`);
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
@@ -85,7 +95,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
     .addOption(outputOption())
     .action(handleErrors(async (taskId: string, opts) => {
       const client = getClient();
-      const response = await client.request(`/planner/tasks/${encodeURIComponent(taskId)}`);
+      const response = await plannerRequest(client, `/planner/tasks/${encodeURIComponent(taskId)}`);
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
@@ -95,7 +105,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
     .addOption(outputOption())
     .action(handleErrors(async (taskId: string, opts) => {
       const client = getClient();
-      const response = await client.request(`/planner/tasks/${encodeURIComponent(taskId)}/details`);
+      const response = await plannerRequest(client, `/planner/tasks/${encodeURIComponent(taskId)}/details`);
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
@@ -105,7 +115,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
     .addOption(outputOption())
     .action(handleErrors(async (planId: string, opts) => {
       const client = getClient();
-      const response = await client.request(`/planner/plans/${encodeURIComponent(planId)}/buckets`);
+      const response = await plannerRequest(client, `/planner/plans/${encodeURIComponent(planId)}/buckets`);
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
@@ -135,7 +145,8 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
     .requiredOption('--plan <planId>', 'Plan ID')
     .requiredOption('--title <title>', 'Task title')
     .option('--bucket <bucketId>', 'Bucket ID')
-    .option('--due <date>', 'Due date (YYYY-MM-DD)')
+    .option('--due <date>', 'Due date (YYYY-MM-DD, "tomorrow 17:00", "next fri", "+3d")')
+    .option('--timezone <tz>', 'IANA time zone for --due (default: MS365_CLI_TIMEZONE or local)')
     .option('--assigned-to <userId>', 'Assign to user ID')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
@@ -145,12 +156,12 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
         title: opts.title,
       };
       if (opts.bucket) task.bucketId = opts.bucket;
-      if (opts.due) task.dueDateTime = parseDate(opts.due) + 'T00:00:00Z';
+      if (opts.due) task.dueDateTime = plannerDue(opts.due, opts.timezone);
       if (opts.assignedTo) {
         task.assignments = { [opts.assignedTo]: { '@odata.type': '#microsoft.graph.plannerAssignment', orderHint: ' !' } };
       }
 
-      const response = await client.request('/planner/tasks', {
+      const response = await plannerRequest(client, '/planner/tasks', {
         method: 'POST',
         body: JSON.stringify(task),
       });
@@ -161,7 +172,8 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
     .command('update-task <taskId>')
     .description('Update a planner task')
     .option('--title <title>', 'Task title')
-    .option('--due <date>', 'Due date (YYYY-MM-DD)')
+    .option('--due <date>', 'Due date (YYYY-MM-DD, "tomorrow 17:00", "next fri", "+3d")')
+    .option('--timezone <tz>', 'IANA time zone for --due (default: MS365_CLI_TIMEZONE or local)')
     .option('--percent <n>', 'Percent complete (0, 50, 100)')
     .option('--bucket <bucketId>', 'Move to bucket')
     .option('--etag <etag>', 'ETag for concurrency (auto-fetched if omitted)')
@@ -170,7 +182,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
       const client = getClient();
       const patch: Record<string, unknown> = {};
       if (opts.title) patch.title = opts.title;
-      if (opts.due) patch.dueDateTime = parseDate(opts.due) + 'T00:00:00Z';
+      if (opts.due) patch.dueDateTime = plannerDue(opts.due, opts.timezone);
       if (opts.percent !== undefined) {
         const pct = parseInt(opts.percent);
         if (![0, 50, 100].includes(pct)) {
@@ -180,7 +192,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
       }
       if (opts.bucket) patch.bucketId = opts.bucket;
 
-      const response = await client.request(`/planner/tasks/${encodeURIComponent(taskId)}`, {
+      const response = await plannerRequest(client, `/planner/tasks/${encodeURIComponent(taskId)}`, {
         method: 'PATCH',
         body: JSON.stringify(patch),
         headers: { 'If-Match': opts.etag || await autoFetchETag(client, `/planner/tasks/${encodeURIComponent(taskId)}`) },
@@ -201,7 +213,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
         patch.categoryDescriptions = JSON.parse(opts.categories);
       }
 
-      const response = await client.request(`/planner/plans/${encodeURIComponent(planId)}/details`, {
+      const response = await plannerRequest(client, `/planner/plans/${encodeURIComponent(planId)}/details`, {
         method: 'PATCH',
         body: JSON.stringify(patch),
         headers: { 'If-Match': opts.etag || await autoFetchETag(client, `/planner/plans/${encodeURIComponent(planId)}/details`) },
@@ -220,7 +232,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
       const patch: Record<string, unknown> = {};
       if (opts.description) patch.description = opts.description;
 
-      const response = await client.request(`/planner/tasks/${encodeURIComponent(taskId)}/details`, {
+      const response = await plannerRequest(client, `/planner/tasks/${encodeURIComponent(taskId)}/details`, {
         method: 'PATCH',
         body: JSON.stringify(patch),
         headers: { 'If-Match': opts.etag || await autoFetchETag(client, `/planner/tasks/${encodeURIComponent(taskId)}/details`) },
@@ -236,7 +248,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
       if (!await confirm(`Delete planner task ${taskId.substring(0, 16)}...?`)) return;
       const client = getClient();
       const etag = opts.etag || await autoFetchETag(client, `/planner/tasks/${encodeURIComponent(taskId)}`);
-      await client.request(`/planner/tasks/${encodeURIComponent(taskId)}`, {
+      await plannerRequest(client, `/planner/tasks/${encodeURIComponent(taskId)}`, {
         method: 'DELETE',
         headers: { 'If-Match': etag },
       });
@@ -251,7 +263,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
       if (!await confirm(`Delete planner plan ${planId.substring(0, 16)}...?`)) return;
       const client = getClient();
       const etag = opts.etag || await autoFetchETag(client, `/planner/plans/${encodeURIComponent(planId)}`);
-      await client.request(`/planner/plans/${encodeURIComponent(planId)}`, {
+      await plannerRequest(client, `/planner/plans/${encodeURIComponent(planId)}`, {
         method: 'DELETE',
         headers: { 'If-Match': etag },
       });
@@ -284,7 +296,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
       const patch: Record<string, unknown> = {};
       if (opts.title) patch.title = opts.title;
 
-      const response = await client.request(`/planner/plans/${encodeURIComponent(planId)}`, {
+      const response = await plannerRequest(client, `/planner/plans/${encodeURIComponent(planId)}`, {
         method: 'PATCH',
         body: JSON.stringify(patch),
         headers: { 'If-Match': opts.etag || await autoFetchETag(client, `/planner/plans/${encodeURIComponent(planId)}`) },
@@ -323,7 +335,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
         method: 'POST',
         body: JSON.stringify({
           title: opts.title,
-          owner: opts.group,
+          container: { url: `https://graph.microsoft.com/v1.0/groups/${encodeURIComponent(opts.group)}` },
         }),
       });
       console.log(formatOutput(response.data, opts.output as OutputFormat));
