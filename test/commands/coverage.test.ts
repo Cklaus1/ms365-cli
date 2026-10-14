@@ -328,3 +328,12 @@ describe('search query across entity types (PM-9)', () => {
     expect(r.stderr.match(/\[dry-run\] POST/g)).toHaveLength(2);
   });
 });
+
+describe('notes delete under --dry-run (DR-1)', () => {
+  it('prints no "Note deleted." line, only the trailer', async () => {
+    const r = await runCommand(registerNotesCommands, ['notes', 'delete', 'N1'], { dryRun: true });
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).not.toContain('Note deleted.');
+    expect(r.stderr).toContain('request(s) previewed; nothing was sent.');
+  });
+});

@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
-import { addListOptions, outputOption, confirm, info } from '../utils.js';
+import { addListOptions, outputOption, confirm, success } from '../utils.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 
 /**
@@ -75,6 +75,6 @@ export function registerNotesCommands(program: Command, getClient: () => GraphCl
       if (!await confirm(`Delete note ${id.substring(0, 16)}...?`)) return;
       const client = getClient();
       await client.request(notePath(id), { method: 'DELETE' });
-      info('Note deleted.');
+      success('Note deleted.');
     }));
 }

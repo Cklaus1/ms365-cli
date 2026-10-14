@@ -227,3 +227,20 @@ describe('meetings all-transcripts (G-7, beta)', () => {
     expect(JSON.parse(r.stdout).value[0].id).toBe('T1');
   });
 });
+
+describe('meetings transcripts / recordings page (Q-8)', () => {
+  for (const kind of ['transcripts', 'recordings']) {
+    it(`${kind}: page 1 carries nextCursor; --all fetches both pages`, async () => {
+      const prefix = `/me/onlineMeetings/M1/${kind}`;
+      const next = `https://graph.microsoft.com/v1.0${prefix}?$skiptoken=p2`;
+      const routes: Parameters<typeof runCommand>[2] = {
+        routes: [['GET', prefix, (call) => (call.url.includes('skiptoken') ? { value: [{ id: 'b' }] } : { value: [{ id: 'a' }], '@odata.nextLink': next })]],
+      };
+      const r1 = await runCommand(registerMeetingsCommands, ['meet', kind, 'M1', '-o', 'json'], routes);
+      expect(r1.exitCode).toBe(0);
+      expect(JSON.parse(r1.stdout).nextCursor).toBeTruthy();
+      const r2 = await runCommand(registerMeetingsCommands, ['meet', kind, 'M1', '--all', '-o', 'json'], routes);
+      expect(JSON.parse(r2.stdout).value.map((v: { id: string }) => v.id)).toEqual(['a', 'b']);
+    });
+  }
+});

@@ -1,8 +1,8 @@
-import { Command } from 'commander';
+import { Command, InvalidArgumentError, Option } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import {
-  addListOptions, outputOption, confirm, info, validateEmail, resolveTimeZone, preferTimeZone, parseTime, parseGraphDateTime, toIsoWithOffset,
+  addListOptions, outputOption, confirm, info, success, validateEmail, resolveTimeZone, preferTimeZone, parseTime, parseGraphDateTime, toIsoWithOffset,
 } from '../utils.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { fingerprint, isDryRun, withIdempotency } from '../idempotency.js';
@@ -36,6 +36,19 @@ function eventZoneTime(input: string, eventTz: string): { dateTime: string; time
   return graphTime(input, tz);
 }
 
+/** getSchedule's availabilityViewInterval: whole minutes, 5 to 1440 (†). */
+function parseInterval(value: string): string {
+  const n = Number(value);
+  if (!/^\d+$/.test(value.trim()) || n < 5 || n > 1440) throw new InvalidArgumentError('must be an integer from 5 to 1440.');
+  return String(n);
+}
+
+/** Under --dry-run the event zone comes from a previewed GET, so the PATCH shows where it would go (DR-17, F5). */
+const FROM_GET = '<from GET>';
+
+const CALENDAR_COLORS = ['auto', 'lightBlue', 'lightGreen', 'lightOrange', 'lightGray', 'lightYellow', 'lightTeal', 'lightPink', 'lightBrown', 'lightRed', 'maxColor'];
+const colorOption = () => new Option('--color <color>', 'Calendar color').choices(CALENDAR_COLORS);
+
 /** "30m", "1h", "1h30m" as an ISO 8601 duration (PT1H30M). */
 function isoDuration(input: string): string {
   const m = input.trim().toLowerCase().match(/^(?:(\d+)h)?(?:(\d+)m)?$/);
@@ -53,9 +66,9 @@ interface MeetingTimeSuggestion {
 }
 
 /** Rooms need Place.Read.All, which only the org-mode login requests. */
-async function placesRequest(client: GraphClient, endpoint: string) {
+async function withPlacesHint(fn: () => Promise<void>): Promise<void> {
   try {
-    return await client.request(endpoint);
+    await fn();
   } catch (err) {
     if (err instanceof CliError && err.status === 403) err.fix = 'requires --org-mode login with Place.Read.All';
     throw err;
@@ -65,14 +78,12 @@ async function placesRequest(client: GraphClient, endpoint: string) {
 export function registerCalendarCommands(program: Command, getClient: () => GraphClient): void {
   const cal = program.command('calendar').alias('cal').description('Calendar operations');
 
-  cal
+  addListOptions(cal
     .command('list')
-    .description('List calendars')
+    .description('List calendars'))
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
-      const client = getClient();
-      const response = await client.request('/me/calendars');
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(getClient(), '/me/calendars', {}, opts);
     }));
 
   addListOptions(cal
@@ -216,7 +227,11 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
           // Without a Prefer header start.timeZone is always UTC; originalStartTimeZone is the event's real zone.
           const existing = await client.request(endpoint, { queryParams: { $select: 'originalStartTimeZone' } });
           const eventTz = (existing.data as { originalStartTimeZone?: string }).originalStartTimeZone;
-          toGraph = eventTz ? (input) => eventZoneTime(input, eventTz) : (input) => graphTime(input, resolveTimeZone());
+          if (client.isPreview(existing)) {
+            toGraph = (input) => ({ dateTime: graphTime(input, resolveTimeZone()).dateTime, timeZone: FROM_GET });
+          } else {
+            toGraph = eventTz ? (input) => eventZoneTime(input, eventTz) : (input) => graphTime(input, resolveTimeZone());
+          }
         }
         if (opts.start) patch.start = toGraph(opts.start);
         if (opts.end) patch.end = toGraph(opts.end);
@@ -244,7 +259,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
         : `/me/events/${encodeURIComponent(eventId)}`;
 
       await client.request(endpoint, { method: 'DELETE' });
-      info('Event deleted.');
+      success('Event deleted.');
     }));
 
   addListOptions(cal
@@ -283,7 +298,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
           sendResponse: opts.notify !== false,
         }),
       });
-      info('Event accepted.');
+      success('Event accepted.');
     }));
 
   cal
@@ -314,7 +329,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
             proposedNewTime,
           }),
         });
-        info('Event declined with proposed new time.');
+        success('Event declined with proposed new time.');
       } else {
         const client = getClient();
         await client.request(`/me/events/${encodeURIComponent(eventId)}/decline`, {
@@ -324,7 +339,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
             sendResponse: opts.notify !== false,
           }),
         });
-        info('Event declined.');
+        success('Event declined.');
       }
     }));
 
@@ -342,7 +357,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
           sendResponse: opts.notify !== false,
         }),
       });
-      info('Tentatively accepted.');
+      success('Tentatively accepted.');
     }));
 
   // ── Free/Busy (scheduling) ─────────────────────────────────
@@ -353,12 +368,12 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     .requiredOption('--start <datetime>', `Start: ${TIME_HELP}`)
     .requiredOption('--end <datetime>', `End: ${TIME_HELP}`)
     .option('--timezone <tz>', TZ_HELP)
-    .option('--interval <min>', 'Time slot interval in minutes', '30')
+    .option('--interval <min>', 'Time slot interval in minutes (5-1440)', parseInterval, '30')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
-      const client = getClient();
-      const schedules = opts.emails.split(',').map((e: string) => e.trim());
+      const schedules = opts.emails.split(',').map((e: string) => validateEmail(e));
       const tz = resolveTimeZone(opts.timezone);
+      const client = getClient();
 
       const response = await client.request('/me/calendar/getSchedule', {
         method: 'POST',
@@ -428,22 +443,20 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     }));
 
   // ── Room finder ─────────────────────────────────────────────
-  cal
+  addListOptions(cal
     .command('rooms')
-    .description('List meeting rooms (requires --org-mode)')
+    .description('List meeting rooms (requires --org-mode)'))
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
-      const response = await placesRequest(getClient(), '/places/microsoft.graph.room');
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await withPlacesHint(() => printList(getClient(), '/places/microsoft.graph.room', {}, opts));
     }));
 
-  cal
+  addListOptions(cal
     .command('room-lists')
-    .description('List room lists / buildings (requires --org-mode)')
+    .description('List room lists / buildings (requires --org-mode)'))
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
-      const response = await placesRequest(getClient(), '/places/microsoft.graph.roomlist');
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await withPlacesHint(() => printList(getClient(), '/places/microsoft.graph.roomlist', {}, opts));
     }));
 
   // ── Calendar CRUD ───────────────────────────────────────────
@@ -451,7 +464,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     .command('create-calendar')
     .description('Create a secondary calendar')
     .requiredOption('--name <name>', 'Calendar display name')
-    .option('--color <color>', 'Color: auto, lightBlue, lightGreen, lightOrange, lightGray, lightYellow, lightTeal, lightPink, lightBrown, lightRed, maxColor')
+    .addOption(colorOption())
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();
@@ -469,7 +482,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     .command('update-calendar <calendarId>')
     .description('Update a calendar')
     .option('--name <name>', 'Display name')
-    .option('--color <color>', 'Color')
+    .addOption(colorOption())
     .addOption(outputOption())
     .action(handleErrors(async (calendarId: string, opts) => {
       const client = getClient();

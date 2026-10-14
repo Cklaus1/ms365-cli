@@ -132,14 +132,13 @@ export function registerMeetingsCommands(program: Command, getClient: () => Grap
       console.log(formatOutput(data, opts.output as OutputFormat));
     }));
 
-  meetings
+  addListOptions(meetings
     .command('transcripts <meeting>')
-    .description(`List a meeting's transcripts (<meeting>: ${MEETING_ARG})`)
+    .description("List a meeting's transcripts (<meeting>: online meeting id or Teams join URL)"))
     .addOption(outputOption())
     .action(handleErrors(async (meeting: string, opts) => {
       const client = getClient();
-      const response = await client.request(`${await meetingPath(client, meeting)}/transcripts`);
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(client, `${await meetingPath(client, meeting)}/transcripts`, {}, opts);
     }));
 
   meetings
@@ -170,14 +169,13 @@ export function registerMeetingsCommands(program: Command, getClient: () => Grap
       info(`Saved transcript to ${target}`);
     }));
 
-  meetings
+  addListOptions(meetings
     .command('recordings <meeting>')
-    .description(`List a meeting's recordings (<meeting>: ${MEETING_ARG})`)
+    .description("List a meeting's recordings (<meeting>: online meeting id or Teams join URL)"))
     .addOption(outputOption())
     .action(handleErrors(async (meeting: string, opts) => {
       const client = getClient();
-      const response = await client.request(`${await meetingPath(client, meeting)}/recordings`);
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(client, `${await meetingPath(client, meeting)}/recordings`, {}, opts);
     }));
 
   meetings

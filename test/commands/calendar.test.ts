@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { runCommand, jsonResponse, type RecordedCall } from '../helpers/cli.js';
+import { runCommand, jsonResponse, type RecordedCall, type Route } from '../helpers/cli.js';
 import { registerCalendarCommands } from '../../src/commands/calendar.js';
 
 const TZ = 'America/Los_Angeles';
@@ -236,5 +236,120 @@ describe('cal find-time (PM-4)', () => {
     const badMail = await runCommand(registerCalendarCommands, ['cal', 'find-time', '--attendees', 'nope', '--duration', '1h'], { env });
     expect(badMail.exitCode).not.toBe(0);
     expect(badMail.calls).toHaveLength(0);
+  });
+});
+
+describe('collection commands page (Q-8, Q-20)', () => {
+  const twoPages = (prefix: string): Route => {
+    const next = `https://graph.microsoft.com/v1.0${prefix}?$skiptoken=p2`;
+    return ['GET', prefix, (call) => (call.url.includes('skiptoken') ? { value: [{ id: 'b' }] } : { value: [{ id: 'a' }], '@odata.nextLink': next })];
+  };
+  const cases: Array<[string[], string]> = [
+    [['cal', 'list'], '/me/calendars'],
+    [['cal', 'rooms'], '/places/microsoft.graph.room'],
+    [['cal', 'room-lists'], '/places/microsoft.graph.roomlist'],
+  ];
+
+  for (const [argv, prefix] of cases) {
+    it(`${argv.join(' ')}: page 1 carries nextCursor; --all fetches both pages`, async () => {
+      const r1 = await runCommand(registerCalendarCommands, [...argv, '-o', 'json'], { env, routes: [twoPages(prefix)] });
+      expect(r1.exitCode).toBe(0);
+      expect(JSON.parse(r1.stdout).nextCursor).toBeTruthy();
+      const r2 = await runCommand(registerCalendarCommands, [...argv, '--all', '-o', 'json'], { env, routes: [twoPages(prefix)] });
+      expect(r2.exitCode).toBe(0);
+      expect(JSON.parse(r2.stdout).value.map((v: { id: string }) => v.id)).toEqual(['a', 'b']);
+    });
+  }
+
+  it('cal room-lists keeps the Place.Read.All hint on a 403', async () => {
+    const r = await runCommand(registerCalendarCommands, ['cal', 'room-lists', '--all'], {
+      env,
+      routes: [['GET', '/places', () => jsonResponse({ error: { code: 'ErrorAccessDenied', message: 'Access is denied.' } }, 403)]],
+    });
+    expect(r.exitCode).toBe(4);
+    expect(r.stderr).toContain('requires --org-mode login with Place.Read.All');
+  });
+});
+
+describe('cal free-busy validation (V-12)', () => {
+  const base = ['cal', 'free-busy', '--start', '2026-10-20T09:00', '--end', '2026-10-20T17:00'];
+
+  it('rejects an invalid --emails entry before any request (exit 2)', async () => {
+    const r = await runCommand(registerCalendarCommands, [...base, '--emails', 'a@x.com,notanemail'], { env });
+    expect(r.exitCode).toBe(2);
+    expect(r.calls).toHaveLength(0);
+    expect(r.stderr).toContain('notanemail');
+  });
+
+  it('sends trimmed, validated addresses and an integer interval', async () => {
+    const r = await runCommand(registerCalendarCommands, [...base, '--emails', 'a@x.com, b@y.com', '--interval', '15'], { env });
+    expect(r.exitCode).toBe(0);
+    expect(r.calls[0].body).toMatchObject({ schedules: ['a@x.com', 'b@y.com'], availabilityViewInterval: 15 });
+  });
+
+  for (const bad of ['abc', '4', '1441', '7.5']) {
+    it(`rejects --interval ${bad} (exit 2)`, async () => {
+      const r = await runCommand(registerCalendarCommands, [...base, '--emails', 'a@x.com', '--interval', bad], { env });
+      expect(r.exitCode).toBe(2);
+      expect(r.calls).toHaveLength(0);
+    });
+  }
+});
+
+describe('cal update --dry-run zone marker (DR-17, F5)', () => {
+  it('previews the zone GET and marks the PATCH zone as <from GET>', async () => {
+    const r = await runCommand(registerCalendarCommands, ['cal', 'update', 'E1', '--start', '2026-10-20T09:00', '--end', '2026-10-20T10:00', '-o', 'json'], { env, dryRun: true });
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).toContain('GET https://graph.microsoft.com/v1.0/me/events/E1?$select=originalStartTimeZone');
+    const body = JSON.parse(r.stdout).body as Record<string, { dateTime: string; timeZone: string }>;
+    expect(body.start).toEqual({ dateTime: '2026-10-20T09:00:00', timeZone: '<from GET>' });
+    expect(body.end.timeZone).toBe('<from GET>');
+    expect(r.stdout).not.toContain(TZ);
+  });
+
+  it('with --timezone there is no GET and no marker', async () => {
+    const r = await runCommand(registerCalendarCommands, ['cal', 'update', 'E1', '--start', '2026-10-20T09:00', '--timezone', 'Europe/London', '-o', 'json'], { env, dryRun: true });
+    expect(r.stderr).not.toContain('$select=originalStartTimeZone');
+    expect(JSON.parse(r.stdout).body.start.timeZone).toBe('Europe/London');
+  });
+});
+
+describe('cal status lines under --dry-run (DR-1)', () => {
+  const cases: string[][] = [
+    ['cal', 'delete', 'E1'],
+    ['cal', 'accept', 'E1'],
+    ['cal', 'decline', 'E1'],
+    ['cal', 'decline', 'E1', '--propose-start', '2026-10-20T09:00', '--propose-end', '2026-10-20T10:00'],
+    ['cal', 'tentative', 'E1'],
+  ];
+  for (const argv of cases) {
+    it(`${argv.slice(0, 2).join(' ')}${argv.length > 4 ? ' (proposed)' : ''}: no confirmation line, one trailer`, async () => {
+      const r = await runCommand(registerCalendarCommands, argv, { env, dryRun: true });
+      expect(r.exitCode).toBe(0);
+      expect(r.stderr).not.toMatch(/Event (deleted|accepted|declined)|Tentatively accepted/);
+      expect(r.stderr).toContain('request(s) previewed; nothing was sent.');
+    });
+  }
+
+  it('prints the confirmation on a real run', async () => {
+    const r = await runCommand(registerCalendarCommands, ['cal', 'accept', 'E1'], { env });
+    expect(r.stderr).toContain('Event accepted.');
+  });
+});
+
+describe('cal enumerated flags (V-19)', () => {
+  it('create-calendar --color rejects an unknown colour (exit 2)', async () => {
+    const r = await runCommand(registerCalendarCommands, ['cal', 'create-calendar', '--name', 'N', '--color', 'purple'], { env });
+    expect(r.exitCode).toBe(2);
+    expect(r.calls).toHaveLength(0);
+    expect(r.stderr).toContain('lightBlue');
+  });
+
+  it('update-calendar --color rejects an unknown colour and accepts a listed one', async () => {
+    const bad = await runCommand(registerCalendarCommands, ['cal', 'update-calendar', 'C1', '--color', 'purple'], { env });
+    expect(bad.exitCode).toBe(2);
+    const ok = await runCommand(registerCalendarCommands, ['cal', 'update-calendar', 'C1', '--color', 'lightTeal'], { env });
+    expect(ok.exitCode).toBe(0);
+    expect(ok.calls[0].body).toEqual({ color: 'lightTeal' });
   });
 });

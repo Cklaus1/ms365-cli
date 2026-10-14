@@ -1,9 +1,12 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { handleErrors } from '../errors.js';
-import { addListOptions, outputOption, confirm, info, parseTime } from '../utils.js';
+import { addListOptions, outputOption, confirm, success, parseTime } from '../utils.js';
 import { resolve } from '../resolve.js';
+
+const IMPORTANCE = ['low', 'normal', 'high'];
+const STATUS = ['notStarted', 'inProgress', 'completed', 'waitingOnOthers', 'deferred'];
 
 /** To Do due dates are whole days: midnight of the parsed date, in the user's zone. */
 function todoDue(input: string, tz?: string): { dateTime: string; timeZone: string } {
@@ -14,14 +17,12 @@ function todoDue(input: string, tz?: string): { dateTime: string; timeZone: stri
 export function registerTodoCommands(program: Command, getClient: () => GraphClient): void {
   const todo = program.command('todo').description('Microsoft To Do tasks');
 
-  todo
+  addListOptions(todo
     .command('lists')
-    .description('List task lists')
+    .description('List task lists'))
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
-      const client = getClient();
-      const response = await client.request('/me/todo/lists');
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(getClient(), '/me/todo/lists', {}, opts);
     }));
 
   addListOptions(todo
@@ -66,7 +67,7 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
     .option('--body <body>', 'Task body/notes')
     .option('--due <date>', 'Due date (YYYY-MM-DD, "tomorrow", "next fri", "+3d")')
     .option('--timezone <tz>', 'IANA time zone for --due (default: MS365_CLI_TIMEZONE or local)')
-    .option('--importance <level>', 'Importance: low, normal, high', 'normal')
+    .addOption(new Option('--importance <level>', 'Importance').choices(IMPORTANCE).default('normal'))
     .addOption(outputOption())
     .action(handleErrors(async (listArg: string, opts) => {
       const client = getClient();
@@ -96,8 +97,8 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
     .description('Update a task')
     .option('--title <title>', 'Task title')
     .option('--body <body>', 'Task body')
-    .option('--status <status>', 'Status: notStarted, inProgress, completed, waitingOnOthers, deferred')
-    .option('--importance <level>', 'Importance: low, normal, high')
+    .addOption(new Option('--status <status>', 'Status').choices(STATUS))
+    .addOption(new Option('--importance <level>', 'Importance').choices(IMPORTANCE))
     .option('--due <date>', 'Due date (YYYY-MM-DD, "tomorrow", "next fri", "+3d")')
     .option('--timezone <tz>', 'IANA time zone for --due (default: MS365_CLI_TIMEZONE or local)')
     .addOption(outputOption())
@@ -131,7 +132,7 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
         `/me/todo/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(taskId)}`,
         { method: 'DELETE' }
       );
-      info('Task deleted.');
+      success('Task deleted.');
     }));
 
   // ── List management ─────────────────────────────────────────
@@ -225,6 +226,6 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
       if (!await confirm(`Delete checklist item ${itemId.substring(0, 16)}...?`)) return;
       const client = getClient();
       await client.request(`${await checklistPath(client, listArg, taskId)}/${encodeURIComponent(itemId)}`, { method: 'DELETE' });
-      info('Checklist item deleted.');
+      success('Checklist item deleted.');
     }));
 }

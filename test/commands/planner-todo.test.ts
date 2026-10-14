@@ -157,3 +157,55 @@ describe('planner usage errors (V-8, V-9, V-10)', () => {
     expect(r.stderr).not.toContain("aren't available");
   });
 });
+
+describe('todo lists pages (Q-8)', () => {
+  const next = 'https://graph.microsoft.com/v1.0/me/todo/lists?$skiptoken=p2';
+  const routes: Parameters<typeof runCommand>[2] = {
+    routes: [['GET', '/me/todo/lists', (call) => (call.url.includes('skiptoken') ? { value: [{ id: 'b' }] } : { value: [{ id: 'a' }], '@odata.nextLink': next })]],
+  };
+
+  it('page 1 carries nextCursor; --all fetches both pages', async () => {
+    const r1 = await runCommand(registerTodoCommands, ['todo', 'lists', '-o', 'json'], routes);
+    expect(r1.exitCode).toBe(0);
+    expect(JSON.parse(r1.stdout).nextCursor).toBeTruthy();
+    const r2 = await runCommand(registerTodoCommands, ['todo', 'lists', '--all', '-o', 'json'], routes);
+    expect(JSON.parse(r2.stdout).value.map((v: { id: string }) => v.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('todo status lines under --dry-run (DR-1)', () => {
+  for (const argv of [['todo', 'delete', 'AAMkLIST1', 'T1'], ['todo', 'check-delete', 'AAMkLIST1', 'T1', 'I1']]) {
+    it(`${argv[1]}: no confirmation line, one trailer`, async () => {
+      const r = await runCommand(registerTodoCommands, argv, { dryRun: true });
+      expect(r.exitCode).toBe(0);
+      expect(r.stderr).not.toMatch(/deleted\./);
+      expect(r.stderr).toContain('request(s) previewed; nothing was sent.');
+    });
+  }
+});
+
+describe('todo enumerated flags (V-19)', () => {
+  it('create --importance rejects an unknown level (exit 2) and lists the allowed values', async () => {
+    const r = await runCommand(registerTodoCommands, ['todo', 'create', 'AAMkLIST1', '--title', 'x', '--importance', 'urgent']);
+    expect(r.exitCode).toBe(2);
+    expect(r.calls).toHaveLength(0);
+    expect(r.stderr).toContain('normal');
+  });
+
+  it('create still defaults --importance to normal', async () => {
+    const r = await runCommand(registerTodoCommands, ['todo', 'create', 'AAMkLIST1', '--title', 'x', '-o', 'json']);
+    expect(r.calls[0].body).toMatchObject({ importance: 'normal' });
+  });
+
+  it('update --status / --importance reject unknown values before any request', async () => {
+    const r1 = await runCommand(registerTodoCommands, ['todo', 'update', 'AAMkLIST1', 'T1', '--status', 'done']);
+    expect(r1.exitCode).toBe(2);
+    expect(r1.calls).toHaveLength(0);
+    expect(r1.stderr).toContain('waitingOnOthers');
+    const r2 = await runCommand(registerTodoCommands, ['todo', 'update', 'AAMkLIST1', 'T1', '--importance', 'urgent']);
+    expect(r2.exitCode).toBe(2);
+    const ok = await runCommand(registerTodoCommands, ['todo', 'update', 'AAMkLIST1', 'T1', '--status', 'completed', '--importance', 'high', '-o', 'json']);
+    expect(ok.exitCode).toBe(0);
+    expect(ok.calls[0].body).toEqual({ status: 'completed', importance: 'high' });
+  });
+});
