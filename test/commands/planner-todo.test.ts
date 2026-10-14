@@ -98,7 +98,7 @@ describe('Planner Premium hint (G-9)', () => {
     });
     expect(r.exitCode).toBe(5);
     expect(r.stderr).toContain('not found');
-    expect(r.stderr).toContain("Premium plans (Project for the web) aren't available via the Graph Planner API");
+    expect(r.stderr).toContain("If this is a Premium plan (Project for the web), Graph's Planner API can't reach it.");
   });
 
   it('adds the hint to a 403 on a task, keeping exit 4', async () => {
@@ -106,7 +106,7 @@ describe('Planner Premium hint (G-9)', () => {
       routes: [['GET', '/planner/tasks/T9', () => new Response('{"error":{"message":"forbidden"}}', { status: 403 })]],
     });
     expect(r.exitCode).toBe(4);
-    expect(r.stderr).toContain('Premium plans');
+    expect(r.stderr).toContain('If this is a Premium plan');
   });
 
   it('does not add the hint to other errors', async () => {
@@ -115,5 +115,45 @@ describe('Planner Premium hint (G-9)', () => {
     });
     expect(r.exitCode).toBe(1);
     expect(r.stderr).not.toContain('Premium');
+  });
+});
+
+describe('planner usage errors (V-8, V-9, V-10)', () => {
+  it.each(['30', '50abc', '', '1e2'])('update-task --percent %j exits 2 with no Graph call', async (pct) => {
+    const r = await runCommand(registerPlannerCommands, ['planner', 'update-task', 'T1', '--percent', pct]);
+    expect(r.exitCode).toBe(2);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('--percent must be 0, 50, or 100');
+    expect(r.calls).toHaveLength(0);
+  });
+
+  it('update-task --percent 50 sends percentComplete 50', async () => {
+    const r = await runCommand(registerPlannerCommands, ['planner', 'update-task', 'T1', '--percent', '50', '--etag', 'W/"e"', '-o', 'json']);
+    expect(r.exitCode).toBe(0);
+    expect(r.calls[0].body).toEqual({ percentComplete: 50 });
+  });
+
+  it.each(['{bad', '{"foo":1}', '[]', '"x"', '{"category1":1}', '{"category26":"x"}', '{"category0":"x"}'])(
+    'update-plan-details --categories %s exits 2 before resolving the plan', async (cats) => {
+      const r = await runCommand(registerPlannerCommands, ['planner', 'update-plan-details', 'My Plan', '--categories', cats]);
+      expect(r.exitCode).toBe(2);
+      expect(r.stdout).toBe('');
+      expect(r.stderr).toContain('--categories must be a JSON object like {"category1":"Red"}');
+      expect(r.calls).toHaveLength(0);
+    });
+
+  it('update-plan-details --categories accepts string and null labels', async () => {
+    const r = await runCommand(registerPlannerCommands, ['planner', 'update-plan-details', 'xqQg5FS2LkCp935s-FIFm2QAFkHM', '--categories', '{"category1":"Red","category25":null}', '--etag', 'W/"e"', '-o', 'json']);
+    expect(r.exitCode).toBe(0);
+    expect(r.calls[0].body).toEqual({ categoryDescriptions: { category1: 'Red', category25: null } });
+  });
+
+  it('a 404 on a task carries a fix starting "If this is a Premium plan"', async () => {
+    const r = await runCommand(registerPlannerCommands, ['planner', 'task', 'WRONGID'], {
+      routes: [['GET', '/planner/tasks/WRONGID', () => new Response('{"error":{"code":"NotFound","message":"not found"}}', { status: 404 })]],
+    });
+    expect(r.exitCode).toBe(5);
+    expect(r.stderr).toMatch(/If this is a Premium plan/);
+    expect(r.stderr).not.toContain("aren't available");
   });
 });

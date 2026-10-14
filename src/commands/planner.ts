@@ -1,11 +1,35 @@
 import { Command } from 'commander';
 import { GraphClient, type GraphRequestOptions } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
-import { handleErrors, CliError } from '../errors.js';
+import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { outputOption, confirm, info, parseTime } from '../utils.js';
 import { resolve, looksLikeId } from '../resolve.js';
 
-const PREMIUM_HINT = "Premium plans (Project for the web) aren't available via the Graph Planner API";
+const PREMIUM_HINT = "If this is a Premium plan (Project for the web), Graph's Planner API can't reach it.";
+
+const usage = (msg: string) => new CliError(msg, { code: 'usage', exitCode: ExitCode.USAGE });
+
+/** `--percent`: exactly 0, 50 or 100 (the three Planner UI states). */
+function parsePercent(input: string): number {
+  if (!/^(0|50|100)$/.test(input)) throw usage('--percent must be 0, 50, or 100');
+  return Number(input);
+}
+
+/** `--categories`: a JSON object of category1–category25 → string or null labels. */
+function parseCategories(input: string): Record<string, string | null> {
+  const err = () => usage('--categories must be a JSON object like {"category1":"Red"}');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(input);
+  } catch {
+    throw err();
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw err();
+  for (const [key, value] of Object.entries(parsed)) {
+    if (!/^category([1-9]|1\d|2[0-5])$/.test(key) || (value !== null && typeof value !== 'string')) throw err();
+  }
+  return parsed as Record<string, string | null>;
+}
 
 /** Planner request; a 403/404 on a plan or task may mean a Premium plan, so say so. */
 async function plannerRequest(client: GraphClient, endpoint: string, options?: GraphRequestOptions) {
@@ -199,17 +223,12 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
     .option('--etag <etag>', 'ETag for concurrency (auto-fetched if omitted)')
     .addOption(outputOption())
     .action(handleErrors(async (taskId: string, opts) => {
+      const percent = opts.percent === undefined ? undefined : parsePercent(opts.percent);
       const client = getClient();
       const patch: Record<string, unknown> = {};
       if (opts.title) patch.title = opts.title;
       if (opts.due) patch.dueDateTime = plannerDue(opts.due, opts.timezone);
-      if (opts.percent !== undefined) {
-        const pct = parseInt(opts.percent);
-        if (![0, 50, 100].includes(pct)) {
-          throw new Error('--percent must be 0, 50, or 100');
-        }
-        patch.percentComplete = pct;
-      }
+      if (percent !== undefined) patch.percentComplete = percent;
       if (opts.bucket) patch.bucketId = await resolveBucket(client, opts.bucket, opts.plan);
 
       const response = await plannerRequest(client, `/planner/tasks/${encodeURIComponent(taskId)}`, {
@@ -228,12 +247,10 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
     .option('--categories <json>', 'Category descriptions as JSON')
     .addOption(outputOption())
     .action(handleErrors(async (planArg: string, opts) => {
+      const patch: Record<string, unknown> = {};
+      if (opts.categories !== undefined) patch.categoryDescriptions = parseCategories(opts.categories);
       const client = getClient();
       const planId = await resolve(client, 'plan', planArg);
-      const patch: Record<string, unknown> = {};
-      if (opts.categories) {
-        patch.categoryDescriptions = JSON.parse(opts.categories);
-      }
 
       const response = await plannerRequest(client, `/planner/plans/${encodeURIComponent(planId)}/details`, {
         method: 'PATCH',
