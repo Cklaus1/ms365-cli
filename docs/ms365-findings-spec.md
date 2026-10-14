@@ -218,6 +218,51 @@ The first three make the CLI usable for agents. The fourth makes it safe to give
 | 9 | Agent features | §6, PM-2, PM-4, PM-5, PM-7, PM-8, C-18, C-19, P-5, P-6, P-8 | `describe --json` and `mcp serve` ship. Ten parallel `ms365 user me` processes leave a valid token cache. `--body text`, `--fields` and `--cursor` work on mail. External messages carry `untrusted:true`. App-only sign-in, `meetings transcript`, `watch`, `$batch` and the policy file and audit log each ship with tests. |
 | 10 | Developer experience and docs | PM-6, PM-9–PM-12, C-9, M-14, M-11, M-22, M-24, M-26, M-29 | Shell completions ship. SKILL.md and the README are generated and checked for drift in CI. The release workflow publishes. |
 
+## Decisions (Step 2)
+
+Every open question in this spec, resolved or escalated. **Engineering decisions** are adopted as canon for the build. **`needs-human`** items are left out of the autonomous run and reported at the end.
+
+### Engineering decisions (canon)
+
+| # | Question | Options considered | Chosen | Why |
+|---|---|---|---|---|
+| D1 | How should the process exit (C-1, P-3)? | (a) SIGTERM handler that re-exits; (b) `process.exit(code)` after stdout/stderr drain; (c) leave the event loop to end on its own | **(b)** | The reviewer showed `process.exit` already works here (`index.ts:144`). Draining avoids truncated pipes. (c) hangs because of MSAL and keytar handles. |
+| D2 | Exit-code table (PM-3) | (a) 0/1 only; (b) the PM-3 table | **(b)**: 0 ok · 1 generic · 2 usage · 3 auth · 4 permission · 5 not found · 6 throttled · 7 confirmation refused | There's no existing contract to break, since everything exits 143 today. Agents need to branch on outcomes. Exposed as an exported `ExitCode` enum. |
+| D3 | Error output format | (a) text only; (b) `--error-format json` flag plus `MS365_CLI_ERROR_FORMAT` | **(b)**, text by default | Additive. JSON shape: `{error:{code,exitCode,status,graphCode,requestId,message,fix}}`. |
+| D4 | Binary and stream responses (C-3, P-2) | (a) widen the MIME sniffing; (b) a caller-declared `responseType` | **(b)** `json` (default) \| `text` \| `binary` \| `stream` | Sniffing will always miss types. Retry decisions are made on the status code before the body is touched. |
+| D5 | Retry policy (C-7) | (a) retry everything; (b) method-aware | **(b)**: 429 for any method. 5xx and timeouts for GET/PUT/DELETE/PATCH. POST only on connection errors raised before the request was sent. | Prevents duplicate sends while keeping PATCH retryable, as the reviewer recommended. |
+| D6 | Which `@odata.*` keys to keep (C-9) | (a) strip all; (b) keep `@odata.type`/`etag`/`count`; (c) keep all | **(b)**. `context`, `nextLink` and `deltaLink` are stripped from the body and returned as metadata. | Additive output change. Unblocks M-14 and M-16. |
+| D7 | Token storage (G-5) | (a) `@azure/msal-node-extensions`; (b) our own `ICachePlugin`: a 0600 file with an O_EXCL lockfile and unique temp names, plus a one-time read from keytar for migration | **(b)** ⚠ close call | v5.5.2 of the extensions package still depends on keytar and adds a native `msal-node-runtime`. Since `88c5a64` the file is already the authoritative store, so dropping the keytar *mirror* doesn't change the security posture. keytar becomes an `optionalDependency` used only to migrate tokens for users whose tokens exist only in the keyring. Encryption at rest is split out as needs-human N6. |
+| D8 | MSAL major version (G-4) | (a) stay on 2.x; (b) 3.x; (c) 7.x | **(c)** 7.1.0, `engines.node >=20` | Current release line. The code only uses stable `PublicClientApplication` APIs. Vitest already forces Node 20. |
+| D9 | Time-zone source (M-7–M-10) | (a) `mailboxSettings.timeZone` (extra call); (b) `MS365_CLI_TIMEZONE` → `Intl` local zone; (c) both | **(b)**, and every command with a time keeps its `--timezone` override | No extra round trip, and it works offline and in dry-run. The same zone is used for the `Prefer: outlook.timezone` header and for parsing, as the reviewer required. |
+| D10 | `chat reply` (M-6) | (a) remove it; (b) post a quoted reply to `/chats/{id}/messages` with a `messageReference` attachment | **(b)** | Removing it would drop a capability. Built to Graph's documented shape. Unverified on a live tenant †. |
+| D11 | `create-rule` with no conditions (M-11) | (a) confirm; (b) require a condition or an explicit `--all-messages` flag | **(b)**. `--enabled` is replaced by `--disabled` (and `--enabled` stays accepted, with no effect) | Explicit beats interactive, and agents can't answer a prompt. |
+| D12 | Attachment, photo and download overwrite (M-1, M-28) | (a) always overwrite; (b) refuse unless `--force`; (c) auto-rename | **(b)**. Names come from `path.basename` with control characters stripped. | Fails safe. |
+| D13 | Setup wizard option [1] (M-2) | (a) remove it; (b) keep it, but print "not available yet, use your own app registration" until PM-1 ships | **(b)** | Doesn't preempt N1. |
+| D14 | Wizard scopes (M-12) | (a) non-optional; (b) save them to `config.json` and use them at run time | **(b)** | Respects the user's choice. |
+| D15 | Download links after 2027-04-01 (G-2) | (a) wait; (b) handle redirects with `redirect:'manual'` and re-attach the token only for `*.sharepoint.com`, `*.svc.ms` and `graph.microsoft.com` | **(b)** | Same code path as D4. No token is sent to other hosts. |
+| D16 | MCP server shape (§6) | (a) official SDK in process; (b) hand-rolled JSON-RPC over stdio that spawns the CLI once per tool call | **(b)** ⚠ close call | Adds no dependency and isolates each call from `process.exit`. A warm in-process server is logged as an opportunity. |
+| D17 | Large downloads | (a) keep buffering; (b) stream to file or stdout | **(b)** | P-2. |
+| D18 | `--cursor` and NDJSON (P-6, §6) | (a) change the JSON envelope; (b) add `-o ndjson`, `--fields` and `--cursor` without changing the default envelope | **(b)** | Envelope versioning is a breaking change, so it's split out as N5. |
+| D19 | `$batch` | (a) per-request loop; (b) a `GraphClient.batch()` helper with chunks of 20 and per-item retry on 429 | **(b)** | P-5, G-10. |
+| D20 | §6 `--wait` | — | **No-op** `[REVISED: false positive. There's no drive copy command; `drive cp` is an upload. Logged as an opportunity.]` | — |
+| D21 | Profiles and accounts (PM-8) | (a) `--account` only; (b) `--account` plus `--profile` files holding clientId, tenant and scopes | **(b)** | Small, and fits the existing config directory. |
+| D22 | Natural-language times (§6) | (a) a library such as chrono-node; (b) a small built-in parser for `today`/`tomorrow`/`next <weekday>`/`+Nd`/`+Nh`/`HH:MM` | **(b)** | No new dependency. Anything it doesn't recognise falls back to ISO 8601. |
+| D23 | Idempotency (§6) | (a) none; (b) `--idempotency-key`. Events use `transactionId`. Mail sends record the key in `~/.config/ms365-cli/idempotency.json` for 24 h and skip a repeat send. | **(b)** | Prevents duplicates when an agent retries. |
+| D24 | Live-tenant verification (all † items, workstreams 5 and 8) | — | Implement to Graph's documented shape, test against mocks, and mark "unverified live" | No tenant is available, since the refresh token expired after 90 days. |
+
+### needs-human (left out of this run)
+
+| # | Item | Why it's a human decision | Recommendation |
+|---|---|---|---|
+| N1 | PM-1: publish a verified multi-tenant default app ID | External publishing, Microsoft publisher verification, legal and branding exposure | Register under the genehealth.ai tenant, complete publisher verification, then set the ID as the default. |
+| N2 | PM-2: app-only sign-in (client secret or certificate) | Choices about storing and rotating credentials, and an admin-consent model | Certificate auth with the key in the OS keychain. Use `/users/{id}` routing. |
+| N3 | PM-7: policy file, agent profile, plan/apply, rate and recipient limits | Loosens the deliberate "no destructive operations without a TTY" guard | Deny by default. An allowlist for each verb and resource, with audit. |
+| N4 | PM-12: npm name and publishing | `ms365-cli` is already registered by someone else | Publish under a scope (`@genehealth/ms365-cli`). |
+| N5 | §6: versioned JSON envelope `{data,nextCursor,…}` | Breaking change to every command's output | Ship it behind `--envelope v1` first, then flip the default in a major release. |
+| N6 | G-5 alternative: encrypt the token cache at rest | Security-posture choice and a native dependency | `msal-node-extensions` once it drops keytar, or DPAPI/Keychain directly. |
+| N7 | Live-tenant validation of † items and workstreams 5/8 (G-1, G-2 tenant control) | Needs tenant access, and the refresh token expired | Run `ms365 auth login`, then the smoke suite with `MS365_SMOKE_LIVE=1`. |
+
 ## Review notes (Step 1)
 
 Adversarial review of this spec against `src/**` at HEAD `d0651cc` (Node 22.22.1, no live tenant). Every file:line was re-checked; corrections are inline as `[REVISED …]`, new items as `[ADDED …]` (C-20, M-30, M-31). No item was removed.
