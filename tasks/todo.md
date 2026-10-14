@@ -7,8 +7,8 @@ Derived view of commit history (`git log --grep '^T[0-9]'`). The commits are the
 - [x] T00: Dev toolchain upgrade: typescript, vitest, tsup, tsx, @types/node@22; `engines >=22.12`; CI matrix 22/24; README requirements and badge
 - [x] T01: Runtime dependency upgrade: dotenv 18, commander 15, @azure/msal-node 7.1.0
 - [x] T02: **[CP]** Exit and error contract: `ExitCode` and `CliError`; `handleErrors` → `process.exit` after drain; `--error-format json`; map Graph status codes to exit codes; `confirm` refusal → 7; wrap `auth` commands; test hook so tests don't exit
-- [ ] T03: **[CP]** GraphClient core: method-aware `fetchWithRetry`; `responseType` json/text/binary/stream; pagination through the shared path with headers and 401 refresh; keep `@odata.type`/`etag`/`count`; return metadata; manual redirect for `/content`; `requestRaw`
-- [ ] T04: Upload: session URL fix; chunk retry and resume via `nextExpectedRanges`; timeouts; dry-run prints the session URL
+- [x] T03: **[CP]** GraphClient core: method-aware `fetchWithRetry`; `responseType` json/text/binary/stream; pagination through the shared path with headers and 401 refresh; keep `@odata.type`/`etag`/`count`; return metadata; manual redirect for `/content`; `requestRaw`
+- [x] T04: Upload: session URL fix; chunk retry and resume via `nextExpectedRanges`; timeouts; dry-run prints the session URL
 - [ ] T05: Startup: argv flags parsed by commander (including `=` forms); validate `api-version`; skip auth for offline commands; lazy-load command modules; `schema [endpoint]`
 - [ ] T06: Shared helpers: time-zone resolver (D9), natural-time parser (D22), `encodePath`, `odataQuote`, `kqlQuote`, `safeOutputPath` with `--force` (D12), and the rule that status lines use `info()`
 - [ ] T07: Command test harness: register a module against a fake `GraphClient` that records requests; run one command and get `{calls, stdout, stderr, exitCode}`

@@ -17,7 +17,7 @@ process.stdout.write = function(chunk: any, ...args: any[]): boolean {
   return result;
 };
 
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { AuthManager, buildScopes } from './auth.js';
 import { GraphClient } from './graph-client.js';
 import { registerAuthCommands } from './commands/auth.js';
@@ -40,7 +40,7 @@ import { registerGenerateSkillsCommand } from './commands/generate-skills.js';
 import { registerSetupCommand } from './commands/setup.js';
 import logger from './logger.js';
 import { setQuiet } from './utils.js';
-import { reportError, setErrorFormat, ExitCode } from './errors.js';
+import { reportError, setErrorFormat, ExitCode, CliError } from './errors.js';
 
 const program = new Command();
 
@@ -51,9 +51,9 @@ program
   .option('--org-mode', 'Enable organization mode (Teams, SharePoint, shared mailboxes)')
   .option('--read-only', 'Restrict to read-only operations')
   .option('--dry-run', 'Preview the API request without executing it')
-  .option('--api-version <version>', 'Graph API version (default: v1.0)', 'v1.0')
+  .addOption(new Option('--api-version <version>', 'Graph API version').choices(['v1.0', 'beta']))
   .option('-q, --quiet', 'Suppress non-data output (confirmations, progress)')
-  .option('--error-format <format>', 'Error output on stderr: text or json (default: text)');
+  .addOption(new Option('--error-format <format>', 'Error output on stderr (default: text)').choices(['text', 'json']));
 
 // Usage errors (unknown option, missing argument) exit 2; help/version exit 0.
 // Must be set before subcommands are registered so they inherit it.
@@ -62,39 +62,25 @@ program.exitOverride((err) => {
   process.exit(ok ? ExitCode.OK : ExitCode.USAGE);
 });
 
-// Determine flags from env or argv
-const orgMode =
-  process.argv.includes('--org-mode') ||
-  process.env.MS365_CLI_ORG_MODE === 'true' ||
-  process.env.MS365_CLI_ORG_MODE === '1' ||
-  process.env.MS365_MCP_ORG_MODE === 'true' ||
-  process.env.MS365_MCP_ORG_MODE === '1';
+const envTrue = (...names: string[]) => names.some(n => process.env[n] === 'true' || process.env[n] === '1');
 
-const dryRun = process.argv.includes('--dry-run');
-const readOnly =
-  process.argv.includes('--read-only') ||
-  process.env.MS365_CLI_READ_ONLY === 'true' ||
-  process.env.MS365_CLI_READ_ONLY === '1';
-
-if (process.argv.includes('--quiet') || process.argv.includes('-q')) {
-  setQuiet(true);
+/** Global flags, resolved from parsed options (after parse) with env-var fallbacks. */
+function globalFlags() {
+  const o = program.opts();
+  const apiVersion = o.apiVersion || process.env.MS365_CLI_API_VERSION || 'v1.0';
+  if (apiVersion !== 'v1.0' && apiVersion !== 'beta') {
+    throw new CliError(`Invalid API version "${apiVersion}". Use v1.0 or beta.`, { code: 'usage', exitCode: ExitCode.USAGE });
+  }
+  return {
+    orgMode: !!o.orgMode || envTrue('MS365_CLI_ORG_MODE', 'MS365_MCP_ORG_MODE'),
+    dryRun: !!o.dryRun,
+    readOnly: !!o.readOnly || envTrue('MS365_CLI_READ_ONLY'),
+    apiVersion,
+  };
 }
 
-// Extract --api-version value (CLI flag takes precedence over env var)
-let apiVersion = process.env.MS365_CLI_API_VERSION || 'v1.0';
-const apiIdx = process.argv.indexOf('--api-version');
-if (apiIdx !== -1 && process.argv[apiIdx + 1]) {
-  apiVersion = process.argv[apiIdx + 1];
-}
-
-const errFmtIdx = process.argv.findIndex(a => a === '--error-format' || a.startsWith('--error-format='));
-if (errFmtIdx !== -1) {
-  const arg = process.argv[errFmtIdx];
-  const val = arg.includes('=') ? arg.split('=')[1] : process.argv[errFmtIdx + 1];
-  if (val === 'json' || val === 'text') setErrorFormat(val);
-}
-
-const scopes = buildScopes(orgMode);
+/** Commands that never call Graph and must work without a client ID or login. */
+const OFFLINE_COMMANDS = new Set(['auth', 'schema', 'generate-skills']);
 
 // Lazy-initialized singletons
 let authManager: AuthManager | null = null;
@@ -102,15 +88,15 @@ let graphClient: GraphClient | null = null;
 
 function getAuth(): AuthManager {
   if (!authManager) {
-    authManager = new AuthManager(scopes);
+    authManager = new AuthManager(buildScopes(globalFlags().orgMode));
   }
   return authManager;
 }
 
 function getClient(): GraphClient {
   if (!graphClient) {
-    const auth = getAuth();
-    graphClient = new GraphClient(auth, dryRun, apiVersion, readOnly);
+    const { dryRun, apiVersion, readOnly } = globalFlags();
+    graphClient = new GraphClient(getAuth(), dryRun, apiVersion, readOnly);
   }
   return graphClient;
 }
@@ -136,17 +122,22 @@ registerGenerateSkillsCommand(program);
 registerSetupCommand(program, getAuth);
 
 // Ensure auth is initialized before non-auth commands
-program.hook('preAction', async (thisCommand) => {
+// The hook receives (hookedCommand = program, actionCommand); walk up from the action command.
+program.hook('preAction', async (_program, actionCommand) => {
   const commandChain: string[] = [];
-  let cmd: Command | null = thisCommand;
+  let cmd: Command | null = actionCommand;
   while (cmd) {
     commandChain.unshift(cmd.name());
     cmd = cmd.parent;
   }
 
-  // Skip auth initialization for auth commands and dry-run
-  if (commandChain.includes('auth')) return;
-  if (dryRun) return;
+  const o = program.opts();
+  if (o.errorFormat) setErrorFormat(o.errorFormat);
+  if (o.quiet) setQuiet(true);
+
+  // Skip auth initialization for offline commands and dry-run
+  if (OFFLINE_COMMANDS.has(commandChain[1])) return;
+  if (globalFlags().dryRun) return;
 
   logger.info(`Running: ms365 ${commandChain.slice(1).join(' ')}`);
 

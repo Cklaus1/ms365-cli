@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { handleErrors } from '../errors.js';
+import { handleErrors, CliError, ExitCode } from '../errors.js';
 
 /**
  * Endpoint catalog with parameter schemas for introspection.
@@ -204,11 +204,11 @@ const ENDPOINTS: Record<string, EndpointSchema> = {
 
 export function registerSchemaCommands(program: Command): void {
   program
-    .command('schema <endpoint>')
+    .command('schema [endpoint]')
     .description('Introspect API schema for an endpoint (e.g. mail.list, calendar.create)')
     .option('--list', 'List all available endpoint schemas')
-    .action(handleErrors(async (endpoint: string, opts) => {
-      if (opts.list || endpoint === 'list') {
+    .action(handleErrors(async (endpoint: string | undefined, opts) => {
+      if (opts.list || !endpoint || endpoint === 'list') {
         console.log('Available schemas:\n');
         const grouped: Record<string, string[]> = {};
         for (const [key, val] of Object.entries(ENDPOINTS)) {
@@ -230,12 +230,8 @@ export function registerSchemaCommands(program: Command): void {
         const suggestions = Object.keys(ENDPOINTS)
           .filter(k => k.startsWith(endpoint.split('.')[0]))
           .join(', ');
-        console.error(`Unknown endpoint: ${endpoint}`);
-        if (suggestions) {
-          console.error(`Did you mean: ${suggestions}`);
-        }
-        console.error(`\nRun: ms365 schema --list`);
-        process.exit(1);
+        throw new CliError(`Unknown endpoint: ${endpoint}.${suggestions ? ` Did you mean: ${suggestions}?` : ''}`,
+          { code: 'unknown_endpoint', exitCode: ExitCode.USAGE, fix: 'ms365 schema --list' });
       }
 
       const output: Record<string, unknown> = {

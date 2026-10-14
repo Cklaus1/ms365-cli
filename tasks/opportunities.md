@@ -6,3 +6,4 @@ Things discovered mid-build that have no assigned task. Each entry gives a propo
 - **[P3] Warm in-process MCP server** (alternative to D16). Spawning the CLI per call costs process start-up each time. Proposal: an embedded mode where `handleErrors` doesn't exit.
 - **[P3] `drive copy --wait`** (D20). There's no copy command. Add `drive copy`, which returns a monitor URL, and poll it when `--wait` is given.
 - **[P3] MCP notifications on delta changes** (§6 event-driven, "later").
+- **[P3] Lazy-load command modules and MSAL** (P-7, measured during T05). `--version` takes 70 ms; the potential saving is about 30 ms. It needs stub command registration so `--help` still works.
