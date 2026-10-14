@@ -27,11 +27,11 @@ Derived view of commit history (`git log --grep '^T[0-9]'`). The commits are the
 - [x] T17: user.ts fixes
 - [x] T18: Setup wizard, `auth` command, generate-skills
 - [x] T19: sharepoint, groups, contacts, onenote, search fixes
-- [ ] T20: CI typecheck (`tsc --noEmit`) and a dry-run endpoint snapshot for every command
+- [x] T20: CI typecheck (`tsc --noEmit`) and a dry-run endpoint snapshot for every command
 
 ## Tier 3
-- [ ] T21: Streaming `--all`; `-o ndjson`; `--fields`; `--cursor`
-- [ ] T22: `$batch` helper; `batch-read` and `batch-move` use it
+- [x] T21: Streaming `--all`; `-o ndjson`; `--fields`; `--cursor`
+- [x] T22: `$batch` helper; `batch-read` and `batch-move` use it
 
 ## Tier 4
 - [ ] T30: `describe --json` catalogue (args, options, destructive, idempotent, scopes)
