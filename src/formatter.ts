@@ -406,18 +406,28 @@ export async function printList(
   endpoint: string,
   options: GraphRequestOptions,
   opts: ListOptions,
+  hooks: { transform?: (items: unknown[]) => Promise<unknown[]> } = {},
 ): Promise<void> {
+  const transform = hooks.transform ?? (async (items: unknown[]) => items);
+  const transformData = async (data: unknown): Promise<unknown> => {
+    if (data && typeof data === 'object' && Array.isArray((data as Record<string, unknown>).value)) {
+      return { ...(data as Record<string, unknown>), value: await transform((data as Record<string, unknown>).value as unknown[]) };
+    }
+    return data;
+  };
   const format = (opts.output ?? 'json') as OutputFormat;
   const pageLimit = opts.pageLimit ? parseInt(opts.pageLimit, 10) : undefined;
   const pageDelay = opts.pageDelay ? parseInt(opts.pageDelay, 10) : undefined;
 
   if (opts.all && !pageCursor) {
     if (format === 'json' || format === 'ndjson' || format === 'csv') {
-      await streamPages(client.requestPagesStreaming(endpoint, options, pageLimit, pageDelay), format,
-        (chunk) => process.stdout.write(chunk), { jsonWrapper: true });
+      async function* pages() {
+        for await (const page of client.requestPagesStreaming(endpoint, options, pageLimit, pageDelay)) yield await transform(page);
+      }
+      await streamPages(pages(), format, (chunk) => process.stdout.write(chunk), { jsonWrapper: true });
     } else {
       const response = await client.requestAllPages(endpoint, options, pageLimit, pageDelay);
-      console.log(formatOutput(response.data, format));
+      console.log(formatOutput(await transformData(response.data), format));
     }
     return;
   }
@@ -425,12 +435,13 @@ export async function printList(
   const response = pageCursor
     ? await client.request(decodeCursor(pageCursor), { headers: options.headers })
     : await client.request(endpoint, options);
+  const pageData = await transformData(response.data);
   const nextCursor = response.nextLink ? encodeCursor(response.nextLink) : undefined;
   // JSON/YAML carry the cursor in-band; line/tabular formats print it on stderr.
   const inBand = format === 'json' || format === 'yaml';
-  const data = inBand && nextCursor && response.data && typeof response.data === 'object'
-    ? { ...(response.data as Record<string, unknown>), nextCursor }
-    : response.data;
+  const data = inBand && nextCursor && pageData && typeof pageData === 'object'
+    ? { ...(pageData as Record<string, unknown>), nextCursor }
+    : pageData;
   console.log(formatOutput(data, format));
   if (nextCursor && !inBand) {
     process.stderr.write(`nextCursor: ${nextCursor}\n`);

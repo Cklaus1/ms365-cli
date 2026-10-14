@@ -68,3 +68,26 @@ describe('offline commands (C-16, M-25)', () => {
     expect(bad.stderr).toContain('schema --list');
   }, 30_000);
 });
+
+describe('Wave A wiring (T30, T37, T39 pre-flight)', () => {
+  const jwt = (claims: Record<string, unknown>) =>
+    ['{"alg":"none"}', JSON.stringify(claims)].map(p => Buffer.from(p).toString('base64url')).join('.') + '.sig';
+
+  it('fails fast with missing_scope (exit 4) before calling Graph', () => {
+    const token = jwt({ scp: 'User.Read', aud: 'https://graph.microsoft.com', exp: Math.floor(Date.now() / 1000) + 3600 });
+    const r = cli(['--error-format', 'json', 'mail', 'list'], { MS365_CLI_TOKEN: token });
+    expect(r.status, r.stderr).toBe(4);
+    expect(JSON.parse(r.stderr.trim().split('\n').pop()!).error.code).toBe('missing_scope');
+  }, 30_000);
+
+  it('describe --json and audit path run with no client ID', () => {
+    const noClientId = { MS365_CLI_CLIENT_ID: '' };
+    const d = cli(['describe', '--json'], noClientId);
+    expect(d.status, d.stderr).toBe(0);
+    const paths = JSON.parse(d.stdout).commands.map((c: { path: string }) => c.path);
+    expect(paths).toEqual(expect.arrayContaining(['meetings transcript', 'watch', 'audit tail', 'calendar find-time']));
+    const a = cli(['audit', 'path'], noClientId);
+    expect(a.status, a.stderr).toBe(0);
+    expect(a.stdout.trim()).toMatch(/audit\.log$/);
+  }, 30_000);
+});

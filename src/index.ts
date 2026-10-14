@@ -38,6 +38,13 @@ import { registerGroupsCommands } from './commands/groups.js';
 import { registerSchemaCommands } from './commands/schema.js';
 import { registerGenerateSkillsCommand } from './commands/generate-skills.js';
 import { registerSetupCommand } from './commands/setup.js';
+import { registerMeetingsCommands } from './commands/meetings.js';
+import { registerWatchCommands } from './commands/watch.js';
+import { registerAuditCommands } from './commands/audit.js';
+import { registerDescribeCommand } from './commands/describe.js';
+import { setActor, setCommandPath } from './audit.js';
+import { commandMeta } from './catalog.js';
+import { assertConsented } from './preflight.js';
 import { readProfile, type Profile } from './profiles.js';
 import logger from './logger.js';
 import { setQuiet } from './utils.js';
@@ -57,6 +64,7 @@ program
   .option('-q, --quiet', 'Suppress non-data output (confirmations, progress)')
   .addOption(new Option('--error-format <format>', 'Error output on stderr (default: text)').choices(['text', 'json']))
   .option('--fields <list>', 'Only output these comma-separated fields (dot paths allowed, e.g. id,from.emailAddress.address)')
+  .option('--actor <name>', 'Name recorded as the actor in the audit log (default: MS365_CLI_ACTOR or "cli")')
   .option('--cursor <token>', 'Fetch the page after a previous list call (the nextCursor it printed on stderr)')
   .option('--account <upn|homeAccountId>', 'Use this cached account for this call only (env MS365_CLI_ACCOUNT)')
   .option('--profile <name>', 'Apply a saved profile: client ID, tenant, scopes, org mode, account (env MS365_CLI_PROFILE)');
@@ -95,7 +103,7 @@ function globalFlags() {
 }
 
 /** Commands that never call Graph and must work without a client ID or login. */
-const OFFLINE_COMMANDS = new Set(['auth', 'schema', 'generate-skills']);
+const OFFLINE_COMMANDS = new Set(['auth', 'schema', 'generate-skills', 'describe', 'audit']);
 
 // Lazy-initialized singletons
 let authManager: AuthManager | null = null;
@@ -136,6 +144,10 @@ registerGroupsCommands(program, getClient);
 registerSchemaCommands(program);
 registerGenerateSkillsCommand(program);
 registerSetupCommand(program, getAuth);
+registerMeetingsCommands(program, getClient);
+registerWatchCommands(program, getClient);
+registerAuditCommands(program);
+registerDescribeCommand(program);
 
 // Ensure auth is initialized before non-auth commands
 // The hook receives (hookedCommand = program, actionCommand); walk up from the action command.
@@ -152,6 +164,9 @@ program.hook('preAction', async (_program, actionCommand) => {
   if (o.quiet) setQuiet(true);
   if (o.fields) setFields(String(o.fields).split(',').map((f: string) => f.trim()).filter(Boolean));
   if (o.cursor) setCursor(o.cursor);
+  setActor(o.actor || process.env.MS365_CLI_ACTOR);
+  const commandPath = commandChain.slice(1).join(' ');
+  setCommandPath(commandPath);
 
   // Skip auth initialization for offline commands and dry-run
   if (OFFLINE_COMMANDS.has(commandChain[1])) return;
@@ -161,6 +176,19 @@ program.hook('preAction', async (_program, actionCommand) => {
 
   const auth = getAuth();
   await auth.initialize();
+
+  // Pre-flight consent check: fail fast (exit 4) instead of a mid-command 403.
+  // Personal-account tokens are opaque (not JWTs) — then the check is skipped.
+  const required = commandMeta(commandPath)?.scopes ?? [];
+  if (required.length > 0 && process.env.MS365_CLI_PREFLIGHT !== '0') {
+    let granted: string[] | null = null;
+    try {
+      granted = await auth.grantedScopes();
+    } catch (err) {
+      if ((err as { code?: string }).code !== 'opaque_token') throw err;
+    }
+    if (granted) assertConsented(commandPath, required, granted);
+  }
 });
 
 program.parseAsync(process.argv).catch((err) => {

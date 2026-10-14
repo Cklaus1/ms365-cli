@@ -18,6 +18,8 @@ import { registerSearchCommands } from '../src/commands/search.js';
 import { registerUserCommands } from '../src/commands/user.js';
 import { registerWorkflowCommands } from '../src/commands/workflow.js';
 import { registerGroupsCommands } from '../src/commands/groups.js';
+import { registerMeetingsCommands } from '../src/commands/meetings.js';
+import { registerWatchCommands } from '../src/commands/watch.js';
 import type { GraphClient } from '../src/graph-client.js';
 
 /**
@@ -30,7 +32,7 @@ const MODULES: Register[] = [
   registerMailCommands, registerCalendarCommands, registerDriveCommands, registerTodoCommands,
   registerContactsCommands, registerTeamsCommands, registerSharePointCommands, registerPlannerCommands,
   registerOneNoteCommands, registerExcelCommands, registerSearchCommands, registerUserCommands,
-  registerWorkflowCommands, registerGroupsCommands,
+  registerWorkflowCommands, registerGroupsCommands, registerMeetingsCommands, registerWatchCommands,
 ];
 
 let tmp: string;
@@ -63,6 +65,7 @@ function sampleOption(o: Option): string[] {
   if (/to|cc|bcc|attendees|emails|assigned|mailbox|address|forward/i.test(flag)) return [flag, 'a@contoso.com'];
   if (/start|end|due|date|propose|since/i.test(flag)) return [flag, '2026-10-20T10:00'];
   if (/top|limit|delay|percent|priority|size/i.test(flag)) return [flag, '5'];
+  if (/duration/i.test(flag)) return [flag, '30m'];
   if (/fields/i.test(flag)) return [flag, '[{"key":0,"ascending":true}]'];
   if (/categories|series|values|body-json|json/i.test(flag)) return [flag, '{}'];
   if (/timezone/i.test(flag)) return [flag, 'America/Los_Angeles'];

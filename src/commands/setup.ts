@@ -27,14 +27,15 @@ const AZURE_PORTAL_APP_REG = 'https://portal.azure.com/#blade/Microsoft_AAD_Regi
 
 const PERMISSION_GROUPS = {
   'Mail (read/write/send)': ['Mail.ReadWrite', 'Mail.Send'],
+  'Mailbox settings: rules, out-of-office (read/write)': ['MailboxSettings.ReadWrite'],
   'Calendar (read/write)': ['Calendars.ReadWrite'],
-  'Files / OneDrive (read/write)': ['Files.ReadWrite'],
+  'Files / OneDrive (read/write, incl. files shared with you)': ['Files.ReadWrite', 'Files.Read.All'],
   'Tasks / To Do (read/write)': ['Tasks.ReadWrite'],
   'Contacts (read/write)': ['Contacts.ReadWrite'],
   'OneNote (read/create)': ['Notes.Read', 'Notes.Create'],
   'People (read)': ['People.Read'],
   'Presence (read/write)': ['Presence.Read', 'Presence.ReadWrite'],
-  'User profile (read)': ['User.Read'],
+  'User profile (read/write, incl. photo)': ['User.Read', 'User.ReadWrite'],
   'Teams (read) [org]': ['Team.ReadBasic.All', 'Channel.ReadBasic.All', 'TeamMember.Read.All'],
   'Chat (read/send) [org]': ['Chat.Read', 'ChatMessage.Read', 'ChatMessage.Send'],
   'SharePoint (read) [org]': ['Sites.Read.All'],
@@ -44,6 +45,7 @@ const PERMISSION_GROUPS = {
   'Groups (read) [org]': ['Group.Read.All'],
   'Shared calendars (read) [org]': ['Calendars.Read.Shared'],
   'Rooms / places (read) [org]': ['Place.Read.All'],
+  'Teams meetings, transcripts, recordings (read) [org]': ['OnlineMeetings.Read', 'OnlineMeetingTranscript.Read.All', 'OnlineMeetingRecording.Read.All'],
 };
 
 export function openBrowserCommand(url: string, platform: NodeJS.Platform = process.platform): string {

@@ -66,6 +66,17 @@ exports[`dry-run endpoint snapshot (every command) > calendar events 1`] = `
 }
 `;
 
+exports[`dry-run endpoint snapshot (every command) > calendar find-time 1`] = `
+{
+  "argv": "calendar find-time --attendees a@contoso.com --duration 30m",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/findMeetingTimes",
+  ],
+}
+`;
+
 exports[`dry-run endpoint snapshot (every command) > calendar free-busy 1`] = `
 {
   "argv": "calendar free-busy --emails a@contoso.com --start 2026-10-20T10:00 --end 2026-10-20T10:00",
@@ -1026,6 +1037,83 @@ exports[`dry-run endpoint snapshot (every command) > mail update-rule 1`] = `
 }
 `;
 
+exports[`dry-run endpoint snapshot (every command) > meetings all-transcripts 1`] = `
+{
+  "argv": "meetings all-transcripts",
+  "error": "Error: meetings all-transcripts uses the Graph beta API (getAllTranscripts); pass --api-version beta",
+  "exitCode": 2,
+  "requests": [],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > meetings get 1`] = `
+{
+  "argv": "meetings get JOINURLORID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/onlineMeetings/JOINURLORID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > meetings list 1`] = `
+{
+  "argv": "meetings list",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-14T17%3A00%3A00.000Z&endDateTime=2026-10-21T17%3A00%3A00.000Z&$filter=isOnlineMeeting%20eq%20true&$select=subject%2Cstart%2Cend%2Corganizer%2ConlineMeeting%2ConlineMeetingProvider&$orderby=start%2FdateTime",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > meetings recording 1`] = `
+{
+  "argv": "meetings recording MEETING --out x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/onlineMeetings/MEETING/recordings",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/onlineMeetings/MEETING/recordings/LATEST/content",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > meetings recordings 1`] = `
+{
+  "argv": "meetings recordings MEETING",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/onlineMeetings/MEETING/recordings",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > meetings transcript 1`] = `
+{
+  "argv": "meetings transcript MEETING",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/onlineMeetings/MEETING/transcripts",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/onlineMeetings/MEETING/transcripts/LATEST/content?$format=text%2Fvtt",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > meetings transcripts 1`] = `
+{
+  "argv": "meetings transcripts MEETING",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/onlineMeetings/MEETING/transcripts",
+  ],
+}
+`;
+
 exports[`dry-run endpoint snapshot (every command) > onenote create-page 1`] = `
 {
   "argv": "onenote create-page SECTIONID --title x --content aGVsbG8=",
@@ -1797,6 +1885,15 @@ exports[`dry-run endpoint snapshot (every command) > user working-hours 1`] = `
   "requests": [
     "[dry-run] GET https://graph.microsoft.com/v1.0/me/mailboxSettings/workingHours",
   ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > watch 1`] = `
+{
+  "argv": "watch RESOURCE",
+  "error": "",
+  "exitCode": 2,
+  "requests": [],
 }
 `;
 

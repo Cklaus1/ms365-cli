@@ -113,6 +113,8 @@ describe('exit-code matrix (spawned CLI)', () => {
   };
   const cli = (...args: string[]) => spawnSync(tsx, [path.join(root, 'src/index.ts'), ...args],
     { env, cwd: home, encoding: 'utf8', timeout: 30_000, input: '' });
+  const cliWithToken = (...args: string[]) => spawnSync(tsx, [path.join(root, 'src/index.ts'), ...args],
+    { env: { ...env, MS365_CLI_TOKEN: 'opaque-test-token' }, cwd: home, encoding: 'utf8', timeout: 30_000, input: '' });
 
   it.each([
     ['success (dry-run)', ['--dry-run', 'mail', 'send', '--to', 'a@b.com', '--subject', 's', '--body', 'b'], 0],
@@ -121,7 +123,8 @@ describe('exit-code matrix (spawned CLI)', () => {
     ['auth (not logged in)', ['--read-only', 'user', 'me'], 3],
     ['confirmation refused (non-TTY)', ['todo', 'delete', 'L', 'T'], 7],
   ])('%s', (_name, args, want) => {
-    const r = cli(...(args as string[]));
+    // The confirmation case needs a token (an opaque one skips the scope pre-flight)
+    const r = want === 7 ? cliWithToken(...(args as string[])) : cli(...(args as string[]));
     expect(r.status, `stderr: ${r.stderr}`).toBe(want);
   }, 30_000);
 

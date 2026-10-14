@@ -41,6 +41,9 @@ const PERSONAL_SCOPES = [
   'People.Read',
   'Presence.Read',
   'Presence.ReadWrite',
+  'MailboxSettings.ReadWrite',
+  'User.ReadWrite',
+  'Files.Read.All',
 ];
 
 const ORG_SCOPES = [
@@ -59,6 +62,9 @@ const ORG_SCOPES = [
   'Group.Read.All',
   'Calendars.Read.Shared',
   'Place.Read.All',
+  'OnlineMeetings.Read',
+  'OnlineMeetingTranscript.Read.All',
+  'OnlineMeetingRecording.Read.All',
 ];
 
 function ensureConfigDir(): void {
