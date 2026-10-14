@@ -154,3 +154,87 @@ describe('cal rooms / room-lists (M-18)', () => {
     expect(r.stderr).toContain('requires --org-mode login with Place.Read.All');
   });
 });
+
+describe('cal create --teams (PM-4)', () => {
+  it('marks the event as a Teams online meeting', async () => {
+    const r = await runCommand(registerCalendarCommands,
+      ['cal', 'create', '--subject', 'S', '--start', '2026-10-20T09:00', '--end', '2026-10-20T09:30', '--teams'], { env });
+    expect(r.exitCode).toBe(0);
+    const body = r.calls[0].body as Record<string, unknown>;
+    expect(body.isOnlineMeeting).toBe(true);
+    expect(body.onlineMeetingProvider).toBe('teamsForBusiness');
+  });
+
+  it('leaves online-meeting fields out without --teams', async () => {
+    const r = await runCommand(registerCalendarCommands,
+      ['cal', 'create', '--subject', 'S', '--start', '2026-10-20T09:00', '--end', '2026-10-20T09:30'], { env });
+    expect(r.calls[0].body).not.toHaveProperty('isOnlineMeeting');
+  });
+});
+
+describe('cal find-time (PM-4)', () => {
+  const suggestions = () => ({
+    emptySuggestionsReason: '',
+    meetingTimeSuggestions: [{
+      confidence: 100,
+      organizerAvailability: 'free',
+      meetingTimeSlot: {
+        start: { dateTime: '2026-10-15T16:00:00.0000000', timeZone: 'UTC' },
+        end: { dateTime: '2026-10-15T16:30:00.0000000', timeZone: 'UTC' },
+      },
+      attendeeAvailability: [{ attendee: { type: 'required', emailAddress: { address: 'a@x.com' } }, availability: 'free' }],
+    }],
+  });
+
+  it('posts findMeetingTimes and prints suggestions in the user zone', async () => {
+    const r = await runCommand(registerCalendarCommands,
+      ['cal', 'find-time', '--attendees', 'a@x.com, b@x.com', '--duration', '30m', '--start', '2026-10-15T09:00', '--end', '2026-10-15T17:00'], {
+        env, routes: [['POST', '/me/findMeetingTimes', suggestions]],
+      });
+    expect(r.exitCode).toBe(0);
+    const call = r.calls[0];
+    expect(call.headers.Prefer).toBe(PREFER);
+    expect(call.body).toEqual({
+      attendees: [
+        { type: 'required', emailAddress: { address: 'a@x.com' } },
+        { type: 'required', emailAddress: { address: 'b@x.com' } },
+      ],
+      timeConstraint: {
+        activityDomain: 'work',
+        timeSlots: [{ start: { dateTime: '2026-10-15T09:00:00', timeZone: TZ }, end: { dateTime: '2026-10-15T17:00:00', timeZone: TZ } }],
+      },
+      meetingDuration: 'PT30M',
+    });
+    expect(JSON.parse(r.stdout)).toEqual({ value: [{
+      start: '2026-10-15T09:00:00-07:00',
+      end: '2026-10-15T09:30:00-07:00',
+      confidence: 100,
+      organizerAvailability: 'free',
+      attendeeAvailability: [{ attendee: 'a@x.com', availability: 'free' }],
+    }] });
+  });
+
+  it('converts hour and mixed durations; defaults to the next 7 days', async () => {
+    const r = await runCommand(registerCalendarCommands, ['cal', 'find-time', '--attendees', 'a@x.com', '--duration', '1h30m'], { env });
+    const body = r.calls[0].body as { meetingDuration: string; timeConstraint: { timeSlots: Array<{ start: { dateTime: string }; end: { dateTime: string } }> } };
+    expect(body.meetingDuration).toBe('PT1H30M');
+    expect(body.timeConstraint.timeSlots[0].start.dateTime).toBe('2026-10-14T10:00:00');
+    expect(body.timeConstraint.timeSlots[0].end.dateTime).toBe('2026-10-21T10:00:00');
+  });
+
+  it('reports why there are no suggestions', async () => {
+    const r = await runCommand(registerCalendarCommands, ['cal', 'find-time', '--attendees', 'a@x.com', '--duration', '1h'], {
+      env, routes: [['POST', '/me/findMeetingTimes', () => ({ emptySuggestionsReason: 'attendeesUnavailable', meetingTimeSuggestions: [] })]],
+    });
+    expect(JSON.parse(r.stdout)).toEqual({ value: [], emptySuggestionsReason: 'attendeesUnavailable' });
+  });
+
+  it('rejects a bad duration or attendee before sending', async () => {
+    const bad = await runCommand(registerCalendarCommands, ['cal', 'find-time', '--attendees', 'a@x.com', '--duration', 'soon'], { env });
+    expect(bad.exitCode).toBe(2);
+    expect(bad.calls).toHaveLength(0);
+    const badMail = await runCommand(registerCalendarCommands, ['cal', 'find-time', '--attendees', 'nope', '--duration', '1h'], { env });
+    expect(badMail.exitCode).not.toBe(0);
+    expect(badMail.calls).toHaveLength(0);
+  });
+});

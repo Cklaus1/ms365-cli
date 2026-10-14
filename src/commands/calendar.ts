@@ -1,7 +1,9 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
-import { outputOption, confirm, info, validateEmail, resolveTimeZone, preferTimeZone, parseTime } from '../utils.js';
+import {
+  outputOption, confirm, info, validateEmail, resolveTimeZone, preferTimeZone, parseTime, parseGraphDateTime, toIsoWithOffset,
+} from '../utils.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 
 const TZ_HELP = 'IANA time zone (default: MS365_CLI_TIMEZONE or the local zone)';
@@ -31,6 +33,22 @@ function eventZoneTime(input: string, eventTz: string): { dateTime: string; time
       { code: 'usage', exitCode: ExitCode.USAGE });
   }
   return graphTime(input, tz);
+}
+
+/** "30m", "1h", "1h30m" as an ISO 8601 duration (PT1H30M). */
+function isoDuration(input: string): string {
+  const m = input.trim().toLowerCase().match(/^(?:(\d+)h)?(?:(\d+)m)?$/);
+  if (!m || (!m[1] && !m[2]) || (+(m[1] ?? 0) === 0 && +(m[2] ?? 0) === 0)) {
+    throw new CliError(`Invalid duration "${input}". Use minutes and/or hours: 30m, 1h, 1h30m.`, { code: 'usage', exitCode: ExitCode.USAGE });
+  }
+  return `PT${m[1] ? `${+m[1]}H` : ''}${m[2] ? `${+m[2]}M` : ''}`;
+}
+
+interface MeetingTimeSuggestion {
+  confidence?: number;
+  organizerAvailability?: string;
+  meetingTimeSlot: { start: { dateTime: string; timeZone?: string }; end: { dateTime: string; timeZone?: string } };
+  attendeeAvailability?: Array<{ attendee?: { emailAddress?: { address?: string } }; availability?: string }>;
 }
 
 /** Rooms need Place.Read.All, which only the org-mode login requests. */
@@ -118,6 +136,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     .option('--attendees <emails>', 'Comma-separated attendee emails')
     .option('--calendar <calendarId>', 'Calendar ID')
     .option('--html', 'Body is HTML')
+    .option('--teams', 'Make it a Teams online meeting (adds a join link)')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const tz = resolveTimeZone(opts.timezone);
@@ -138,6 +157,10 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
           emailAddress: { address: validateEmail(e) },
           type: 'required',
         }));
+      }
+      if (opts.teams) {
+        event.isOnlineMeeting = true;
+        event.onlineMeetingProvider = 'teamsForBusiness';
       }
 
       const client = getClient();
@@ -339,6 +362,60 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
       });
 
       console.log(formatOutput(response.data, opts.output as OutputFormat));
+    }));
+
+  cal
+    .command('find-time')
+    .description('Suggest meeting times when the attendees are free (findMeetingTimes)')
+    .requiredOption('--attendees <emails>', 'Comma-separated attendee emails')
+    .requiredOption('--duration <d>', 'Meeting length: 30m, 1h, 1h30m')
+    .option('--start <datetime>', `Window start (default: now): ${TIME_HELP}`)
+    .option('--end <datetime>', `Window end (default: 7 days after the start): ${TIME_HELP}`)
+    .option('--timezone <tz>', `Zone for the window and returned times; ${TZ_HELP}`)
+    .addOption(outputOption())
+    .action(handleErrors(async (opts) => {
+      const tz = resolveTimeZone(opts.timezone);
+      const meetingDuration = isoDuration(opts.duration);
+      const attendees = opts.attendees.split(',').map((e: string) => ({
+        type: 'required',
+        emailAddress: { address: validateEmail(e) },
+      }));
+      const start = opts.start ? parseTime(opts.start, { tz }) : parseTime('now', { tz });
+      const end = opts.end ? parseTime(opts.end, { tz }) : parseTime('+7d', { tz, now: start.date });
+
+      const response = await getClient().request('/me/findMeetingTimes', {
+        method: 'POST',
+        headers: preferTimeZone(tz),
+        body: JSON.stringify({
+          attendees,
+          timeConstraint: {
+            activityDomain: 'work',
+            timeSlots: [{ start: { dateTime: start.dateTime, timeZone: tz }, end: { dateTime: end.dateTime, timeZone: tz } }],
+          },
+          meetingDuration,
+        }),
+      });
+
+      const data = response.data as { meetingTimeSuggestions?: MeetingTimeSuggestion[]; emptySuggestionsReason?: string; dryRun?: boolean };
+      if (data.dryRun) {
+        console.log(formatOutput(data, opts.output as OutputFormat));
+        return;
+      }
+      // Normalize to ISO with the user's offset, whether or not Graph honored the Prefer header.
+      const iso = (t: { dateTime: string; timeZone?: string }) => toIsoWithOffset(parseGraphDateTime(t, tz), tz);
+      const value = (data.meetingTimeSuggestions ?? []).map(s => ({
+        start: iso(s.meetingTimeSlot.start),
+        end: iso(s.meetingTimeSlot.end),
+        confidence: s.confidence,
+        organizerAvailability: s.organizerAvailability,
+        attendeeAvailability: (s.attendeeAvailability ?? []).map(a => ({
+          attendee: a.attendee?.emailAddress?.address,
+          availability: a.availability,
+        })),
+      }));
+      const out: Record<string, unknown> = { value };
+      if (data.emptySuggestionsReason) out.emptySuggestionsReason = data.emptySuggestionsReason;
+      console.log(formatOutput(out, opts.output as OutputFormat));
     }));
 
   // ── Room finder ─────────────────────────────────────────────
