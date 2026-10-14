@@ -3,6 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import readline from 'readline';
+import { PassThrough } from 'stream';
 import type { Command } from 'commander';
 import { runCommand } from '../helpers/cli.js';
 import { registerAuthCommands } from '../../src/commands/auth.js';
@@ -112,6 +113,36 @@ describe('auth setup saves the chosen scopes (M-12)', () => {
     answerPrompts(['2', 'n', 'client-123']);
     await runCommand(registerAuth(realGetAuth), ['auth', 'setup']);
     expect(configJson().other).toBe(1);
+  });
+});
+
+/** Feed real readline from a piped stdin: all of `text` arrives in one chunk, then EOF. */
+function pipeStdin(text: string) {
+  const input = new PassThrough();
+  vi.spyOn(process, 'stdin', 'get').mockReturnValue(input as never);
+  input.end(text);
+}
+
+describe('auth setup with piped stdin (V-15, F27)', () => {
+  it('completes the wizard when every answer arrives in one chunk', async () => {
+    const login = stubLogin();
+    const groups = 21; // one answer per permission group, then Enter for step 5
+    pipeStdin(['2', 'n', 'client-123', ...Array(groups).fill(''), ''].join('\n') + '\n');
+    const r = await runCommand(registerAuth(realGetAuth), ['auth', 'setup']);
+    expect(r.exitCode).toBe(0);
+    expect(login).toHaveBeenCalledOnce();
+    expect(r.stderr).toContain('Setup Complete');
+    expect(r.stderr).toContain('MS365_CLI_CLIENT_ID="client-123"');
+    expect(configJson().scopes).toContain('Mail.ReadWrite');
+  });
+
+  it('exits 2 naming the question when stdin closes mid-wizard', async () => {
+    const login = stubLogin();
+    pipeStdin('2\nn\n');
+    const r = await runCommand(registerAuth(realGetAuth), ['auth', 'setup']);
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain('setup needs an answer for "Enter the Application (client) ID:" (stdin closed)');
+    expect(login).not.toHaveBeenCalled();
   });
 });
 
