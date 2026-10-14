@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
-import { outputOption } from '../utils.js';
+import { outputOption, info } from '../utils.js';
 import { handleErrors } from '../errors.js';
 
 export function registerTeamsCommands(program: Command, getClient: () => GraphClient): void {
@@ -135,7 +135,7 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       if (opts.top) queryParams['$top'] = opts.top;
 
       const response = opts.all
-        ? await client.requestAllPages('/me/chats', { queryParams })
+        ? await client.requestAllPages('/me/chats', { queryParams }, opts.pageLimit ? parseInt(opts.pageLimit) : undefined, opts.pageDelay ? parseInt(opts.pageDelay) : undefined)
         : await client.request('/me/chats', { queryParams });
 
       console.log(formatOutput(response.data, opts.output as OutputFormat));
@@ -195,15 +195,40 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
     .option('--html', 'Body is HTML')
     .action(handleErrors(async (chatId: string, messageId: string, opts) => {
       const client = getClient();
-      await client.request(
-        `/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}/replies`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            body: { contentType: opts.html ? 'html' : 'text', content: opts.body },
-          }),
-        }
-      );
+      // Chats have no /replies endpoint; Graph's documented "reply with quote" is a new
+      // message carrying a messageReference attachment to the original.
+      const messagesEndpoint = `/chats/${encodeURIComponent(chatId)}/messages`;
+      const original = (await client.request(`${messagesEndpoint}/${encodeURIComponent(messageId)}`)).data as {
+        body?: { content?: string };
+        from?: unknown;
+      };
+      const replyHtml = opts.html ? opts.body : escapeHtml(opts.body);
+      await client.request(messagesEndpoint, {
+        method: 'POST',
+        body: JSON.stringify({
+          body: { contentType: 'html', content: `<attachment id="${escapeHtml(messageId)}"></attachment>${replyHtml}` },
+          attachments: [{
+            id: messageId,
+            contentType: 'messageReference',
+            content: JSON.stringify({
+              messageId,
+              messagePreview: htmlToText(original.body?.content ?? ''),
+              messageSender: original.from,
+            }),
+          }],
+        }),
+      });
       info('Reply sent.');
     }));
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function htmlToText(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, '')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
+    .trim();
 }
