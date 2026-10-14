@@ -4,14 +4,14 @@ import fs from 'fs';
 import path from 'path';
 import { CliError, ConfirmationRefusedError, ExitCode } from './errors.js';
 
-const OUTPUT_FORMATS = ['json', 'table', 'csv', 'text', 'yaml'] as const;
+const OUTPUT_FORMATS = ['json', 'ndjson', 'table', 'csv', 'text', 'yaml'] as const;
 
 /** Default output format: table for interactive terminals, json for pipes/scripts. */
 export const defaultFormat = process.stdout.isTTY ? 'table' : 'json';
 
 /** Commander Option for -o/--output with validated choices and TTY-aware default. */
 export function outputOption(overrideDefault?: string): Option {
-  return new Option('-o, --output <format>', 'Output format: json, table, csv, text, yaml')
+  return new Option('-o, --output <format>', 'Output format: json, ndjson, table, csv, text, yaml')
     .choices([...OUTPUT_FORMATS])
     .default(overrideDefault ?? defaultFormat);
 }

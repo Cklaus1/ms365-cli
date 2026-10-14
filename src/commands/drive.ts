@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
-import { formatOutput, type OutputFormat } from '../formatter.js';
+import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { detectMimeType } from '../mime.js';
 import { formatSize, outputOption, confirm, info, encodePath, odataQuote, safeOutputPath } from '../utils.js';
@@ -89,16 +89,7 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
       if (opts.select) queryParams['$select'] = opts.select;
 
       const endpoint = `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(folderId)}/children`;
-      const response = opts.all
-        ? await client.requestAllPages(
-            endpoint,
-            { queryParams },
-            opts.pageLimit ? parseInt(opts.pageLimit) : undefined,
-            opts.pageDelay ? parseInt(opts.pageDelay) : undefined,
-          )
-        : await client.request(endpoint, { queryParams });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(client, endpoint, { queryParams }, opts);
     }));
 
   drive

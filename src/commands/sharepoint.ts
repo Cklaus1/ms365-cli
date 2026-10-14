@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
-import { formatOutput, type OutputFormat } from '../formatter.js';
+import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { outputOption, encodePath } from '../utils.js';
 import { handleErrors } from '../errors.js';
 
@@ -105,11 +105,7 @@ export function registerSharePointCommands(program: Command, getClient: () => Gr
       if (opts.expand) queryParams['$expand'] = opts.expand;
 
       const endpoint = `/sites/${encodeURIComponent(siteId)}/lists/${encodeURIComponent(listId)}/items`;
-      const response = opts.all
-        ? await client.requestAllPages(endpoint, { queryParams }, opts.pageLimit ? parseInt(opts.pageLimit) : undefined, opts.pageDelay ? parseInt(opts.pageDelay) : undefined)
-        : await client.request(endpoint, { queryParams });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(client, endpoint, { queryParams }, opts);
     }));
 
   sp
@@ -134,11 +130,7 @@ export function registerSharePointCommands(program: Command, getClient: () => Gr
     .action(handleErrors(async (siteId: string, opts) => {
       const client = getClient();
       const endpoint = `/sites/${encodeURIComponent(siteId)}/items`;
-      const response = opts.all
-        ? await client.requestAllPages(endpoint, {}, opts.pageLimit ? parseInt(opts.pageLimit) : undefined, opts.pageDelay ? parseInt(opts.pageDelay) : undefined)
-        : await client.request(endpoint);
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(client, endpoint, {}, opts);
     }));
 
   sp

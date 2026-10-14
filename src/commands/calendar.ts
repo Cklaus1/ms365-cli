@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
-import { formatOutput, type OutputFormat } from '../formatter.js';
+import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { outputOption, confirm, info, validateEmail, resolveTimeZone, preferTimeZone, parseTime } from '../utils.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 
@@ -82,11 +82,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
         ? `/me/calendars/${encodeURIComponent(opts.calendar)}/events`
         : '/me/events';
 
-      const response = opts.all
-        ? await client.requestAllPages(endpoint, { queryParams, headers }, opts.pageLimit ? parseInt(opts.pageLimit) : undefined, opts.pageDelay ? parseInt(opts.pageDelay) : undefined)
-        : await client.request(endpoint, { queryParams, headers });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(client, endpoint, { queryParams, headers }, opts);
     }));
 
   cal
@@ -237,11 +233,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
       const headers = preferTimeZone(tz);
 
       const client = getClient();
-      const response = opts.all
-        ? await client.requestAllPages('/me/calendarView', { queryParams, headers }, opts.pageLimit ? parseInt(opts.pageLimit) : undefined, opts.pageDelay ? parseInt(opts.pageDelay) : undefined)
-        : await client.request('/me/calendarView', { queryParams, headers });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(client, '/me/calendarView', { queryParams, headers }, opts);
     }));
 
   // ── Respond to event (accept/decline/tentative) ─────────────

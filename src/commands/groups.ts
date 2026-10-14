@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
-import { formatOutput, type OutputFormat } from '../formatter.js';
+import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { outputOption } from '../utils.js';
 import { handleErrors } from '../errors.js';
 
@@ -32,11 +32,7 @@ export function registerGroupsCommands(program: Command, getClient: () => GraphC
       const headers: Record<string, string> = {};
       if (opts.search) headers['ConsistencyLevel'] = 'eventual';
 
-      const response = opts.all
-        ? await client.requestAllPages('/groups', { queryParams, headers }, opts.pageLimit ? parseInt(opts.pageLimit) : undefined, opts.pageDelay ? parseInt(opts.pageDelay) : undefined)
-        : await client.request('/groups', { queryParams, headers });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(client, '/groups', { queryParams, headers }, opts);
     }));
 
   groups
@@ -54,11 +50,7 @@ export function registerGroupsCommands(program: Command, getClient: () => GraphC
       if (opts.top) queryParams['$top'] = opts.top;
       if (opts.select) queryParams['$select'] = opts.select;
 
-      const response = opts.all
-        ? await client.requestAllPages('/me/memberOf/microsoft.graph.group', { queryParams }, opts.pageLimit ? parseInt(opts.pageLimit) : undefined, opts.pageDelay ? parseInt(opts.pageDelay) : undefined)
-        : await client.request('/me/memberOf/microsoft.graph.group', { queryParams });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(client, '/me/memberOf/microsoft.graph.group', { queryParams }, opts);
     }));
 
   groups
@@ -85,11 +77,7 @@ export function registerGroupsCommands(program: Command, getClient: () => GraphC
       if (opts.top) queryParams['$top'] = opts.top;
 
       const endpoint = `/groups/${encodeURIComponent(groupId)}/members`;
-      const response = opts.all
-        ? await client.requestAllPages(endpoint, { queryParams }, opts.pageLimit ? parseInt(opts.pageLimit) : undefined, opts.pageDelay ? parseInt(opts.pageDelay) : undefined)
-        : await client.request(endpoint, { queryParams });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(client, endpoint, { queryParams }, opts);
     }));
 
   groups
@@ -119,11 +107,7 @@ export function registerGroupsCommands(program: Command, getClient: () => GraphC
       };
       if (opts.top) queryParams['$top'] = opts.top;
 
-      const response = opts.all
-        ? await client.requestAllPages('/groups', { queryParams }, opts.pageLimit ? parseInt(opts.pageLimit) : undefined, opts.pageDelay ? parseInt(opts.pageDelay) : undefined)
-        : await client.request('/groups', { queryParams });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(client, '/groups', { queryParams }, opts);
     }));
 
   groups
@@ -142,10 +126,6 @@ export function registerGroupsCommands(program: Command, getClient: () => GraphC
       };
       if (opts.top) queryParams['$top'] = opts.top;
 
-      const response = opts.all
-        ? await client.requestAllPages('/groups', { queryParams }, opts.pageLimit ? parseInt(opts.pageLimit) : undefined, opts.pageDelay ? parseInt(opts.pageDelay) : undefined)
-        : await client.request('/groups', { queryParams });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(client, '/groups', { queryParams }, opts);
     }));
 }

@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
-import { formatOutput, streamPages, type OutputFormat } from '../formatter.js';
+import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import {
   truncate, parseRecipients, formatSize, outputOption, confirm, info,
@@ -150,26 +150,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         endpoint = `/me/mailFolders/${encodeURIComponent(folderId)}/messages`;
       }
 
-      if (opts.all && (opts.output === 'json' || opts.output === 'csv')) {
-        // Stream page-by-page for json/csv to avoid buffering all results in memory
-        const pages = client.requestPagesStreaming(
-          endpoint,
-          { queryParams },
-          opts.pageLimit ? parseInt(opts.pageLimit) : undefined,
-          opts.pageDelay ? parseInt(opts.pageDelay) : undefined,
-        );
-        await streamPages(pages, opts.output as OutputFormat);
-      } else {
-        const response = opts.all
-          ? await client.requestAllPages(
-              endpoint,
-              { queryParams },
-              opts.pageLimit ? parseInt(opts.pageLimit) : undefined,
-              opts.pageDelay ? parseInt(opts.pageDelay) : undefined,
-            )
-          : await client.request(endpoint, { queryParams });
-        console.log(formatOutput(response.data, opts.output as OutputFormat));
-      }
+      await printList(client, endpoint, { queryParams }, opts);
     }));
 
   mail
@@ -412,10 +393,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         '$select': 'id,displayName,parentFolderId,childFolderCount,totalItemCount,unreadItemCount',
         '$top': '100',
       };
-      const response = opts.all
-        ? await client.requestAllPages(endpoint, { queryParams })
-        : await client.request(endpoint, { queryParams });
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(client, endpoint, { queryParams }, opts);
     }));
 
   mail
@@ -812,11 +790,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         ? `/users/${encodeURIComponent(userId)}/mailFolders/${encodeURIComponent(opts.folder)}/messages`
         : `/users/${encodeURIComponent(userId)}/messages`;
 
-      const response = opts.all
-        ? await client.requestAllPages(endpoint, { queryParams })
-        : await client.request(endpoint, { queryParams });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(client, endpoint, { queryParams }, opts);
     }));
 
   mail

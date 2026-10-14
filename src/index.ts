@@ -40,6 +40,7 @@ import { registerGenerateSkillsCommand } from './commands/generate-skills.js';
 import { registerSetupCommand } from './commands/setup.js';
 import logger from './logger.js';
 import { setQuiet } from './utils.js';
+import { setFields, setCursor } from './formatter.js';
 import { reportError, setErrorFormat, ExitCode, CliError } from './errors.js';
 
 const program = new Command();
@@ -53,7 +54,9 @@ program
   .option('--dry-run', 'Preview the API request without executing it')
   .addOption(new Option('--api-version <version>', 'Graph API version').choices(['v1.0', 'beta']))
   .option('-q, --quiet', 'Suppress non-data output (confirmations, progress)')
-  .addOption(new Option('--error-format <format>', 'Error output on stderr (default: text)').choices(['text', 'json']));
+  .addOption(new Option('--error-format <format>', 'Error output on stderr (default: text)').choices(['text', 'json']))
+  .option('--fields <list>', 'Only output these comma-separated fields (dot paths allowed, e.g. id,from.emailAddress.address)')
+  .option('--cursor <token>', 'Fetch the page after a previous list call (the nextCursor it printed on stderr)');
 
 // Usage errors (unknown option, missing argument) exit 2; help/version exit 0.
 // Must be set before subcommands are registered so they inherit it.
@@ -134,6 +137,8 @@ program.hook('preAction', async (_program, actionCommand) => {
   const o = program.opts();
   if (o.errorFormat) setErrorFormat(o.errorFormat);
   if (o.quiet) setQuiet(true);
+  if (o.fields) setFields(String(o.fields).split(',').map((f: string) => f.trim()).filter(Boolean));
+  if (o.cursor) setCursor(o.cursor);
 
   // Skip auth initialization for offline commands and dry-run
   if (OFFLINE_COMMANDS.has(commandChain[1])) return;

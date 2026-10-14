@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
-import { formatOutput, type OutputFormat } from '../formatter.js';
+import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { outputOption, info } from '../utils.js';
 import { handleErrors } from '../errors.js';
 
@@ -73,11 +73,7 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       if (opts.top) queryParams['$top'] = opts.top;
 
       const endpoint = `/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages`;
-      const response = opts.all
-        ? await client.requestAllPages(endpoint, { queryParams }, opts.pageLimit ? parseInt(opts.pageLimit) : undefined, opts.pageDelay ? parseInt(opts.pageDelay) : undefined)
-        : await client.request(endpoint, { queryParams });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(client, endpoint, { queryParams }, opts);
     }));
 
   teams
@@ -134,11 +130,7 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       const queryParams: Record<string, string> = {};
       if (opts.top) queryParams['$top'] = opts.top;
 
-      const response = opts.all
-        ? await client.requestAllPages('/me/chats', { queryParams }, opts.pageLimit ? parseInt(opts.pageLimit) : undefined, opts.pageDelay ? parseInt(opts.pageDelay) : undefined)
-        : await client.request('/me/chats', { queryParams });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(client, '/me/chats', { queryParams }, opts);
     }));
 
   chat
@@ -165,11 +157,7 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       if (opts.top) queryParams['$top'] = opts.top;
 
       const endpoint = `/chats/${encodeURIComponent(chatId)}/messages`;
-      const response = opts.all
-        ? await client.requestAllPages(endpoint, { queryParams }, opts.pageLimit ? parseInt(opts.pageLimit) : undefined, opts.pageDelay ? parseInt(opts.pageDelay) : undefined)
-        : await client.request(endpoint, { queryParams });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(client, endpoint, { queryParams }, opts);
     }));
 
   chat

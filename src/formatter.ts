@@ -1,4 +1,72 @@
-export type OutputFormat = 'json' | 'table' | 'csv' | 'text' | 'yaml';
+import type { GraphClient, GraphRequestOptions } from './graph-client.js';
+import { CliError, ExitCode } from './errors.js';
+
+export type OutputFormat = 'json' | 'ndjson' | 'table' | 'csv' | 'text' | 'yaml';
+
+// ── Global output controls (set from --fields / --cursor in the preAction hook) ──
+
+let selectedFields: string[] | null = null;
+/** Limit output to these (dot-path) fields, e.g. ["id", "from.emailAddress.address"]. */
+export function setFields(fields: string[] | null): void { selectedFields = fields && fields.length ? fields : null; }
+
+let pageCursor: string | null = null;
+/** Resume a list from an opaque cursor printed by a previous page. */
+export function setCursor(cursor: string | null): void { pageCursor = cursor || null; }
+
+/** Opaque, shell-safe cursor for a Graph nextLink. */
+export function encodeCursor(nextLink: string): string {
+  return Buffer.from(nextLink).toString('base64url');
+}
+
+export function decodeCursor(cursor: string): string {
+  const url = Buffer.from(cursor, 'base64url').toString('utf8');
+  let host = '';
+  try { host = new URL(url).hostname; } catch { /* invalid */ }
+  if (host !== 'graph.microsoft.com') {
+    throw new CliError('Invalid --cursor value.', { code: 'usage', exitCode: ExitCode.USAGE, fix: 'pass the nextCursor printed by the previous page' });
+  }
+  return url;
+}
+
+function getPath(obj: unknown, dotted: string): unknown {
+  let cur: unknown = obj;
+  for (const part of dotted.split('.')) {
+    if (cur === null || typeof cur !== 'object') return undefined;
+    cur = (cur as Record<string, unknown>)[part];
+  }
+  return cur;
+}
+
+function setPath(obj: Record<string, unknown>, dotted: string, value: unknown): void {
+  const parts = dotted.split('.');
+  let cur = obj;
+  for (const part of parts.slice(0, -1)) {
+    if (typeof cur[part] !== 'object' || cur[part] === null) cur[part] = {};
+    cur = cur[part] as Record<string, unknown>;
+  }
+  cur[parts[parts.length - 1]] = value;
+}
+
+/** Keep only the selected fields of one item (nested structure preserved). */
+export function projectItem(item: unknown, fields: string[] | null = selectedFields): unknown {
+  if (!fields || item === null || typeof item !== 'object' || Array.isArray(item)) return item;
+  const out: Record<string, unknown> = {};
+  for (const f of fields) {
+    const v = getPath(item, f);
+    if (v !== undefined) setPath(out, f, v);
+  }
+  return out;
+}
+
+/** Apply --fields to a response body: each item of a collection, or the single object. */
+function project(data: unknown): unknown {
+  if (!selectedFields) return data;
+  if (Array.isArray(data)) return data.map(i => projectItem(i));
+  if (data && typeof data === 'object' && Array.isArray((data as Record<string, unknown>).value)) {
+    return { ...(data as Record<string, unknown>), value: ((data as Record<string, unknown>).value as unknown[]).map(i => projectItem(i)) };
+  }
+  return projectItem(data);
+}
 
 /**
  * Stream formatted output page-by-page from an async generator.
@@ -9,18 +77,28 @@ export async function streamPages(
   pages: AsyncGenerator<unknown[], void, undefined>,
   format: OutputFormat,
   write: (chunk: string) => void = (s) => process.stdout.write(s),
+  options: { jsonWrapper?: boolean } = {},
 ): Promise<void> {
+  if (format === 'ndjson') {
+    for await (const page of pages) {
+      for (const item of page) write(JSON.stringify(projectItem(item)) + '\n');
+    }
+    return;
+  }
+
   if (format === 'json') {
+    // jsonWrapper keeps the same {"value": [...]} shape as a buffered --all response
+    const indent = options.jsonWrapper ? '    ' : '';
     let first = true;
-    write('[\n');
+    write(options.jsonWrapper ? '{\n  "value": [\n' : '[\n');
     for await (const page of pages) {
       for (const item of page) {
         if (!first) write(',\n');
-        write(JSON.stringify(item, null, 2));
+        write(JSON.stringify(projectItem(item), null, 2).replace(/^/gm, indent));
         first = false;
       }
     }
-    write('\n]\n');
+    write(options.jsonWrapper ? '\n  ]\n}\n' : '\n]\n');
     return;
   }
 
@@ -29,7 +107,8 @@ export async function streamPages(
     const columnSet = new Set<string>();
     let columns: string[] = [];
     for await (const page of pages) {
-      const flatItems = page.map((item) => {
+      const flatItems = page.map((raw) => {
+        const item = projectItem(raw);
         if (typeof item !== 'object' || item === null) return { value: String(item) };
         return flattenObject(item as Record<string, unknown>);
       });
@@ -66,10 +145,13 @@ export async function streamPages(
   write(formatOutput({ value: allItems }, format) + '\n');
 }
 
-export function formatOutput(data: unknown, format: OutputFormat): string {
+export function formatOutput(rawData: unknown, format: OutputFormat): string {
+  const data = project(rawData);
   switch (format) {
     case 'json':
       return JSON.stringify(data, null, 2);
+    case 'ndjson':
+      return extractItems(data).map(i => JSON.stringify(i)).join('\n');
     case 'table':
       return formatTable(data);
     case 'csv':
@@ -306,4 +388,51 @@ function csvEscape(val: string): string {
     return '"' + safe.replace(/"/g, '""') + '"';
   }
   return safe;
+}
+
+export interface ListOptions {
+  all?: boolean;
+  pageLimit?: string;
+  pageDelay?: string;
+  output?: string;
+}
+
+/**
+ * Print a Graph collection: one page (with a nextCursor hint on stderr when more exist),
+ * the page named by --cursor, or every page with --all — streamed for json/ndjson/csv.
+ */
+export async function printList(
+  client: GraphClient,
+  endpoint: string,
+  options: GraphRequestOptions,
+  opts: ListOptions,
+): Promise<void> {
+  const format = (opts.output ?? 'json') as OutputFormat;
+  const pageLimit = opts.pageLimit ? parseInt(opts.pageLimit, 10) : undefined;
+  const pageDelay = opts.pageDelay ? parseInt(opts.pageDelay, 10) : undefined;
+
+  if (opts.all && !pageCursor) {
+    if (format === 'json' || format === 'ndjson' || format === 'csv') {
+      await streamPages(client.requestPagesStreaming(endpoint, options, pageLimit, pageDelay), format,
+        (chunk) => process.stdout.write(chunk), { jsonWrapper: true });
+    } else {
+      const response = await client.requestAllPages(endpoint, options, pageLimit, pageDelay);
+      console.log(formatOutput(response.data, format));
+    }
+    return;
+  }
+
+  const response = pageCursor
+    ? await client.request(decodeCursor(pageCursor), { headers: options.headers })
+    : await client.request(endpoint, options);
+  const nextCursor = response.nextLink ? encodeCursor(response.nextLink) : undefined;
+  // JSON/YAML carry the cursor in-band; line/tabular formats print it on stderr.
+  const inBand = format === 'json' || format === 'yaml';
+  const data = inBand && nextCursor && response.data && typeof response.data === 'object'
+    ? { ...(response.data as Record<string, unknown>), nextCursor }
+    : response.data;
+  console.log(formatOutput(data, format));
+  if (nextCursor && !inBand) {
+    process.stderr.write(`nextCursor: ${nextCursor}\n`);
+  }
 }

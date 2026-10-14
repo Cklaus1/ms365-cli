@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
-import { formatOutput, type OutputFormat } from '../formatter.js';
+import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { outputOption, info, parseTime, resolveTimeZone, safeOutputPath } from '../utils.js';
 import fs from 'fs';
@@ -40,11 +40,7 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
       if (opts.filter) queryParams['$filter'] = opts.filter;
       if (opts.select) queryParams['$select'] = opts.select;
 
-      const response = opts.all
-        ? await client.requestAllPages('/users', { queryParams }, opts.pageLimit ? parseInt(opts.pageLimit) : undefined, opts.pageDelay ? parseInt(opts.pageDelay) : undefined)
-        : await client.request('/users', { queryParams });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(client, '/users', { queryParams }, opts);
     }));
 
   // ── Out of Office / Auto-replies ────────────────────────────

@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
-import { formatOutput, type OutputFormat } from '../formatter.js';
+import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { handleErrors } from '../errors.js';
 import { outputOption, confirm, info, parseTime } from '../utils.js';
 
@@ -41,11 +41,7 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
       if (opts.orderby) queryParams['$orderby'] = opts.orderby;
 
       const endpoint = `/me/todo/lists/${encodeURIComponent(listId)}/tasks`;
-      const response = opts.all
-        ? await client.requestAllPages(endpoint, { queryParams }, opts.pageLimit ? parseInt(opts.pageLimit) : undefined, opts.pageDelay ? parseInt(opts.pageDelay) : undefined)
-        : await client.request(endpoint, { queryParams });
-
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(client, endpoint, { queryParams }, opts);
     }));
 
   todo
