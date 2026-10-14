@@ -3,6 +3,7 @@ import { GraphClient, type GraphRequestOptions } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors, CliError } from '../errors.js';
 import { outputOption, confirm, info, parseTime } from '../utils.js';
+import { resolve, looksLikeId } from '../resolve.js';
 
 const PREMIUM_HINT = "Premium plans (Project for the web) aren't available via the Graph Planner API";
 
@@ -31,6 +32,12 @@ async function autoFetchETag(client: GraphClient, endpoint: string): Promise<str
   throw new CliError(`Could not auto-fetch ETag for ${endpoint}. Provide --etag manually.`);
 }
 
+/** A bucket ID, or a bucket name looked up in `plan` (itself an ID or name). */
+async function resolveBucket(client: GraphClient, bucket: string, plan?: string): Promise<string> {
+  if (looksLikeId('bucket', bucket)) return bucket;
+  return resolve(client, 'bucket', bucket, plan === undefined ? undefined : await resolve(client, 'plan', plan));
+}
+
 /** Planner dueDateTime is a UTC instant; resolve the user's input (date = local midnight). */
 function plannerDue(input: string, tz?: string): string {
   return parseTime(input, { tz }).date.toISOString();
@@ -50,21 +57,25 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
     }));
 
   planner
-    .command('plan <planId>')
+    .command('plan')
+    .argument('<planId>', 'Plan ID or name')
     .description('Get plan details')
     .addOption(outputOption())
-    .action(handleErrors(async (planId: string, opts) => {
+    .action(handleErrors(async (planArg: string, opts) => {
       const client = getClient();
+      const planId = await resolve(client, 'plan', planArg);
       const response = await plannerRequest(client, `/planner/plans/${encodeURIComponent(planId)}`);
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
   planner
-    .command('plan-details <planId>')
+    .command('plan-details')
+    .argument('<planId>', 'Plan ID or name')
     .description('Get plan extended details (category labels, etc.)')
     .addOption(outputOption())
-    .action(handleErrors(async (planId: string, opts) => {
+    .action(handleErrors(async (planArg: string, opts) => {
       const client = getClient();
+      const planId = await resolve(client, 'plan', planArg);
       const response = await plannerRequest(client, `/planner/plans/${encodeURIComponent(planId)}/details`);
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
@@ -80,11 +91,13 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
     }));
 
   planner
-    .command('tasks <planId>')
+    .command('tasks')
+    .argument('<planId>', 'Plan ID or name')
     .description('List tasks in a plan')
     .addOption(outputOption())
-    .action(handleErrors(async (planId: string, opts) => {
+    .action(handleErrors(async (planArg: string, opts) => {
       const client = getClient();
+      const planId = await resolve(client, 'plan', planArg);
       const response = await plannerRequest(client, `/planner/plans/${encodeURIComponent(planId)}/tasks`);
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
@@ -110,31 +123,39 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
     }));
 
   planner
-    .command('buckets <planId>')
+    .command('buckets')
+    .argument('<planId>', 'Plan ID or name')
     .description('List plan buckets')
     .addOption(outputOption())
-    .action(handleErrors(async (planId: string, opts) => {
+    .action(handleErrors(async (planArg: string, opts) => {
       const client = getClient();
+      const planId = await resolve(client, 'plan', planArg);
       const response = await plannerRequest(client, `/planner/plans/${encodeURIComponent(planId)}/buckets`);
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
   planner
-    .command('bucket <bucketId>')
+    .command('bucket')
+    .argument('<bucketId>', 'Bucket ID or name')
+    .option('--plan <planId>', 'Plan ID or name (to resolve a bucket by name)')
     .description('Get bucket details')
     .addOption(outputOption())
-    .action(handleErrors(async (bucketId: string, opts) => {
+    .action(handleErrors(async (bucketArg: string, opts) => {
       const client = getClient();
+      const bucketId = await resolveBucket(client, bucketArg, opts.plan);
       const response = await client.request(`/planner/buckets/${encodeURIComponent(bucketId)}`);
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
   planner
-    .command('bucket-tasks <bucketId>')
+    .command('bucket-tasks')
+    .argument('<bucketId>', 'Bucket ID or name')
+    .option('--plan <planId>', 'Plan ID or name (to resolve a bucket by name)')
     .description('List tasks in a bucket')
     .addOption(outputOption())
-    .action(handleErrors(async (bucketId: string, opts) => {
+    .action(handleErrors(async (bucketArg: string, opts) => {
       const client = getClient();
+      const bucketId = await resolveBucket(client, bucketArg, opts.plan);
       const response = await client.request(`/planner/buckets/${encodeURIComponent(bucketId)}/tasks`);
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
@@ -142,24 +163,22 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
   planner
     .command('create-task')
     .description('Create a planner task')
-    .requiredOption('--plan <planId>', 'Plan ID')
+    .requiredOption('--plan <planId>', 'Plan ID or name')
     .requiredOption('--title <title>', 'Task title')
-    .option('--bucket <bucketId>', 'Bucket ID')
+    .option('--bucket <bucketId>', 'Bucket ID or name (within --plan)')
     .option('--due <date>', 'Due date (YYYY-MM-DD, "tomorrow 17:00", "next fri", "+3d")')
     .option('--timezone <tz>', 'IANA time zone for --due (default: MS365_CLI_TIMEZONE or local)')
     .option('--assigned-to <userId>', 'Assign to user ID')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();
-      const task: Record<string, unknown> = {
-        planId: opts.plan,
-        title: opts.title,
-      };
-      if (opts.bucket) task.bucketId = opts.bucket;
+      const task: Record<string, unknown> = { title: opts.title };
       if (opts.due) task.dueDateTime = plannerDue(opts.due, opts.timezone);
       if (opts.assignedTo) {
         task.assignments = { [opts.assignedTo]: { '@odata.type': '#microsoft.graph.plannerAssignment', orderHint: ' !' } };
       }
+      task.planId = await resolve(client, 'plan', opts.plan);
+      if (opts.bucket) task.bucketId = await resolveBucket(client, opts.bucket, task.planId as string);
 
       const response = await plannerRequest(client, '/planner/tasks', {
         method: 'POST',
@@ -175,7 +194,8 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
     .option('--due <date>', 'Due date (YYYY-MM-DD, "tomorrow 17:00", "next fri", "+3d")')
     .option('--timezone <tz>', 'IANA time zone for --due (default: MS365_CLI_TIMEZONE or local)')
     .option('--percent <n>', 'Percent complete (0, 50, 100)')
-    .option('--bucket <bucketId>', 'Move to bucket')
+    .option('--bucket <bucketId>', 'Move to bucket (ID, or name with --plan)')
+    .option('--plan <planId>', 'Plan ID or name (to resolve --bucket by name)')
     .option('--etag <etag>', 'ETag for concurrency (auto-fetched if omitted)')
     .addOption(outputOption())
     .action(handleErrors(async (taskId: string, opts) => {
@@ -190,7 +210,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
         }
         patch.percentComplete = pct;
       }
-      if (opts.bucket) patch.bucketId = opts.bucket;
+      if (opts.bucket) patch.bucketId = await resolveBucket(client, opts.bucket, opts.plan);
 
       const response = await plannerRequest(client, `/planner/tasks/${encodeURIComponent(taskId)}`, {
         method: 'PATCH',
@@ -201,13 +221,15 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
     }));
 
   planner
-    .command('update-plan-details <planId>')
+    .command('update-plan-details')
+    .argument('<planId>', 'Plan ID or name')
     .description('Update plan details (category labels)')
     .option('--etag <etag>', 'ETag for concurrency (auto-fetched if omitted)')
     .option('--categories <json>', 'Category descriptions as JSON')
     .addOption(outputOption())
-    .action(handleErrors(async (planId: string, opts) => {
+    .action(handleErrors(async (planArg: string, opts) => {
       const client = getClient();
+      const planId = await resolve(client, 'plan', planArg);
       const patch: Record<string, unknown> = {};
       if (opts.categories) {
         patch.categoryDescriptions = JSON.parse(opts.categories);
@@ -256,12 +278,14 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
     }));
 
   planner
-    .command('delete-plan <planId>')
+    .command('delete-plan')
+    .argument('<planId>', 'Plan ID or name')
     .description('Delete a planner plan')
     .option('--etag <etag>', 'ETag for concurrency (auto-fetched if omitted)')
-    .action(handleErrors(async (planId: string, opts) => {
-      if (!await confirm(`Delete planner plan ${planId.substring(0, 16)}...?`)) return;
+    .action(handleErrors(async (planArg: string, opts) => {
+      if (!await confirm(`Delete planner plan ${planArg.substring(0, 16)}...?`)) return;
       const client = getClient();
+      const planId = await resolve(client, 'plan', planArg);
       const etag = opts.etag || await autoFetchETag(client, `/planner/plans/${encodeURIComponent(planId)}`);
       await plannerRequest(client, `/planner/plans/${encodeURIComponent(planId)}`, {
         method: 'DELETE',
@@ -271,12 +295,15 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
     }));
 
   planner
-    .command('delete-bucket <bucketId>')
+    .command('delete-bucket')
+    .argument('<bucketId>', 'Bucket ID or name')
+    .option('--plan <planId>', 'Plan ID or name (to resolve a bucket by name)')
     .description('Delete a planner bucket')
     .option('--etag <etag>', 'ETag for concurrency (auto-fetched if omitted)')
-    .action(handleErrors(async (bucketId: string, opts) => {
-      if (!await confirm(`Delete planner bucket ${bucketId.substring(0, 16)}...?`)) return;
+    .action(handleErrors(async (bucketArg: string, opts) => {
+      if (!await confirm(`Delete planner bucket ${bucketArg.substring(0, 16)}...?`)) return;
       const client = getClient();
+      const bucketId = await resolveBucket(client, bucketArg, opts.plan);
       const etag = opts.etag || await autoFetchETag(client, `/planner/buckets/${encodeURIComponent(bucketId)}`);
       await client.request(`/planner/buckets/${encodeURIComponent(bucketId)}`, {
         method: 'DELETE',
@@ -286,13 +313,15 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
     }));
 
   planner
-    .command('update-plan <planId>')
+    .command('update-plan')
+    .argument('<planId>', 'Plan ID or name')
     .description('Update a planner plan')
     .option('--title <title>', 'Plan title')
     .option('--etag <etag>', 'ETag for concurrency (auto-fetched if omitted)')
     .addOption(outputOption())
-    .action(handleErrors(async (planId: string, opts) => {
+    .action(handleErrors(async (planArg: string, opts) => {
       const client = getClient();
+      const planId = await resolve(client, 'plan', planArg);
       const patch: Record<string, unknown> = {};
       if (opts.title) patch.title = opts.title;
 
@@ -305,13 +334,16 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
     }));
 
   planner
-    .command('update-bucket <bucketId>')
+    .command('update-bucket')
+    .argument('<bucketId>', 'Bucket ID or name')
+    .option('--plan <planId>', 'Plan ID or name (to resolve a bucket by name)')
     .description('Update a planner bucket')
     .option('--name <name>', 'Bucket name')
     .option('--etag <etag>', 'ETag for concurrency (auto-fetched if omitted)')
     .addOption(outputOption())
-    .action(handleErrors(async (bucketId: string, opts) => {
+    .action(handleErrors(async (bucketArg: string, opts) => {
       const client = getClient();
+      const bucketId = await resolveBucket(client, bucketArg, opts.plan);
       const patch: Record<string, unknown> = {};
       if (opts.name) patch.name = opts.name;
 
@@ -344,7 +376,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
   planner
     .command('create-bucket')
     .description('Create a bucket in a plan')
-    .requiredOption('--plan <planId>', 'Plan ID')
+    .requiredOption('--plan <planId>', 'Plan ID or name')
     .requiredOption('--name <name>', 'Bucket name')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
@@ -353,7 +385,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
         method: 'POST',
         body: JSON.stringify({
           name: opts.name,
-          planId: opts.plan,
+          planId: await resolve(client, 'plan', opts.plan),
         }),
       });
       console.log(formatOutput(response.data, opts.output as OutputFormat));

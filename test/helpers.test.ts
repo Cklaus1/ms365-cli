@@ -27,14 +27,14 @@ describe('command test harness (T07)', () => {
   });
 
   it('non-TTY confirm exits 7 and sends nothing', async () => {
-    const r = await runCommand(registerTodoCommands, ['todo', 'delete', 'L', 'T']);
+    const r = await runCommand(registerTodoCommands, ['todo', 'delete', 'AAMkLIST1', 'T']);
     expect(r.exitCode).toBe(7);
     expect(r.calls).toHaveLength(0);
   });
 
   it('TTY confirm "y" proceeds with DELETE', async () => {
-    const r = await runCommand(registerTodoCommands, ['todo', 'delete', 'L', 'T'], { tty: true, answer: 'y' });
+    const r = await runCommand(registerTodoCommands, ['todo', 'delete', 'AAMkLIST1', 'T'], { tty: true, answer: 'y' });
     expect(r.exitCode).toBe(0);
-    expect(r.calls[0]).toMatchObject({ method: 'DELETE', path: '/me/todo/lists/L/tasks/T' });
+    expect(r.calls[0]).toMatchObject({ method: 'DELETE', path: '/me/todo/lists/AAMkLIST1/tasks/T' });
   });
 });

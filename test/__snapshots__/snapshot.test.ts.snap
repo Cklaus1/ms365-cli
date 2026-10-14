@@ -1172,22 +1172,18 @@ exports[`dry-run endpoint snapshot (every command) > onenote sections 1`] = `
 exports[`dry-run endpoint snapshot (every command) > planner bucket 1`] = `
 {
   "argv": "planner bucket BUCKETID",
-  "error": "",
-  "exitCode": 0,
-  "requests": [
-    "[dry-run] GET https://graph.microsoft.com/v1.0/planner/buckets/BUCKETID",
-  ],
+  "error": "Error: Resolving a bucket by name needs its plan; pass --plan <ID or name>.",
+  "exitCode": 2,
+  "requests": [],
 }
 `;
 
 exports[`dry-run endpoint snapshot (every command) > planner bucket-tasks 1`] = `
 {
   "argv": "planner bucket-tasks BUCKETID",
-  "error": "",
-  "exitCode": 0,
-  "requests": [
-    "[dry-run] GET https://graph.microsoft.com/v1.0/planner/buckets/BUCKETID/tasks",
-  ],
+  "error": "Error: Resolving a bucket by name needs its plan; pass --plan <ID or name>.",
+  "exitCode": 2,
+  "requests": [],
 }
 `;
 
@@ -1197,6 +1193,7 @@ exports[`dry-run endpoint snapshot (every command) > planner buckets 1`] = `
   "error": "",
   "exitCode": 0,
   "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/planner/plans",
     "[dry-run] GET https://graph.microsoft.com/v1.0/planner/plans/PLANID/buckets",
   ],
 }
@@ -1208,6 +1205,7 @@ exports[`dry-run endpoint snapshot (every command) > planner create-bucket 1`] =
   "error": "",
   "exitCode": 0,
   "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/planner/plans",
     "[dry-run] POST https://graph.microsoft.com/v1.0/planner/buckets",
   ],
 }
@@ -1230,6 +1228,7 @@ exports[`dry-run endpoint snapshot (every command) > planner create-task 1`] = `
   "error": "",
   "exitCode": 0,
   "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/planner/plans",
     "[dry-run] POST https://graph.microsoft.com/v1.0/planner/tasks",
   ],
 }
@@ -1238,12 +1237,9 @@ exports[`dry-run endpoint snapshot (every command) > planner create-task 1`] = `
 exports[`dry-run endpoint snapshot (every command) > planner delete-bucket 1`] = `
 {
   "argv": "planner delete-bucket BUCKETID",
-  "error": "",
-  "exitCode": 0,
-  "requests": [
-    "[dry-run] GET https://graph.microsoft.com/v1.0/planner/buckets/BUCKETID",
-    "[dry-run] DELETE https://graph.microsoft.com/v1.0/planner/buckets/BUCKETID",
-  ],
+  "error": "Error: Resolving a bucket by name needs its plan; pass --plan <ID or name>.",
+  "exitCode": 2,
+  "requests": [],
 }
 `;
 
@@ -1253,6 +1249,7 @@ exports[`dry-run endpoint snapshot (every command) > planner delete-plan 1`] = `
   "error": "",
   "exitCode": 0,
   "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/planner/plans",
     "[dry-run] GET https://graph.microsoft.com/v1.0/planner/plans/PLANID",
     "[dry-run] DELETE https://graph.microsoft.com/v1.0/planner/plans/PLANID",
   ],
@@ -1288,6 +1285,7 @@ exports[`dry-run endpoint snapshot (every command) > planner plan 1`] = `
   "error": "",
   "exitCode": 0,
   "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/planner/plans",
     "[dry-run] GET https://graph.microsoft.com/v1.0/planner/plans/PLANID",
   ],
 }
@@ -1299,6 +1297,7 @@ exports[`dry-run endpoint snapshot (every command) > planner plan-details 1`] = 
   "error": "",
   "exitCode": 0,
   "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/planner/plans",
     "[dry-run] GET https://graph.microsoft.com/v1.0/planner/plans/PLANID/details",
   ],
 }
@@ -1343,6 +1342,7 @@ exports[`dry-run endpoint snapshot (every command) > planner tasks 1`] = `
   "error": "",
   "exitCode": 0,
   "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/planner/plans",
     "[dry-run] GET https://graph.microsoft.com/v1.0/planner/plans/PLANID/tasks",
   ],
 }
@@ -1351,12 +1351,9 @@ exports[`dry-run endpoint snapshot (every command) > planner tasks 1`] = `
 exports[`dry-run endpoint snapshot (every command) > planner update-bucket 1`] = `
 {
   "argv": "planner update-bucket BUCKETID",
-  "error": "",
-  "exitCode": 0,
-  "requests": [
-    "[dry-run] GET https://graph.microsoft.com/v1.0/planner/buckets/BUCKETID",
-    "[dry-run] PATCH https://graph.microsoft.com/v1.0/planner/buckets/BUCKETID",
-  ],
+  "error": "Error: Resolving a bucket by name needs its plan; pass --plan <ID or name>.",
+  "exitCode": 2,
+  "requests": [],
 }
 `;
 
@@ -1366,6 +1363,7 @@ exports[`dry-run endpoint snapshot (every command) > planner update-plan 1`] = `
   "error": "",
   "exitCode": 0,
   "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/planner/plans",
     "[dry-run] GET https://graph.microsoft.com/v1.0/planner/plans/PLANID",
     "[dry-run] PATCH https://graph.microsoft.com/v1.0/planner/plans/PLANID",
   ],
@@ -1378,6 +1376,7 @@ exports[`dry-run endpoint snapshot (every command) > planner update-plan-details
   "error": "",
   "exitCode": 0,
   "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/planner/plans",
     "[dry-run] GET https://graph.microsoft.com/v1.0/planner/plans/PLANID/details",
     "[dry-run] PATCH https://graph.microsoft.com/v1.0/planner/plans/PLANID/details",
   ],
@@ -1568,6 +1567,8 @@ exports[`dry-run endpoint snapshot (every command) > teams channel 1`] = `
   "error": "",
   "exitCode": 0,
   "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/joinedTeams",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/teams/TEAMID/channels",
     "[dry-run] GET https://graph.microsoft.com/v1.0/teams/TEAMID/channels/CHANNELID",
   ],
 }
@@ -1579,6 +1580,8 @@ exports[`dry-run endpoint snapshot (every command) > teams channel-messages 1`] 
   "error": "",
   "exitCode": 0,
   "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/joinedTeams",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/teams/TEAMID/channels",
     "[dry-run] GET https://graph.microsoft.com/v1.0/teams/TEAMID/channels/CHANNELID/messages",
   ],
 }
@@ -1590,6 +1593,7 @@ exports[`dry-run endpoint snapshot (every command) > teams channels 1`] = `
   "error": "",
   "exitCode": 0,
   "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/joinedTeams",
     "[dry-run] GET https://graph.microsoft.com/v1.0/teams/TEAMID/channels",
   ],
 }
@@ -1601,6 +1605,7 @@ exports[`dry-run endpoint snapshot (every command) > teams get 1`] = `
   "error": "",
   "exitCode": 0,
   "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/joinedTeams",
     "[dry-run] GET https://graph.microsoft.com/v1.0/teams/TEAMID",
   ],
 }
@@ -1623,6 +1628,7 @@ exports[`dry-run endpoint snapshot (every command) > teams members 1`] = `
   "error": "",
   "exitCode": 0,
   "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/joinedTeams",
     "[dry-run] GET https://graph.microsoft.com/v1.0/teams/TEAMID/members",
   ],
 }
@@ -1634,6 +1640,8 @@ exports[`dry-run endpoint snapshot (every command) > teams reply-channel-message
   "error": "",
   "exitCode": 0,
   "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/joinedTeams",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/teams/TEAMID/channels",
     "[dry-run] POST https://graph.microsoft.com/v1.0/teams/TEAMID/channels/CHANNELID/messages/MESSAGEID/replies",
   ],
 }
@@ -1645,6 +1653,8 @@ exports[`dry-run endpoint snapshot (every command) > teams send-channel-message 
   "error": "",
   "exitCode": 0,
   "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/joinedTeams",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/teams/TEAMID/channels",
     "[dry-run] POST https://graph.microsoft.com/v1.0/teams/TEAMID/channels/CHANNELID/messages",
   ],
 }
@@ -1656,6 +1666,7 @@ exports[`dry-run endpoint snapshot (every command) > todo create 1`] = `
   "error": "",
   "exitCode": 0,
   "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/todo/lists",
     "[dry-run] POST https://graph.microsoft.com/v1.0/me/todo/lists/LISTID/tasks",
   ],
 }
@@ -1678,6 +1689,7 @@ exports[`dry-run endpoint snapshot (every command) > todo delete 1`] = `
   "error": "",
   "exitCode": 0,
   "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/todo/lists",
     "[dry-run] DELETE https://graph.microsoft.com/v1.0/me/todo/lists/LISTID/tasks/TASKID",
   ],
 }
@@ -1689,6 +1701,7 @@ exports[`dry-run endpoint snapshot (every command) > todo get 1`] = `
   "error": "",
   "exitCode": 0,
   "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/todo/lists",
     "[dry-run] GET https://graph.microsoft.com/v1.0/me/todo/lists/LISTID/tasks/TASKID",
   ],
 }
@@ -1711,6 +1724,7 @@ exports[`dry-run endpoint snapshot (every command) > todo tasks 1`] = `
   "error": "",
   "exitCode": 0,
   "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/todo/lists",
     "[dry-run] GET https://graph.microsoft.com/v1.0/me/todo/lists/LISTID/tasks",
   ],
 }
@@ -1722,6 +1736,7 @@ exports[`dry-run endpoint snapshot (every command) > todo update 1`] = `
   "error": "",
   "exitCode": 0,
   "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/todo/lists",
     "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/todo/lists/LISTID/tasks/TASKID",
   ],
 }
@@ -1733,6 +1748,7 @@ exports[`dry-run endpoint snapshot (every command) > todo update-list 1`] = `
   "error": "",
   "exitCode": 0,
   "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/todo/lists",
     "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/todo/lists/LISTID",
   ],
 }

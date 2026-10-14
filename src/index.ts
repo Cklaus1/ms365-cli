@@ -42,6 +42,8 @@ import { registerMeetingsCommands } from './commands/meetings.js';
 import { registerWatchCommands } from './commands/watch.js';
 import { registerAuditCommands } from './commands/audit.js';
 import { registerDescribeCommand } from './commands/describe.js';
+import { registerMcpCommands } from './commands/mcp.js';
+import { registerResolveCommands } from './commands/resolve.js';
 import { setActor, setCommandPath } from './audit.js';
 import { commandMeta } from './catalog.js';
 import { assertConsented } from './preflight.js';
@@ -103,7 +105,7 @@ function globalFlags() {
 }
 
 /** Commands that never call Graph and must work without a client ID or login. */
-const OFFLINE_COMMANDS = new Set(['auth', 'schema', 'generate-skills', 'describe', 'audit']);
+const OFFLINE_COMMANDS = new Set(['auth', 'schema', 'generate-skills', 'describe', 'audit', 'mcp']);
 
 // Lazy-initialized singletons
 let authManager: AuthManager | null = null;
@@ -147,7 +149,9 @@ registerSetupCommand(program, getAuth);
 registerMeetingsCommands(program, getClient);
 registerWatchCommands(program, getClient);
 registerAuditCommands(program);
+registerResolveCommands(program, getClient);
 registerDescribeCommand(program);
+registerMcpCommands(program);
 
 // Ensure auth is initialized before non-auth commands
 // The hook receives (hookedCommand = program, actionCommand); walk up from the action command.

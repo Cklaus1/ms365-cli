@@ -3,6 +3,7 @@ import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { outputOption, info } from '../utils.js';
 import { handleErrors } from '../errors.js';
+import { resolve } from '../resolve.js';
 import { addContentOptions, contentOptions, htmlToText, messageTransform } from '../content.js';
 
 export function registerTeamsCommands(program: Command, getClient: () => GraphClient): void {
@@ -19,41 +20,51 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
     }));
 
   teams
-    .command('get <teamId>')
+    .command('get')
+    .argument('<teamId>', 'Team ID or name')
     .description('Get team details')
     .addOption(outputOption())
-    .action(handleErrors(async (teamId: string, opts) => {
+    .action(handleErrors(async (teamArg: string, opts) => {
       const client = getClient();
+      const teamId = await resolve(client, 'team', teamArg);
       const response = await client.request(`/teams/${encodeURIComponent(teamId)}`);
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
   teams
-    .command('members <teamId>')
+    .command('members')
+    .argument('<teamId>', 'Team ID or name')
     .description('List team members')
     .addOption(outputOption())
-    .action(handleErrors(async (teamId: string, opts) => {
+    .action(handleErrors(async (teamArg: string, opts) => {
       const client = getClient();
+      const teamId = await resolve(client, 'team', teamArg);
       const response = await client.request(`/teams/${encodeURIComponent(teamId)}/members`);
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
   teams
-    .command('channels <teamId>')
+    .command('channels')
+    .argument('<teamId>', 'Team ID or name')
     .description('List team channels')
     .addOption(outputOption())
-    .action(handleErrors(async (teamId: string, opts) => {
+    .action(handleErrors(async (teamArg: string, opts) => {
       const client = getClient();
+      const teamId = await resolve(client, 'team', teamArg);
       const response = await client.request(`/teams/${encodeURIComponent(teamId)}/channels`);
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
   teams
-    .command('channel <teamId> <channelId>')
+    .command('channel')
+    .argument('<teamId>', 'Team ID or name')
+    .argument('<channelId>', 'Channel ID or name')
     .description('Get channel details')
     .addOption(outputOption())
-    .action(handleErrors(async (teamId: string, channelId: string, opts) => {
+    .action(handleErrors(async (teamArg: string, channelArg: string, opts) => {
       const client = getClient();
+      const teamId = await resolve(client, 'team', teamArg);
+      const channelId = await resolve(client, 'channel', channelArg, teamId);
       const response = await client.request(
         `/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}`
       );
@@ -61,15 +72,19 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
     }));
 
   addContentOptions(teams
-    .command('channel-messages <teamId> <channelId>')
+    .command('channel-messages')
+    .argument('<teamId>', 'Team ID or name')
+    .argument('<channelId>', 'Channel ID or name')
     .description('List channel messages (marked untrusted; see --body, --wrap-untrusted)')
     .option('--top <n>', 'Number of messages')
     .option('--all', 'Fetch all pages')
     .option('--page-limit <n>', 'Max pages when using --all')
     .option('--page-delay <ms>', 'Delay between pages in ms'))
     .addOption(outputOption())
-    .action(handleErrors(async (teamId: string, channelId: string, opts) => {
+    .action(handleErrors(async (teamArg: string, channelArg: string, opts) => {
       const client = getClient();
+      const teamId = await resolve(client, 'team', teamArg);
+      const channelId = await resolve(client, 'channel', channelArg, teamId);
       const queryParams: Record<string, string> = {};
       if (opts.top) queryParams['$top'] = opts.top;
 
@@ -78,12 +93,16 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
     }));
 
   teams
-    .command('send-channel-message <teamId> <channelId>')
+    .command('send-channel-message')
+    .argument('<teamId>', 'Team ID or name')
+    .argument('<channelId>', 'Channel ID or name')
     .description('Send a message to a channel')
     .requiredOption('--body <body>', 'Message body')
     .option('--html', 'Body is HTML')
-    .action(handleErrors(async (teamId: string, channelId: string, opts) => {
+    .action(handleErrors(async (teamArg: string, channelArg: string, opts) => {
       const client = getClient();
+      const teamId = await resolve(client, 'team', teamArg);
+      const channelId = await resolve(client, 'channel', channelArg, teamId);
       await client.request(
         `/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages`,
         {
@@ -97,12 +116,17 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
     }));
 
   teams
-    .command('reply-channel-message <teamId> <channelId> <messageId>')
+    .command('reply-channel-message')
+    .argument('<teamId>', 'Team ID or name')
+    .argument('<channelId>', 'Channel ID or name')
+    .argument('<messageId>', 'Message ID')
     .description('Reply to a channel message (threaded)')
     .requiredOption('--body <body>', 'Reply body')
     .option('--html', 'Body is HTML')
-    .action(handleErrors(async (teamId: string, channelId: string, messageId: string, opts) => {
+    .action(handleErrors(async (teamArg: string, channelArg: string, messageId: string, opts) => {
       const client = getClient();
+      const teamId = await resolve(client, 'team', teamArg);
+      const channelId = await resolve(client, 'channel', channelArg, teamId);
       await client.request(
         `/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}/replies`,
         {

@@ -43,11 +43,11 @@ describe('ndjson and --fields (P-6, D18)', () => {
 });
 
 describe('--cursor (§6 pagination)', () => {
-  const nextLink = 'https://graph.microsoft.com/v1.0/me/todo/lists/L/tasks?$skiptoken=abc';
+  const nextLink = 'https://graph.microsoft.com/v1.0/me/todo/lists/AAMkLIST1/tasks?$skiptoken=abc';
 
   it('a single page prints nextCursor on stderr, and --cursor fetches exactly that link', async () => {
-    const r1 = await runCommand(registerTodoCommands, ['todo', 'tasks', 'L', '-o', 'json'], {
-      routes: [['GET', '/me/todo/lists/L/tasks', () => ({ value: [{ id: 't1' }], '@odata.nextLink': nextLink })]],
+    const r1 = await runCommand(registerTodoCommands, ['todo', 'tasks', 'AAMkLIST1', '-o', 'json'], {
+      routes: [['GET', '/me/todo/lists/AAMkLIST1/tasks', () => ({ value: [{ id: 't1' }], '@odata.nextLink': nextLink })]],
     });
     expect(r1.exitCode).toBe(0);
     const cursor = JSON.parse(r1.stdout).nextCursor as string;
@@ -55,7 +55,7 @@ describe('--cursor (§6 pagination)', () => {
     expect(JSON.parse(r1.stdout).nextCursor).toBe(cursor);
 
     setCursor(cursor);
-    const r2 = await runCommand(registerTodoCommands, ['todo', 'tasks', 'L', '-o', 'json'], {
+    const r2 = await runCommand(registerTodoCommands, ['todo', 'tasks', 'AAMkLIST1', '-o', 'json'], {
       routes: [['GET', /skiptoken=abc/, () => ({ value: [{ id: 't2' }] })]],
     });
     expect(r2.calls.map(c => c.url)).toEqual([nextLink]);
@@ -71,7 +71,7 @@ describe('--cursor (§6 pagination)', () => {
 
   it('--all streams every page as ndjson', async () => {
     let n = 0;
-    const r = await runCommand(registerTodoCommands, ['todo', 'tasks', 'L', '--all', '-o', 'ndjson'], {
+    const r = await runCommand(registerTodoCommands, ['todo', 'tasks', 'AAMkLIST1', '--all', '-o', 'ndjson'], {
       routes: [['GET', /tasks/, () => (++n === 1 ? { value: [{ id: 'a' }], '@odata.nextLink': nextLink } : { value: [{ id: 'b' }] })]],
     });
     expect(r.exitCode).toBe(0);
@@ -81,8 +81,8 @@ describe('--cursor (§6 pagination)', () => {
 
 describe('consistent collection envelope (D27)', () => {
   it('table output keeps the cursor on stderr', async () => {
-    const r = await runCommand(registerTodoCommands, ['todo', 'tasks', 'L', '-o', 'table'], {
-      routes: [['GET', '/me/todo/lists/L/tasks', () => ({ value: [{ id: 't1' }], '@odata.nextLink': 'https://graph.microsoft.com/v1.0/x?$skiptoken=1' })]],
+    const r = await runCommand(registerTodoCommands, ['todo', 'tasks', 'AAMkLIST1', '-o', 'table'], {
+      routes: [['GET', '/me/todo/lists/AAMkLIST1/tasks', () => ({ value: [{ id: 't1' }], '@odata.nextLink': 'https://graph.microsoft.com/v1.0/x?$skiptoken=1' })]],
     });
     expect(r.stdout).not.toContain('nextCursor');
     expect(r.stderr).toMatch(/nextCursor: \S+/);

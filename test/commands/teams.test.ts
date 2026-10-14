@@ -16,19 +16,19 @@ describe('teams/chat send commands report success (M-32)', () => {
   });
 
   it('send-channel-message exits 0', async () => {
-    const r = await runCommand(registerTeamsCommands, ['teams', 'send-channel-message', 'T1', 'CH1', '--body', 'hi'], {
-      routes: [['POST', '/teams/T1/channels/CH1/messages', () => ({ id: 'M9' })]],
+    const r = await runCommand(registerTeamsCommands, ['teams', 'send-channel-message', '00000000-0000-0000-0000-0000000000a1', '19:ch1@thread.tacv2', '--body', 'hi'], {
+      routes: [['POST', '/teams/00000000-0000-0000-0000-0000000000a1/channels/19:ch1@thread.tacv2/messages', () => ({ id: 'M9' })]],
     });
     expect(r.exitCode).toBe(0);
     expect(r.stderr).toContain('Channel message sent.');
   });
 
   it('reply-channel-message exits 0', async () => {
-    const r = await runCommand(registerTeamsCommands, ['teams', 'reply-channel-message', 'T1', 'CH1', 'M1', '--body', 'hi'], {
-      routes: [['POST', '/teams/T1/channels/CH1/messages/M1/replies', () => ({ id: 'R1' })]],
+    const r = await runCommand(registerTeamsCommands, ['teams', 'reply-channel-message', '00000000-0000-0000-0000-0000000000a1', '19:ch1@thread.tacv2', 'M1', '--body', 'hi'], {
+      routes: [['POST', '/teams/00000000-0000-0000-0000-0000000000a1/channels/19:ch1@thread.tacv2/messages/M1/replies', () => ({ id: 'R1' })]],
     });
     expect(r.exitCode).toBe(0);
-    expect(r.calls[0].path).toBe('/teams/T1/channels/CH1/messages/M1/replies');
+    expect(r.calls[0].path).toBe('/teams/00000000-0000-0000-0000-0000000000a1/channels/19:ch1@thread.tacv2/messages/M1/replies');
   });
 });
 

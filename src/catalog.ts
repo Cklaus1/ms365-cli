@@ -13,6 +13,8 @@ export interface CommandMeta {
   idempotent: boolean;
   /** Never calls Graph. */
   offline: boolean;
+  /** Only reads (catalog kind read). */
+  readOnly: boolean;
 }
 
 /**
@@ -27,6 +29,8 @@ type Entry = Kind | [Kind, string[]];
 
 const GROUP_SCOPES: Record<string, { read: string[]; write: string[] }> = {
   auth: { read: [], write: [] },
+  mcp: { read: [], write: [] },
+  resolve: { read: ['Tasks.Read', 'Team.ReadBasic.All', 'Channel.ReadBasic.All'], write: [] },
   mail: { read: ['Mail.Read'], write: ['Mail.ReadWrite'] },
   calendar: { read: ['Calendars.Read'], write: ['Calendars.ReadWrite'] },
   drive: { read: ['Files.Read'], write: ['Files.ReadWrite'] },
@@ -267,6 +271,8 @@ const COMMANDS: Record<string, Entry> = {
   watch: ['read', ['Mail.Read', 'Calendars.Read', 'Files.Read', 'Contacts.Read']],
 
   'audit tail': 'read',
+  'mcp serve': 'read',
+  'resolve': 'read',
   'audit path': 'read',
 
   schema: 'read',
@@ -286,6 +292,7 @@ export function commandMeta(path: string): CommandMeta | undefined {
     destructive: kind === 'delete',
     idempotent: kind !== 'action',
     offline: scopes.length === 0,
+    readOnly: kind === 'read',
   };
 }
 

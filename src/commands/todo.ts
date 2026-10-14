@@ -3,6 +3,7 @@ import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { handleErrors } from '../errors.js';
 import { outputOption, confirm, info, parseTime } from '../utils.js';
+import { resolve } from '../resolve.js';
 
 /** To Do due dates are whole days: midnight of the parsed date, in the user's zone. */
 function todoDue(input: string, tz?: string): { dateTime: string; timeZone: string } {
@@ -24,7 +25,8 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
     }));
 
   todo
-    .command('tasks <listId>')
+    .command('tasks')
+    .argument('<listId>', 'To Do list ID or name')
     .description('List tasks in a list')
     .option('--top <n>', 'Number of tasks')
     .option('--filter <filter>', 'OData filter')
@@ -33,8 +35,9 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
     .option('--page-limit <n>', 'Max pages when using --all')
     .option('--page-delay <ms>', 'Delay between pages in ms')
     .addOption(outputOption())
-    .action(handleErrors(async (listId: string, opts) => {
+    .action(handleErrors(async (listArg: string, opts) => {
       const client = getClient();
+      const listId = await resolve(client, 'todo-list', listArg);
       const queryParams: Record<string, string> = {};
       if (opts.top) queryParams['$top'] = opts.top;
       if (opts.filter) queryParams['$filter'] = opts.filter;
@@ -45,11 +48,14 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
     }));
 
   todo
-    .command('get <listId> <taskId>')
+    .command('get')
+    .argument('<listId>', 'To Do list ID or name')
+    .argument('<taskId>', 'Task ID')
     .description('Get a specific task')
     .addOption(outputOption())
-    .action(handleErrors(async (listId: string, taskId: string, opts) => {
+    .action(handleErrors(async (listArg: string, taskId: string, opts) => {
       const client = getClient();
+      const listId = await resolve(client, 'todo-list', listArg);
       const response = await client.request(
         `/me/todo/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(taskId)}`
       );
@@ -57,7 +63,8 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
     }));
 
   todo
-    .command('create <listId>')
+    .command('create')
+    .argument('<listId>', 'To Do list ID or name')
     .description('Create a task')
     .requiredOption('--title <title>', 'Task title')
     .option('--body <body>', 'Task body/notes')
@@ -65,7 +72,7 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
     .option('--timezone <tz>', 'IANA time zone for --due (default: MS365_CLI_TIMEZONE or local)')
     .option('--importance <level>', 'Importance: low, normal, high', 'normal')
     .addOption(outputOption())
-    .action(handleErrors(async (listId: string, opts) => {
+    .action(handleErrors(async (listArg: string, opts) => {
       const client = getClient();
       const task: Record<string, unknown> = {
         title: opts.title,
@@ -78,6 +85,7 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
         task.dueDateTime = todoDue(opts.due, opts.timezone);
       }
 
+      const listId = await resolve(client, 'todo-list', listArg);
       const response = await client.request(
         `/me/todo/lists/${encodeURIComponent(listId)}/tasks`,
         { method: 'POST', body: JSON.stringify(task) }
@@ -86,7 +94,9 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
     }));
 
   todo
-    .command('update <listId> <taskId>')
+    .command('update')
+    .argument('<listId>', 'To Do list ID or name')
+    .argument('<taskId>', 'Task ID')
     .description('Update a task')
     .option('--title <title>', 'Task title')
     .option('--body <body>', 'Task body')
@@ -95,7 +105,7 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
     .option('--due <date>', 'Due date (YYYY-MM-DD, "tomorrow", "next fri", "+3d")')
     .option('--timezone <tz>', 'IANA time zone for --due (default: MS365_CLI_TIMEZONE or local)')
     .addOption(outputOption())
-    .action(handleErrors(async (listId: string, taskId: string, opts) => {
+    .action(handleErrors(async (listArg: string, taskId: string, opts) => {
       const client = getClient();
       const patch: Record<string, unknown> = {};
       if (opts.title) patch.title = opts.title;
@@ -104,6 +114,7 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
       if (opts.body) patch.body = { contentType: 'text', content: opts.body };
       if (opts.due) patch.dueDateTime = todoDue(opts.due, opts.timezone);
 
+      const listId = await resolve(client, 'todo-list', listArg);
       const response = await client.request(
         `/me/todo/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(taskId)}`,
         { method: 'PATCH', body: JSON.stringify(patch) }
@@ -112,11 +123,14 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
     }));
 
   todo
-    .command('delete <listId> <taskId>')
+    .command('delete')
+    .argument('<listId>', 'To Do list ID or name')
+    .argument('<taskId>', 'Task ID')
     .description('Delete a task')
-    .action(handleErrors(async (listId: string, taskId: string) => {
+    .action(handleErrors(async (listArg: string, taskId: string) => {
       if (!await confirm(`Delete task ${taskId.substring(0, 16)}...?`)) return;
       const client = getClient();
+      const listId = await resolve(client, 'todo-list', listArg);
       await client.request(
         `/me/todo/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(taskId)}`,
         { method: 'DELETE' }
@@ -140,12 +154,14 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
     }));
 
   todo
-    .command('update-list <listId>')
+    .command('update-list')
+    .argument('<listId>', 'To Do list ID or name')
     .description('Rename a task list')
     .requiredOption('--name <name>', 'New display name')
     .addOption(outputOption())
-    .action(handleErrors(async (listId: string, opts) => {
+    .action(handleErrors(async (listArg: string, opts) => {
       const client = getClient();
+      const listId = await resolve(client, 'todo-list', listArg);
       const response = await client.request(
         `/me/todo/lists/${encodeURIComponent(listId)}`,
         { method: 'PATCH', body: JSON.stringify({ displayName: opts.name }) }

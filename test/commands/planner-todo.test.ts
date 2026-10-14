@@ -7,19 +7,19 @@ const LA = { MS365_CLI_TIMEZONE: 'America/Los_Angeles' };
 
 describe('todo due dates (M-10)', () => {
   it('create --due sends local midnight in the resolved time zone', async () => {
-    const r = await runCommand(registerTodoCommands, ['todo', 'create', 'L1', '--title', 'x', '--due', '2026-10-20', '-o', 'json'], { env: LA });
+    const r = await runCommand(registerTodoCommands, ['todo', 'create', 'AAMkLIST1', '--title', 'x', '--due', '2026-10-20', '-o', 'json'], { env: LA });
     expect(r.exitCode).toBe(0);
     expect(r.calls[0].body).toMatchObject({ dueDateTime: { dateTime: '2026-10-20T00:00:00', timeZone: 'America/Los_Angeles' } });
   });
 
   it('update --due accepts natural times and --timezone', async () => {
-    const r = await runCommand(registerTodoCommands, ['todo', 'update', 'L1', 'T1', '--due', '2026-10-21T15:30', '--timezone', 'Europe/Berlin', '-o', 'json'], { env: LA });
+    const r = await runCommand(registerTodoCommands, ['todo', 'update', 'AAMkLIST1', 'T1', '--due', '2026-10-21T15:30', '--timezone', 'Europe/Berlin', '-o', 'json'], { env: LA });
     expect(r.exitCode).toBe(0);
     expect(r.calls[0]).toMatchObject({ method: 'PATCH', body: { dueDateTime: { dateTime: '2026-10-21T00:00:00', timeZone: 'Europe/Berlin' } } });
   });
 
   it('rejects an unparseable --due with exit 2', async () => {
-    const r = await runCommand(registerTodoCommands, ['todo', 'create', 'L1', '--title', 'x', '--due', 'someday']);
+    const r = await runCommand(registerTodoCommands, ['todo', 'create', 'AAMkLIST1', '--title', 'x', '--due', 'someday']);
     expect(r.exitCode).toBe(2);
     expect(r.calls).toHaveLength(0);
   });
@@ -27,7 +27,7 @@ describe('todo due dates (M-10)', () => {
 
 describe('planner due dates (M-10)', () => {
   it('create-task --due sends the UTC instant of local midnight', async () => {
-    const r = await runCommand(registerPlannerCommands, ['planner', 'create-task', '--plan', 'P1', '--title', 'x', '--due', '2026-10-20', '-o', 'json'], { env: LA });
+    const r = await runCommand(registerPlannerCommands, ['planner', 'create-task', '--plan', 'xqQg5FS2LkCp935s-FIFm2QAFkHM', '--title', 'x', '--due', '2026-10-20', '-o', 'json'], { env: LA });
     expect(r.exitCode).toBe(0);
     expect(r.calls[0].body).toMatchObject({ dueDateTime: '2026-10-20T07:00:00.000Z' });
   });
@@ -52,8 +52,8 @@ describe('planner ETag auto-fetch (M-14)', () => {
   });
 
   it('falls back to the ETag response header', async () => {
-    const r = await runCommand(registerPlannerCommands, ['planner', 'update-plan', 'P1', '--title', 'y', '-o', 'json'], {
-      routes: [['GET', '/planner/plans/P1', () => new Response('{"id":"P1"}', { status: 200, headers: { 'content-type': 'application/json', ETag: 'W/"hdr"' } })]],
+    const r = await runCommand(registerPlannerCommands, ['planner', 'update-plan', 'xqQg5FS2LkCp935s-FIFm2QAFkHM', '--title', 'y', '-o', 'json'], {
+      routes: [['GET', '/planner/plans/xqQg5FS2LkCp935s-FIFm2QAFkHM', () => new Response('{"id":"xqQg5FS2LkCp935s-FIFm2QAFkHM"}', { status: 200, headers: { 'content-type': 'application/json', ETag: 'W/"hdr"' } })]],
     });
     expect(r.exitCode).toBe(0);
     expect(r.calls[1].headers['If-Match']).toBe('W/"hdr"');
@@ -74,8 +74,8 @@ describe('planner ETag auto-fetch (M-14)', () => {
   });
 
   it('missing ETag fails with a clear message', async () => {
-    const r = await runCommand(registerPlannerCommands, ['planner', 'update-bucket', 'B1', '--name', 'n'], {
-      routes: [['GET', '/planner/buckets/B1', () => ({ id: 'B1' })]],
+    const r = await runCommand(registerPlannerCommands, ['planner', 'update-bucket', 'hsOf2dhOJkqyYYZEtdzDe2QAIUCR', '--name', 'n'], {
+      routes: [['GET', '/planner/buckets/hsOf2dhOJkqyYYZEtdzDe2QAIUCR', () => ({ id: 'hsOf2dhOJkqyYYZEtdzDe2QAIUCR' })]],
     });
     expect(r.exitCode).toBe(1);
     expect(r.stderr).toContain('--etag');
@@ -93,8 +93,8 @@ describe('create-plan container (M-27)', () => {
 
 describe('Planner Premium hint (G-9)', () => {
   it('adds the hint to a 404 on a plan, keeping exit 5', async () => {
-    const r = await runCommand(registerPlannerCommands, ['planner', 'plan', 'PREMIUM'], {
-      routes: [['GET', '/planner/plans/PREMIUM', () => new Response('{"error":{"code":"NotFound","message":"not found"}}', { status: 404 })]],
+    const r = await runCommand(registerPlannerCommands, ['planner', 'plan', 'prEmIuMpLaNiD0123456789abcde'], {
+      routes: [['GET', '/planner/plans/prEmIuMpLaNiD0123456789abcde', () => new Response('{"error":{"code":"NotFound","message":"not found"}}', { status: 404 })]],
     });
     expect(r.exitCode).toBe(5);
     expect(r.stderr).toContain('not found');
@@ -110,8 +110,8 @@ describe('Planner Premium hint (G-9)', () => {
   });
 
   it('does not add the hint to other errors', async () => {
-    const r = await runCommand(registerPlannerCommands, ['planner', 'plan', 'P1'], {
-      routes: [['GET', '/planner/plans/P1', () => new Response('{"error":{"message":"bad"}}', { status: 400 })]],
+    const r = await runCommand(registerPlannerCommands, ['planner', 'plan', 'xqQg5FS2LkCp935s-FIFm2QAFkHM'], {
+      routes: [['GET', '/planner/plans/xqQg5FS2LkCp935s-FIFm2QAFkHM', () => new Response('{"error":{"message":"bad"}}', { status: 400 })]],
     });
     expect(r.exitCode).toBe(1);
     expect(r.stderr).not.toContain('Premium');

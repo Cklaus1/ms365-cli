@@ -24,6 +24,8 @@ import { registerMeetingsCommands } from '../src/commands/meetings.js';
 import { registerWatchCommands } from '../src/commands/watch.js';
 import { registerAuditCommands } from '../src/commands/audit.js';
 import { registerDescribeCommand } from '../src/commands/describe.js';
+import { registerMcpCommands } from '../src/commands/mcp.js';
+import { registerResolveCommands } from '../src/commands/resolve.js';
 import { commandMeta, catalogPaths } from '../src/catalog.js';
 import type { GraphClient } from '../src/graph-client.js';
 import type { AuthManager } from '../src/auth.js';
@@ -53,6 +55,8 @@ const MODULES: Module[] = [
   { file: 'watch.ts', register: (p, g) => registerWatchCommands(p, g) },
   { file: 'audit.ts', register: (p) => registerAuditCommands(p) },
   { file: 'describe.ts', register: (p) => registerDescribeCommand(p) },
+  { file: 'mcp.ts', register: (p) => registerMcpCommands(p) },
+  { file: 'resolve.ts', register: (p, g) => registerResolveCommands(p, g) },
 ];
 
 const noAuth = (() => { throw new Error('describe must not touch auth'); }) as () => AuthManager;
