@@ -38,6 +38,7 @@ import { registerGroupsCommands } from './commands/groups.js';
 import { registerSchemaCommands } from './commands/schema.js';
 import { registerGenerateSkillsCommand } from './commands/generate-skills.js';
 import { registerSetupCommand } from './commands/setup.js';
+import { readProfile, type Profile } from './profiles.js';
 import logger from './logger.js';
 import { setQuiet } from './utils.js';
 import { setFields, setCursor } from './formatter.js';
@@ -56,7 +57,9 @@ program
   .option('-q, --quiet', 'Suppress non-data output (confirmations, progress)')
   .addOption(new Option('--error-format <format>', 'Error output on stderr (default: text)').choices(['text', 'json']))
   .option('--fields <list>', 'Only output these comma-separated fields (dot paths allowed, e.g. id,from.emailAddress.address)')
-  .option('--cursor <token>', 'Fetch the page after a previous list call (the nextCursor it printed on stderr)');
+  .option('--cursor <token>', 'Fetch the page after a previous list call (the nextCursor it printed on stderr)')
+  .option('--account <upn|homeAccountId>', 'Use this cached account for this call only (env MS365_CLI_ACCOUNT)')
+  .option('--profile <name>', 'Apply a saved profile: client ID, tenant, scopes, org mode, account (env MS365_CLI_PROFILE)');
 
 // Usage errors (unknown option, missing argument) exit 2; help/version exit 0.
 // Must be set before subcommands are registered so they inherit it.
@@ -67,15 +70,24 @@ program.exitOverride((err) => {
 
 const envTrue = (...names: string[]) => names.some(n => process.env[n] === 'true' || process.env[n] === '1');
 
-/** Global flags, resolved from parsed options (after parse) with env-var fallbacks. */
+/** The --profile (or MS365_CLI_PROFILE) settings; empty when none is chosen. */
+function activeProfile(): Profile {
+  const name = program.opts().profile || process.env.MS365_CLI_PROFILE;
+  return name ? readProfile(name) : {};
+}
+
+/** Global flags, resolved from parsed options (after parse) with env-var fallbacks, then the profile. */
 function globalFlags() {
   const o = program.opts();
+  const profile = activeProfile();
   const apiVersion = o.apiVersion || process.env.MS365_CLI_API_VERSION || 'v1.0';
   if (apiVersion !== 'v1.0' && apiVersion !== 'beta') {
     throw new CliError(`Invalid API version "${apiVersion}". Use v1.0 or beta.`, { code: 'usage', exitCode: ExitCode.USAGE });
   }
   return {
-    orgMode: !!o.orgMode || envTrue('MS365_CLI_ORG_MODE'),
+    orgMode: !!o.orgMode || envTrue('MS365_CLI_ORG_MODE') || !!profile.orgMode,
+    account: o.account || process.env.MS365_CLI_ACCOUNT || profile.account,
+    profile,
     dryRun: !!o.dryRun,
     readOnly: !!o.readOnly || envTrue('MS365_CLI_READ_ONLY'),
     apiVersion,
@@ -91,7 +103,8 @@ let graphClient: GraphClient | null = null;
 
 function getAuth(): AuthManager {
   if (!authManager) {
-    authManager = new AuthManager(buildScopes(globalFlags().orgMode));
+    const { orgMode, account, profile } = globalFlags();
+    authManager = new AuthManager(profile.scopes ?? buildScopes(orgMode), { clientId: profile.clientId, tenantId: profile.tenantId, account });
   }
   return authManager;
 }

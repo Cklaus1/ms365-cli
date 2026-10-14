@@ -178,9 +178,62 @@ export class FileTokenCachePlugin implements ICachePlugin {
   }
 }
 
+/** Decode an access token's JWT payload (no signature check: the claims are only reported, never trusted). */
+export function decodeAccessToken(token: string): Record<string, unknown> {
+  const opaque = () => new CliError(
+    'The access token is not a JWT (personal Microsoft account tokens are opaque), so its claims cannot be read locally.',
+    { code: 'opaque_token' },
+  );
+  const parts = token.split('.');
+  if (parts.length !== 3) throw opaque();
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    if (payload && typeof payload === 'object' && !Array.isArray(payload)) return payload;
+  } catch { /* fall through */ }
+  throw opaque();
+}
+
+export interface TokenInfo {
+  scopes: string[];
+  audience?: string;
+  tenantId?: string;
+  user?: string;
+  expiresOn?: string;
+  expired?: boolean;
+}
+
+/** The consent-relevant claims of an access token (spec §6): granted scopes (`scp`), audience, tenant, user, expiry. */
+export function tokenInfo(token: string, now = new Date()): TokenInfo {
+  const claims = decodeAccessToken(token);
+  const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
+  const info: TokenInfo = {
+    scopes: (str(claims.scp) ?? '').split(' ').filter(Boolean),
+    audience: str(claims.aud),
+    tenantId: str(claims.tid),
+    user: str(claims.upn) ?? str(claims.preferred_username),
+  };
+  if (typeof claims.exp === 'number') {
+    info.expiresOn = new Date(claims.exp * 1000).toISOString();
+    info.expired = claims.exp * 1000 <= now.getTime();
+  }
+  return info;
+}
+
+const LOGIN_PAGE = (message: string) =>
+  `<!doctype html><html><head><meta charset="utf-8"><title>ms365</title></head><body><p>${message}</p></body></html>`;
+const LOGIN_SUCCESS_HTML = LOGIN_PAGE('Signed in to ms365. You can close this window and return to the terminal.');
+const LOGIN_ERROR_HTML = LOGIN_PAGE('ms365 sign-in failed. Return to the terminal for details.');
+
 export interface AuthManagerOptions {
   clientId?: string;
   tenantId?: string;
+  /** Use this cached account (username, case-insensitive, or homeAccountId) for this process only. */
+  account?: string;
+}
+
+export interface LoginOptions {
+  /** Sign in with the system browser (auth code + PKCE, loopback redirect) instead of device code. */
+  openBrowser?: (url: string) => Promise<void>;
 }
 
 export class AuthManager {
@@ -190,10 +243,12 @@ export class AuthManager {
   private tokenExpiry: number | null = null;
   private selectedAccountId: string | null = null;
   private tokenRefreshPromise: Promise<string> | null = null;
+  private accountOverride: string | null;
 
   /** @param scopes scopes requested (and consented) at login */
   constructor(scopes: string[], options: AuthManagerOptions = {}) {
     this.scopes = scopes;
+    this.accountOverride = options.account || null;
     const clientId = options.clientId
       || process.env.MS365_CLI_CLIENT_ID;
     if (!clientId) {
@@ -278,6 +333,15 @@ export class AuthManager {
 
   async getCurrentAccount(): Promise<AccountInfo | null> {
     const accounts = await this.msalApp.getTokenCache().getAllAccounts();
+    if (this.accountOverride) {
+      const wanted = this.accountOverride;
+      const match = accounts.find(a => a.homeAccountId === wanted || a.username.toLowerCase() === wanted.toLowerCase());
+      if (!match) {
+        throw new CliError(`Account "${wanted}" is not signed in. List cached accounts with: ms365 auth accounts`,
+          { code: 'account_not_found', exitCode: ExitCode.AUTH, fix: 'ms365 auth accounts' });
+      }
+      return match;
+    }
     if (accounts.length === 0) return null;
 
     if (this.selectedAccountId) {
@@ -288,19 +352,20 @@ export class AuthManager {
     return accounts[0];
   }
 
-  async login(): Promise<string> {
-    const response = await this.msalApp.acquireTokenByDeviceCode({
-      scopes: this.scopes,
-      deviceCodeCallback: (resp) => {
-        // Write to stderr AND a file in user config dir so device code is always visible
-        process.stderr.write('\n' + resp.message + '\n\n');
-        try {
-          ensureConfigDir();
-          fs.writeFileSync(deviceCodePath(), resp.message + '\n', { mode: 0o600 });
-        } catch { /* best effort */ }
-      },
-    });
-    try { fs.unlinkSync(deviceCodePath()); } catch { /* not written */ }
+  /** Granted (consented) scopes of the current access token, from its `scp` claim. */
+  async grantedScopes(): Promise<string[]> {
+    return tokenInfo(await this.getToken()).scopes;
+  }
+
+  async login(options: LoginOptions = {}): Promise<string> {
+    const response = options.openBrowser
+      ? await this.msalApp.acquireTokenInteractive({
+        scopes: this.scopes,
+        openBrowser: options.openBrowser,
+        successTemplate: LOGIN_SUCCESS_HTML,
+        errorTemplate: LOGIN_ERROR_HTML,
+      })
+      : await this.deviceCodeLogin();
 
     if (!response?.accessToken) {
       throw new CliError('Login did not return an access token.', { code: 'login_failed', exitCode: ExitCode.AUTH });
@@ -314,6 +379,22 @@ export class AuthManager {
       this.saveSelectedAccount();
     }
     return this.accessToken;
+  }
+
+  private async deviceCodeLogin() {
+    const response = await this.msalApp.acquireTokenByDeviceCode({
+      scopes: this.scopes,
+      deviceCodeCallback: (resp) => {
+        // Write to stderr AND a file in user config dir so device code is always visible
+        process.stderr.write('\n' + resp.message + '\n\n');
+        try {
+          ensureConfigDir();
+          fs.writeFileSync(deviceCodePath(), resp.message + '\n', { mode: 0o600 });
+        } catch { /* best effort */ }
+      },
+    });
+    try { fs.unlinkSync(deviceCodePath()); } catch { /* not written */ }
+    return response;
   }
 
   /** Remove every account and all cache, selection, device-code, temp and lock files. */

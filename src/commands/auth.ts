@@ -1,19 +1,30 @@
 import { Command } from 'commander';
-import { AuthManager } from '../auth.js';
+import { exec } from 'child_process';
+import { AuthManager, tokenInfo } from '../auth.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
-import { info } from '../utils.js';
+import { formatOutput, type OutputFormat } from '../formatter.js';
+import { confirm, info, outputOption } from '../utils.js';
+import { deleteProfile, listProfiles, profileExists, readProfile, saveProfile, validateProfileName, type Profile } from '../profiles.js';
+import { openBrowserCommand } from './setup.js';
+
+/** Open the system browser at the sign-in URL; print it too, for machines where no browser opens. */
+async function openSystemBrowser(url: string): Promise<void> {
+  info(`Opening the browser to sign in. If it does not open, visit:\n${url}`);
+  exec(openBrowserCommand(url), () => { /* the URL was printed above */ });
+}
 
 export function registerAuthCommands(program: Command, getAuth: () => AuthManager): void {
   const auth = program.command('auth').description('Authentication management');
 
   auth
     .command('login')
-    .description('Login using device code flow')
-    .action(handleErrors(async () => {
+    .description('Login (device code flow by default)')
+    .option('--browser', 'Sign in with the system browser instead (needs an http://localhost redirect URI on the app registration)')
+    .action(handleErrors(async (opts) => {
       const authManager = getAuth();
       await authManager.initialize();
       try {
-        await authManager.login();
+        await authManager.login(opts.browser ? { openBrowser: openSystemBrowser } : {});
       } catch (err) {
         throw new CliError(`Login failed: ${(err as Error).message}`, { code: 'login_failed', exitCode: ExitCode.AUTH });
       }
@@ -47,6 +58,16 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
       } else {
         throw new CliError('Not logged in.', { code: 'not_logged_in', exitCode: ExitCode.AUTH, fix: 'ms365 auth login' });
       }
+    }));
+
+  auth
+    .command('scopes')
+    .description('Show the scopes granted to the current access token (plus audience, tenant, user, expiry)')
+    .addOption(outputOption())
+    .action(handleErrors(async (opts) => {
+      const authManager = getAuth();
+      await authManager.initialize();
+      console.log(formatOutput(tokenInfo(await authManager.getToken()), opts.output as OutputFormat));
     }));
 
   auth
@@ -96,5 +117,59 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
       } else {
         throw new CliError('Account not found.', { code: 'not_found', exitCode: ExitCode.NOT_FOUND });
       }
+    }));
+
+  const profile = auth.command('profile').description('Named sign-in settings (client ID, tenant, scopes, org mode, account) applied with --profile');
+
+  profile
+    .command('list')
+    .description('List saved profiles')
+    .addOption(outputOption())
+    .action(handleErrors(async (opts) => {
+      const profiles = listProfiles().map(name => ({ name, ...readProfile(name) }));
+      console.log(formatOutput(profiles, opts.output as OutputFormat));
+    }));
+
+  profile
+    .command('show <name>')
+    .description('Show a saved profile')
+    .addOption(outputOption())
+    .action(handleErrors(async (name: string, opts) => {
+      console.log(formatOutput(readProfile(name), opts.output as OutputFormat));
+    }));
+
+  profile
+    .command('set <name>')
+    .description('Create a profile, or update the given fields of an existing one')
+    .option('--client-id <id>', 'Application (client) ID')
+    .option('--tenant-id <id>', 'Tenant ID or domain')
+    .option('--scopes <list>', 'Comma-separated scopes requested at login')
+    .option('--org-mode', 'Enable organization mode')
+    .option('--no-org-mode', 'Disable organization mode')
+    .option('--account <upn|homeAccountId>', 'Cached account to use')
+    .action(handleErrors(async (name: string, _opts, cmd: Command) => {
+      validateProfileName(name);
+      // --account and --org-mode are also global flags, which commander may claim first.
+      const opts = cmd.optsWithGlobals();
+      const next: Profile = profileExists(name) ? readProfile(name) : {};
+      if (opts.clientId !== undefined) next.clientId = opts.clientId;
+      if (opts.tenantId !== undefined) next.tenantId = opts.tenantId;
+      if (opts.scopes !== undefined) next.scopes = String(opts.scopes).split(',').map(s => s.trim()).filter(Boolean);
+      if (opts.orgMode !== undefined) next.orgMode = opts.orgMode;
+      if (opts.account !== undefined) next.account = opts.account;
+      saveProfile(name, next);
+      info(`Profile "${name}" saved.`);
+    }));
+
+  profile
+    .command('delete <name>')
+    .description('Delete a saved profile')
+    .action(handleErrors(async (name: string) => {
+      if (!profileExists(name)) {
+        throw new CliError(`Profile "${name}" not found.`, { code: 'not_found', exitCode: ExitCode.NOT_FOUND, fix: 'ms365 auth profile list' });
+      }
+      if (!await confirm(`Delete profile ${name}?`)) return;
+      deleteProfile(name);
+      info(`Profile "${name}" deleted.`);
     }));
 }
