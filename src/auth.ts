@@ -4,10 +4,13 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
+import { spawnSync } from 'child_process';
+import { createRequire } from 'module';
 import { CliError, ExitCode } from './errors.js';
 
-// Detect headless Linux where keytar hangs indefinitely trying to access GNOME Keyring.
-const isHeadless = process.platform === 'linux' && !process.env.DISPLAY && !process.env.DBUS_SESSION_BUS_ADDRESS;
+// libsecret needs a D-Bus session bus. Without one (headless Linux, WSLg with DISPLAY set),
+// it tries D-Bus autolaunch via X11 and keytar hangs in a native thread.
+const isHeadless = process.platform === 'linux' && !process.env.DBUS_SESSION_BUS_ADDRESS;
 
 const SERVICE_NAME = 'ms365-cli';
 const TOKEN_CACHE_ACCOUNT = 'msal-token-cache';
@@ -150,53 +153,61 @@ function readFileIfExists(p: string): string | undefined {
 }
 
 // ── keytar: optional, used only to migrate entries written by older versions ──
+//
+// keytar calls can hang inside a native thread, and a hung thread also blocks
+// process.exit(). So keytar never loads in this process: each call runs in a short-lived
+// child process that is SIGKILLed on timeout.
 
-type Keytar = {
-  getPassword(service: string, account: string): Promise<string | null>;
-  deletePassword(service: string, account: string): Promise<boolean>;
-};
-let keytarPromise: Promise<Keytar | null> | null = null;
+const KEYTAR_TIMEOUT_MS = 3000;
 
-/** Load keytar at most once per process; null when unavailable or on headless Linux. */
-function loadKeytar(): Promise<Keytar | null> {
-  if (!keytarPromise) {
-    keytarPromise = isHeadless || process.env.MS365_CLI_NO_KEYRING === '1'
-      ? Promise.resolve(null)
-      : import('keytar').then(m => (m.default ?? m) as Keytar).catch(() => null);
+function keyringDisabled(): boolean {
+  return isHeadless || process.env.MS365_CLI_NO_KEYRING === '1';
+}
+
+let keytarPath: string | null | undefined;
+function resolveKeytar(): string | null {
+  if (keytarPath === undefined) {
+    try {
+      keytarPath = createRequire(import.meta.url).resolve('keytar');
+    } catch {
+      keytarPath = null; // optional dependency not installed
+    }
   }
-  return keytarPromise;
+  return keytarPath;
 }
 
-/** Resolve the promise, or null after `ms` (keytar can hang without a keyring). */
-function withTimeout<T>(promise: Promise<T>, ms = 2000): Promise<T | null> {
-  return Promise.race([
-    promise,
-    new Promise<null>((resolve) => {
-      const timer = setTimeout(() => resolve(null), ms);
-      timer.unref?.();
-    }),
-  ]);
+/** Run one keytar call in a child process. Returns undefined if keytar is unavailable, failed or hung. */
+function keytarCall(op: 'get' | 'delete', account: string): string | undefined {
+  if (keyringDisabled()) return undefined;
+  const mod = resolveKeytar();
+  if (!mod) return undefined;
+  const script = `const k=require(${JSON.stringify(mod)});` +
+    `const p=${op === 'get' ? 'k.getPassword' : 'k.deletePassword'}(${JSON.stringify(SERVICE_NAME)},${JSON.stringify(account)});` +
+    `p.then(v=>{process.stdout.write(v===null||v===undefined?'':String(v));process.exit(0)},()=>process.exit(2));`;
+  const r = spawnSync(process.execPath, ['-e', script], { timeout: KEYTAR_TIMEOUT_MS, killSignal: 'SIGKILL', encoding: 'utf8' });
+  return r.status === 0 ? r.stdout : undefined;
 }
 
-async function keytarGet(account: string): Promise<string | undefined> {
-  const keytar = await loadKeytar();
-  if (!keytar) return undefined;
+const migrationMarker = () => path.join(configDir(), '.keyring-migrated');
+
+/** Read a legacy keyring entry at most once per config dir (the marker prevents repeated probes). */
+function keytarMigrate(account: string): string | undefined {
+  if (keyringDisabled() || fs.existsSync(migrationMarker())) return undefined;
+  const value = keytarCall('get', account) || undefined;
+  return value;
+}
+
+function markMigrated(): void {
   try {
-    return (await withTimeout(keytar.getPassword(SERVICE_NAME, account))) ?? undefined;
-  } catch {
-    return undefined;
-  }
+    ensureConfigDir();
+    fs.writeFileSync(migrationMarker(), '', { mode: 0o600 });
+  } catch { /* best effort */ }
 }
 
-/** Delete a keytar entry; returns false only when keytar exists but the delete failed or hung. */
-async function keytarDelete(account: string): Promise<boolean> {
-  const keytar = await loadKeytar();
-  if (!keytar) return true;
-  try {
-    return (await withTimeout(keytar.deletePassword(SERVICE_NAME, account))) !== null;
-  } catch {
-    return false;
-  }
+/** Delete a legacy keyring entry; false only when keytar is present but the delete failed or hung. */
+function keytarDelete(account: string): boolean {
+  if (keyringDisabled() || !resolveKeytar()) return true;
+  return keytarCall('delete', account) !== undefined;
 }
 
 /**
@@ -209,8 +220,9 @@ export class FileTokenCachePlugin implements ICachePlugin {
     let data = readFileIfExists(tokenCachePath());
     if (!data) {
       // One-time migration from the OS keyring used by older versions.
-      data = await keytarGet(TOKEN_CACHE_ACCOUNT);
+      data = keytarMigrate(TOKEN_CACHE_ACCOUNT);
       if (data) writeFileAtomic(tokenCachePath(), data);
+      markMigrated();
     }
     if (data) {
       try {
@@ -274,8 +286,8 @@ export class AuthManager {
 
   private async loadSelectedAccount(): Promise<void> {
     let data = readFileIfExists(selectedAccountPath());
-    if (!data) {
-      data = await keytarGet(SELECTED_ACCOUNT_KEY);
+    if (!data && !fs.existsSync(migrationMarker())) {
+      data = keytarMigrate(SELECTED_ACCOUNT_KEY);
       if (data) writeFileAtomic(selectedAccountPath(), data);
     }
     try {
@@ -394,7 +406,7 @@ export class AuthManager {
 
     const warnings: string[] = [];
     for (const key of [TOKEN_CACHE_ACCOUNT, SELECTED_ACCOUNT_KEY]) {
-      if (!(await keytarDelete(key))) {
+      if (!keytarDelete(key)) {
         warnings.push(`Could not remove the "${key}" entry from the OS keyring; remove "${SERVICE_NAME}" entries manually.`);
       }
     }

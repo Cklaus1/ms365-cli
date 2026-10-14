@@ -181,7 +181,7 @@ describe('AuthManager behavior', () => {
     const m = new AuthManager(['User.Read']);
     await m.initialize();
     expect(await m.logout()).toEqual([]);
-    expect(fs.readdirSync(dir)).toEqual(['unrelated.txt']);
+    expect(fs.readdirSync(dir).filter(f => f !== '.keyring-migrated')).toEqual(['unrelated.txt']);
   });
 
   it('missing client ID → exit 3 with a setup hint', () => {
