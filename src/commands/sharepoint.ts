@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
-import { outputOption, encodePath } from '../utils.js';
+import { addListOptions, outputOption, encodePath } from '../utils.js';
 import { handleErrors } from '../errors.js';
 
 export function registerSharePointCommands(program: Command, getClient: () => GraphClient): void {
@@ -87,15 +87,11 @@ export function registerSharePointCommands(program: Command, getClient: () => Gr
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  sp
+  addListOptions(sp
     .command('list-items <siteId> <listId>')
     .description('List items in a SharePoint list')
-    .option('--top <n>', 'Number of items')
     .option('--filter <filter>', 'OData filter')
-    .option('--expand <fields>', 'Fields to expand')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+    .option('--expand <fields>', 'Fields to expand'), { description: 'Number of items' })
     .addOption(outputOption())
     .action(handleErrors(async (siteId: string, listId: string, opts) => {
       const client = getClient();
@@ -120,12 +116,9 @@ export function registerSharePointCommands(program: Command, getClient: () => Gr
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  sp
+  addListOptions(sp
     .command('items <siteId>')
-    .description('List site items')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+    .description('List site items'))
     .addOption(outputOption())
     .action(handleErrors(async (siteId: string, opts) => {
       const client = getClient();

@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
-import { outputOption, info, parseTime, resolveTimeZone, safeOutputPath } from '../utils.js';
+import { addListOptions, outputOption, info, parseTime, resolveTimeZone, safeOutputPath } from '../utils.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -23,15 +23,11 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  user
+  addListOptions(user
     .command('list')
     .description('List users in the organization (requires --org-mode)')
-    .option('--top <n>', 'Number of users')
     .option('--filter <filter>', 'OData filter')
-    .option('--select <fields>', 'Fields to return')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+    .option('--select <fields>', 'Fields to return'), { description: 'Number of users' })
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();

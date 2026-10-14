@@ -41,13 +41,14 @@ import { registerSetupCommand } from './commands/setup.js';
 import { registerMeetingsCommands } from './commands/meetings.js';
 import { registerWatchCommands } from './commands/watch.js';
 import { registerAuditCommands } from './commands/audit.js';
+import { registerIdempotencyCommands } from './commands/idempotency.js';
 import { registerDescribeCommand } from './commands/describe.js';
 import { registerMcpCommands } from './commands/mcp.js';
 import { registerCompletionCommand } from './commands/completion.js';
 import { registerResolveCommands } from './commands/resolve.js';
 import { registerNotesCommands } from './commands/notes.js';
 import { setActor, setCommandPath } from './audit.js';
-import { commandMeta } from './catalog.js';
+import { requiredScopes } from './catalog.js';
 import { assertConsented } from './preflight.js';
 import { readProfile, type Profile } from './profiles.js';
 import logger from './logger.js';
@@ -107,7 +108,7 @@ function globalFlags() {
 }
 
 /** Commands that never call Graph and must work without a client ID or login. */
-const OFFLINE_COMMANDS = new Set(['auth', 'schema', 'generate-skills', 'describe', 'audit', 'mcp', 'completion']);
+const OFFLINE_COMMANDS = new Set(['auth', 'schema', 'generate-skills', 'describe', 'audit', 'idempotency', 'mcp', 'completion']);
 
 // Lazy-initialized singletons
 let authManager: AuthManager | null = null;
@@ -153,6 +154,7 @@ registerSetupCommand(program, getAuth);
 registerMeetingsCommands(program, getClient);
 registerWatchCommands(program, getClient);
 registerAuditCommands(program);
+registerIdempotencyCommands(program);
 registerNotesCommands(program, getClient);
 registerResolveCommands(program, getClient);
 registerDescribeCommand(program);
@@ -191,7 +193,8 @@ program.hook('preAction', async (_program, actionCommand) => {
 
   // Pre-flight consent check: fail fast (exit 4) instead of a mid-command 403.
   // Personal-account tokens are opaque (not JWTs) — then the check is skipped.
-  const required = commandMeta(commandPath)?.scopes ?? [];
+  // The clauses follow the parsed options and arguments (search --entity, watch <resource>, resolve <type>).
+  const required = requiredScopes(commandPath, actionCommand.opts(), actionCommand.processedArgs);
   if (required.length > 0 && process.env.MS365_CLI_PREFLIGHT !== '0') {
     let granted: string[] | null = null;
     try {

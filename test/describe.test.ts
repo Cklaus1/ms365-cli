@@ -23,6 +23,7 @@ import { registerSetupCommand } from '../src/commands/setup.js';
 import { registerMeetingsCommands } from '../src/commands/meetings.js';
 import { registerWatchCommands } from '../src/commands/watch.js';
 import { registerAuditCommands } from '../src/commands/audit.js';
+import { registerIdempotencyCommands } from '../src/commands/idempotency.js';
 import { registerDescribeCommand } from '../src/commands/describe.js';
 import { registerMcpCommands } from '../src/commands/mcp.js';
 import { registerResolveCommands } from '../src/commands/resolve.js';
@@ -56,6 +57,7 @@ const MODULES: Module[] = [
   { file: 'meetings.ts', register: (p, g) => registerMeetingsCommands(p, g) },
   { file: 'watch.ts', register: (p, g) => registerWatchCommands(p, g) },
   { file: 'audit.ts', register: (p) => registerAuditCommands(p) },
+  { file: 'idempotency.ts', register: (p) => registerIdempotencyCommands(p) },
   { file: 'describe.ts', register: (p) => registerDescribeCommand(p) },
   { file: 'mcp.ts', register: (p) => registerMcpCommands(p) },
   { file: 'resolve.ts', register: (p, g) => registerResolveCommands(p, g) },
@@ -122,6 +124,18 @@ describe('ms365 describe --json', () => {
     expect(entity).toMatchObject({ flags: '--entity <types>', takesValue: true, default: 'message,event,driveItem', choices: null });
     const all = (await describeJson()).json.commands.flatMap((c: { options: Array<{ required: boolean }> }) => c.options);
     expect(all.some((o: { required: boolean }) => o.required)).toBe(true);
+  });
+
+  it('shows per-option and per-argument scope clauses (scopesBy)', async () => {
+    const { json } = await describeJson();
+    const byPath = new Map(json.commands.map((c: { path: string }) => [c.path, c]));
+    expect(byPath.get('search query')).toMatchObject({ scopesBy: { option: '--entity', map: { driveItem: ['Files.Read.All', 'Sites.Read.All'] } } });
+    expect(byPath.get('watch')).toMatchObject({ scopesBy: { argument: 'resource', map: { files: ['Files.Read'] } } });
+    expect(byPath.get('resolve')).toMatchObject({
+      scopesBy: { argument: 'type', map: { 'mail-folder': ['Mail.Read'] }, withOption: { option: '--user', map: { 'mail-folder': ['Mail.Read.Shared'] } } },
+    });
+    expect(byPath.get('mail list')).toMatchObject({ scopesBy: null });
+    expect((await runCommand(registerAll, ['describe', 'watch'])).stdout).toMatch(/by <resource>/);
   });
 
   it('marks deletes destructive and offline commands offline', async () => {

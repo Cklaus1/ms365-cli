@@ -1,6 +1,6 @@
 import { Command, Option } from 'commander';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
-import { commandMeta } from '../catalog.js';
+import { commandMeta, type ScopeSelector } from '../catalog.js';
 
 function describeOption(o: Option) {
   return {
@@ -15,6 +15,13 @@ function describeOption(o: Option) {
   };
 }
 
+/** A selector with its positional argument named, as `describe` prints it. */
+export function describeSelector(cmd: Command, sel: ScopeSelector | null | undefined) {
+  if (!sel) return null;
+  if ('option' in sel) return { option: sel.option, map: sel.map };
+  return { argument: cmd.registeredArguments[sel.arg]?.name() ?? String(sel.arg), map: sel.map, ...(sel.withOption ? { withOption: sel.withOption } : {}) };
+}
+
 function describeCommand(cmd: Command, path: string) {
   const meta = commandMeta(path);
   return {
@@ -23,6 +30,7 @@ function describeCommand(cmd: Command, path: string) {
     arguments: cmd.registeredArguments.map(a => ({ name: a.name(), required: a.required, variadic: a.variadic })),
     options: cmd.options.map(describeOption),
     scopes: meta?.scopes ?? null,
+    scopesBy: describeSelector(cmd, meta?.scopesBy),
     destructive: meta?.destructive ?? null,
     idempotent: meta?.idempotent ?? null,
     offline: meta?.offline ?? null,
@@ -43,7 +51,9 @@ function leafCommands(program: Command): Array<{ cmd: Command; path: string }> {
 }
 
 function summaryLine(c: Described & { usage: string }, width: number): string {
-  const tags = [c.destructive && 'destructive', c.offline ? 'offline' : c.scopes?.join(' ')].filter(Boolean).join(', ');
+  const by = c.scopesBy && ('option' in c.scopesBy ? c.scopesBy.option : `<${c.scopesBy.argument}>`);
+  const scopes = c.scopes?.join(' ') + (by ? ` (by ${by})` : '');
+  const tags = [c.destructive && 'destructive', c.offline ? 'offline' : scopes].filter(Boolean).join(', ');
   return `${c.usage.padEnd(width)}  ${c.description}${tags ? `  (${tags})` : ''}`;
 }
 

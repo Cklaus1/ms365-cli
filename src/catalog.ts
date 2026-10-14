@@ -15,6 +15,23 @@ export interface CommandMeta {
   offline: boolean;
   /** Only reads (catalog kind read). */
   readOnly: boolean;
+  /** Scopes that depend on an option's value(s) or a positional argument; `scopes` is then their union. */
+  scopesBy: ScopeSelector | null;
+}
+
+/**
+ * Scopes chosen by what the command is asked to touch (Q-16 to Q-19). Each selected value is one any-of clause:
+ * `option` reads the option's value (comma-separated when `split`); `arg` reads a positional argument by index.
+ * `withOption` adds a second clause for the selected argument value when that option is given.
+ */
+export type ScopeSelector =
+  | { option: string; split?: ','; map: Record<string, string[]> }
+  | { arg: number; map: Record<string, string[]>; withOption?: { option: string; map: Record<string, string[]> } };
+
+/** One any-of clause of a command's requirement; `for` names the option or argument value that selected it. */
+export interface ScopeClause {
+  scopes: string[];
+  for?: string;
 }
 
 /**
@@ -24,15 +41,15 @@ export interface CommandMeta {
  * delete — removes something. Group write scopes.
  */
 type Kind = 'read' | 'update' | 'action' | 'delete';
-/** A kind using the group's default scopes, or a kind with its own scopes. */
-type Entry = Kind | [Kind, string[]];
+/** A kind using the group's default scopes, a kind with its own scopes, or scopes chosen by a selector. */
+type Entry = Kind | [Kind, string[]] | [Kind, ScopeSelector];
 
 const GROUP_SCOPES: Record<string, { read: string[]; write: string[] }> = {
   auth: { read: [], write: [] },
   mcp: { read: [], write: [] },
   completion: { read: [], write: [] },
   notes: { read: ['ShortNotes.Read'], write: ['ShortNotes.ReadWrite'] },
-  resolve: { read: ['Tasks.Read', 'Team.ReadBasic.All', 'Channel.ReadBasic.All'], write: [] },
+  resolve: { read: [], write: [] },
   mail: { read: ['Mail.Read'], write: ['Mail.ReadWrite'] },
   calendar: { read: ['Calendars.Read'], write: ['Calendars.ReadWrite'] },
   drive: { read: ['Files.Read'], write: ['Files.ReadWrite'] },
@@ -54,6 +71,7 @@ const GROUP_SCOPES: Record<string, { read: string[]; write: string[] }> = {
   meetings: { read: ['OnlineMeetings.Read'], write: [] },
   watch: { read: [], write: [] },
   audit: { read: [], write: [] },
+  idempotency: { read: [], write: [] },
 };
 
 const MAILBOX_READ = ['MailboxSettings.Read'];
@@ -227,12 +245,18 @@ const COMMANDS: Record<string, Entry> = {
   'excel format-range': 'update',
   'excel sort-range': 'update',
 
-  // Which scope applies depends on --entity (driveItem, listItem/site, message, event, chatMessage).
-  'search query': ['read', ['Files.Read.All', 'Sites.Read.All', 'Mail.Read', 'Calendars.Read', 'Chat.Read']],
+  'search query': ['read', {
+    option: '--entity', split: ',',
+    map: {
+      driveItem: ['Files.Read.All', 'Sites.Read.All'], listItem: ['Sites.Read.All'], site: ['Sites.Read.All'],
+      message: ['Mail.Read'], event: ['Calendars.Read'], chatMessage: ['Chat.Read'],
+    },
+  }],
   'search people': ['read', ['People.Read']],
 
   'user me': 'read',
-  'user list': ['read', ['User.Read.All']],
+  // GET /users needs only User.ReadBasic.All for the default (basic) properties.
+  'user list': ['read', ['User.ReadBasic.All', 'User.Read.All']],
   'user ooo': ['read', MAILBOX_READ],
   'user set-ooo': 'update',
   'user presence': ['read', ['Presence.Read']],
@@ -269,8 +293,7 @@ const COMMANDS: Record<string, Entry> = {
   'meetings recording': ['read', ['OnlineMeetings.Read', 'OnlineMeetingRecording.Read.All']],
   'meetings all-transcripts': ['read', ['User.Read', 'OnlineMeetingTranscript.Read.All']],
 
-  // Delta feeds: mail, events, files or contacts; the scope follows the <resource> argument.
-  watch: ['read', ['Mail.Read', 'Calendars.Read', 'Files.Read', 'Contacts.Read']],
+  watch: ['read', { arg: 0, map: { mail: ['Mail.Read'], events: ['Calendars.Read'], files: ['Files.Read'], contacts: ['Contacts.Read'] } }],
 
   'audit tail': 'read',
   'excel tables': 'read',
@@ -288,8 +311,18 @@ const COMMANDS: Record<string, Entry> = {
   'notes delete': 'delete',
   'mcp serve': 'read',
   'completion': 'read',
-  'resolve': 'read',
+  resolve: ['read', {
+    arg: 0,
+    map: {
+      'todo-list': ['Tasks.Read'], team: ['Team.ReadBasic.All'], channel: ['Channel.ReadBasic.All'],
+      plan: ['Tasks.Read'], bucket: ['Tasks.Read'], 'mail-folder': ['Mail.Read'],
+    },
+    withOption: { option: '--user', map: { 'mail-folder': ['Mail.Read.Shared'] } },
+  }],
   'audit path': 'read',
+  // Local ledger only; release forgets a key so the next send with it runs again (R-6).
+  'idempotency list': 'read',
+  'idempotency release': 'action',
 
   schema: 'read',
   'generate-skills': 'read',
@@ -302,14 +335,51 @@ export function commandMeta(path: string): CommandMeta | undefined {
   if (!entry) return undefined;
   const [kind, own] = typeof entry === 'string' ? [entry, undefined] : entry;
   const group = GROUP_SCOPES[path.split(' ')[0]];
-  const scopes = own ?? (kind === 'read' ? group.read : group.write);
+  const scopesBy = own && !Array.isArray(own) ? own : null;
+  const scopes = scopesBy ? selectorUnion(scopesBy) : Array.isArray(own) ? own : kind === 'read' ? group.read : group.write;
   return {
     scopes: [...scopes],
     destructive: kind === 'delete',
     idempotent: kind !== 'action',
     offline: scopes.length === 0,
     readOnly: kind === 'read',
+    scopesBy,
   };
+}
+
+function selectorUnion(sel: ScopeSelector): string[] {
+  const maps = [sel.map, ...('withOption' in sel && sel.withOption ? [sel.withOption.map] : [])];
+  return [...new Set(maps.flatMap(m => Object.values(m).flat()))];
+}
+
+/** `--entity` → the commander opts key `entity`. */
+const optKey = (flag: string) => flag.replace(/^--/, '').replace(/-(\w)/g, (_, c: string) => c.toUpperCase());
+
+/**
+ * The scopes a command run needs, in conjunctive normal form (F14): every clause must be satisfied, any scope
+ * within a clause satisfies it. A selector yields one clause per selected value; values it does not know are
+ * skipped (the command's own validation rejects them). Without a selector, or when nothing was selected, the
+ * catalog scopes form one clause. Offline commands need nothing.
+ */
+export function requiredScopes(path: string, opts: Record<string, unknown> = {}, args: unknown[] = []): ScopeClause[] {
+  const meta = commandMeta(path);
+  if (!meta || meta.scopes.length === 0) return [];
+  const sel = meta.scopesBy;
+  if (!sel) return [{ scopes: meta.scopes }];
+  const clauses: ScopeClause[] = [];
+  if ('option' in sel) {
+    const raw = opts[optKey(sel.option)];
+    const values = typeof raw === 'string' ? (sel.split ? raw.split(sel.split).map(v => v.trim()) : [raw]) : [];
+    for (const v of values) if (sel.map[v]) clauses.push({ scopes: sel.map[v], for: `${sel.option} ${v}` });
+  } else {
+    const v = String(args[sel.arg] ?? '');
+    if (sel.map[v]) clauses.push({ scopes: sel.map[v], for: v });
+    const extra = sel.withOption;
+    if (extra && opts[optKey(extra.option)] !== undefined && extra.map[v]) {
+      clauses.push({ scopes: extra.map[v], for: `${v} with ${extra.option}` });
+    }
+  }
+  return clauses.length ? clauses : [{ scopes: meta.scopes }];
 }
 
 /** Every command path the catalog describes. */

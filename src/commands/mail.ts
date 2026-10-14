@@ -5,11 +5,11 @@ import { GraphClient, type BatchResult } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import {
-  truncate, parseRecipients, formatSize, outputOption, confirm, info,
+  truncate, parseRecipients, formatSize, addListOptions, outputOption, confirm, info,
   odataQuote, kqlQuote, safeOutputPath, resolveTimeZone, parseTime, toGraphDateTime,
 } from '../utils.js';
 import { detectMimeType } from '../mime.js';
-import { fingerprint, isDryRun, withIdempotency } from '../idempotency.js';
+import { idempotentSend, IDEMPOTENCY_HELP } from '../idempotency.js';
 import { addContentOptions, contentOptions, messageTransform, transformData, type BodyMode } from '../content.js';
 
 // Well-known folder names that Graph API supports directly
@@ -185,46 +185,19 @@ async function sendViaDraft(client: GraphClient, endpoint: string, body: unknown
   await client.request(`/me/messages/${encodeURIComponent(draft.id as string)}/send`, { method: 'POST' });
 }
 
-const IDEMPOTENCY_HELP = 'Retry-safe: if this key was used for the same request in the last 24 h, do not send again';
-
-/**
- * Run `send` under --idempotency-key (D23). Returns false when the key replays an earlier send: the stored result is
- * printed and Graph is not called. Dry-run never touches the ledger.
- */
-async function idempotentSend(
-  client: GraphClient, key: string | undefined, command: string, request: unknown, send: () => Promise<void>,
-): Promise<boolean> {
-  if (!key || isDryRun(client)) {
-    await send();
-    return true;
-  }
-  const outcome = await withIdempotency(key, command, fingerprint(request), async () => {
-    await send();
-    return { sentAt: new Date().toISOString() };
-  });
-  if (outcome.status === 'done') return true;
-  info(`Already sent at ${outcome.ts}; not sent again.`);
-  console.log(formatOutput(outcome.result, 'json'));
-  return false;
-}
-
 /** Attachments enter a send's fingerprint by name and size (their bytes are not re-read for hashing). */
 const attachmentKeys = (files: FileToAttach[]) => files.map(f => ({ name: f.name, size: f.size }));
 
 export function registerMailCommands(program: Command, getClient: () => GraphClient): void {
   const mail = program.command('mail').description('Outlook mail operations');
 
-  addContentOptions(mail
+  addListOptions(addContentOptions(mail
     .command('list')
     .description('List inbox messages')
-    .option('--top <n>', 'Number of messages to return', '10')
     .option('--filter <filter>', 'OData filter expression')
     .option('--select <fields>', 'Comma-separated fields to return')
     .option('--search <query>', 'Search query (cannot be combined with --filter; Graph returns at most 250 results)')
-    .option('--folder <name>', 'Folder name or ID (e.g. "Drafts", "Sent Items", "Archive", or a folder ID)')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms'))
+    .option('--folder <name>', 'Folder name or ID (e.g. "Drafts", "Sent Items", "Archive", or a folder ID)')), { description: 'Number of messages to return', default: '10' })
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();
@@ -500,11 +473,10 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       info('Message moved.');
     }));
 
-  mail
+  addListOptions(mail
     .command('folders')
     .description('List mail folders')
-    .option('--parent <folderId>', 'List child folders of this folder')
-    .option('--all', 'Fetch all pages (including nested child folders)')
+    .option('--parent <folderId>', 'List child folders of this folder'))
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();
@@ -913,14 +885,12 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     }));
 
   // Shared mailbox commands (require --org-mode)
-  mail
+  addListOptions(mail
     .command('shared-list <userId>')
     .description('List shared mailbox messages (requires --org-mode)')
-    .option('--top <n>', 'Number of messages', '10')
     .option('--filter <filter>', 'OData filter')
     .option('--select <fields>', 'Fields to return')
-    .option('--folder <folderId>', 'Mail folder ID')
-    .option('--all', 'Fetch all pages')
+    .option('--folder <folderId>', 'Mail folder ID'), { description: 'Number of messages', default: '10' })
     .addOption(outputOption())
     .action(handleErrors(async (userId: string, opts) => {
       const client = getClient();

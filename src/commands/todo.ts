@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { handleErrors } from '../errors.js';
-import { outputOption, confirm, info, parseTime } from '../utils.js';
+import { addListOptions, outputOption, confirm, info, parseTime } from '../utils.js';
 import { resolve } from '../resolve.js';
 
 /** To Do due dates are whole days: midnight of the parsed date, in the user's zone. */
@@ -24,16 +24,12 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  todo
+  addListOptions(todo
     .command('tasks')
     .argument('<listId>', 'To Do list ID or name')
     .description('List tasks in a list')
-    .option('--top <n>', 'Number of tasks')
     .option('--filter <filter>', 'OData filter')
-    .option('--orderby <field>', 'Order results by field')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+    .option('--orderby <field>', 'Order results by field'), { description: 'Number of tasks' })
     .addOption(outputOption())
     .action(handleErrors(async (listArg: string, opts) => {
       const client = getClient();
@@ -175,11 +171,11 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
     return `/me/todo/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(taskId)}/checklistItems`;
   };
 
-  todo
+  addListOptions(todo
     .command('checklist')
     .argument('<listId>', 'To Do list ID or name')
     .argument('<taskId>', 'Task ID')
-    .description('List checklist items (steps) of a task')
+    .description('List checklist items (steps) of a task'))
     .addOption(outputOption())
     .action(handleErrors(async (listArg: string, taskId: string, opts) => {
       const client = getClient();

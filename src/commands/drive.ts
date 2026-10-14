@@ -3,7 +3,7 @@ import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { detectMimeType } from '../mime.js';
-import { formatSize, outputOption, confirm, info, encodePath, odataQuote, safeOutputPath } from '../utils.js';
+import { formatSize, addListOptions, outputOption, confirm, info, encodePath, odataQuote, safeOutputPath } from '../utils.js';
 import fs from 'fs';
 import path from 'path';
 import { Readable } from 'stream';
@@ -71,15 +71,11 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  drive
+  addListOptions(drive
     .command('files <driveId> <folderId>')
     .description('List files in a folder')
-    .option('--top <n>', 'Number of items')
     .option('--filter <filter>', 'OData filter')
-    .option('--select <fields>', 'Fields to return')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+    .option('--select <fields>', 'Fields to return'), { description: 'Number of items' })
     .addOption(outputOption())
     .action(handleErrors(async (driveId: string, folderId: string, opts) => {
       const client = getClient();

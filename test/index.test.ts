@@ -89,6 +89,15 @@ describe('Wave A wiring (T30, T37, T39 pre-flight)', () => {
     expect(JSON.parse(r.stderr.trim().split('\n').pop()!).error.code).toBe('missing_scope');
   }, 30_000);
 
+  it('pre-flight checks the scopes the parsed options and arguments select (Q-16, Q-17)', () => {
+    const token = jwt({ scp: 'Mail.Read User.Read', aud: 'https://graph.microsoft.com', exp: Math.floor(Date.now() / 1000) + 3600 });
+    const s = cli(['--error-format', 'json', 'search', 'query', 'x', '--entity', 'driveItem'], { MS365_CLI_TOKEN: token });
+    expect(s.status, s.stderr).toBe(4);
+    expect(JSON.parse(s.stderr.trim().split('\n').pop()!).error.message).toContain('driveItem');
+    const w = cli(['--error-format', 'json', 'watch', 'files'], { MS365_CLI_TOKEN: token });
+    expect(w.status, w.stderr).toBe(4);
+  }, 30_000);
+
   it('describe --json and audit path run with no client ID', () => {
     const noClientId = { MS365_CLI_CLIENT_ID: '' };
     const d = cli(['describe', '--json'], noClientId);

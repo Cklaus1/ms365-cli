@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
-import { outputOption, confirm, info } from '../utils.js';
+import { addListOptions, outputOption, confirm, info } from '../utils.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 
 /**
@@ -14,13 +14,9 @@ export function registerNotesCommands(program: Command, getClient: () => GraphCl
 
   const notePath = (id: string) => `/me/notes/${encodeURIComponent(id)}`;
 
-  notes
+  addListOptions(notes
     .command('list')
-    .description('List notes')
-    .option('--top <n>', 'Number of notes')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+    .description('List notes'), { description: 'Number of notes' })
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();

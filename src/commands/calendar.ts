@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import {
-  outputOption, confirm, info, validateEmail, resolveTimeZone, preferTimeZone, parseTime, parseGraphDateTime, toIsoWithOffset,
+  addListOptions, outputOption, confirm, info, validateEmail, resolveTimeZone, preferTimeZone, parseTime, parseGraphDateTime, toIsoWithOffset,
 } from '../utils.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { fingerprint, isDryRun, withIdempotency } from '../idempotency.js';
@@ -75,18 +75,14 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  cal
+  addListOptions(cal
     .command('events')
     .description('List calendar events')
-    .option('--top <n>', 'Number of events', '10')
     .option('--filter <filter>', 'OData filter')
     .option('--select <fields>', 'Fields to return')
     .option('--orderby <field>', 'Order by field')
     .option('--calendar <calendarId>', 'Specific calendar ID')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
-    .option('--timezone <tz>', `Zone for returned times; ${TZ_HELP}`)
+    .option('--timezone <tz>', `Zone for returned times; ${TZ_HELP}`), { description: 'Number of events', default: '10' })
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();
@@ -251,16 +247,13 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
       info('Event deleted.');
     }));
 
-  cal
+  addListOptions(cal
     .command('view')
     .description('Get calendar view (time range)')
     .requiredOption('--start <datetime>', `Start: ${TIME_HELP}`)
     .requiredOption('--end <datetime>', `End: ${TIME_HELP}`)
     .option('--select <fields>', 'Fields to return')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
-    .option('--timezone <tz>', `Zone for --start/--end and returned times; ${TZ_HELP}`)
+    .option('--timezone <tz>', `Zone for --start/--end and returned times; ${TZ_HELP}`))
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const tz = resolveTimeZone(opts.timezone);

@@ -1,23 +1,19 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
-import { outputOption } from '../utils.js';
+import { addListOptions, outputOption } from '../utils.js';
 import { handleErrors } from '../errors.js';
 
 export function registerGroupsCommands(program: Command, getClient: () => GraphClient): void {
   const groups = program.command('groups').description('Microsoft 365 Groups and distribution lists (requires --org-mode)');
 
-  groups
+  addListOptions(groups
     .command('list')
     .description('List groups in the organization')
-    .option('--top <n>', 'Number of groups', '25')
     .option('--filter <filter>', 'OData filter')
     .option('--orderby <field>', 'Order results by field')
     .option('--search <query>', 'Search by displayName')
-    .option('--select <fields>', 'Fields to return')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+    .option('--select <fields>', 'Fields to return'), { description: 'Number of groups', default: '25' })
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();
@@ -35,14 +31,10 @@ export function registerGroupsCommands(program: Command, getClient: () => GraphC
       await printList(client, '/groups', { queryParams, headers }, opts);
     }));
 
-  groups
+  addListOptions(groups
     .command('my')
     .description('List groups you are a member of')
-    .option('--top <n>', 'Number of groups', '50')
-    .option('--select <fields>', 'Fields to return')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+    .option('--select <fields>', 'Fields to return'), { description: 'Number of groups', default: '50' })
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();
@@ -63,13 +55,9 @@ export function registerGroupsCommands(program: Command, getClient: () => GraphC
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  groups
+  addListOptions(groups
     .command('members <groupId>')
-    .description('List group members')
-    .option('--top <n>', 'Number of members')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+    .description('List group members'), { description: 'Number of members' })
     .addOption(outputOption())
     .action(handleErrors(async (groupId: string, opts) => {
       const client = getClient();
@@ -91,13 +79,9 @@ export function registerGroupsCommands(program: Command, getClient: () => GraphC
     }));
 
   // Distribution lists use the same /groups endpoint with mailEnabled=true
-  groups
+  addListOptions(groups
     .command('distribution-lists')
-    .description('List mail-enabled distribution groups')
-    .option('--top <n>', 'Number of results', '25')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+    .description('List mail-enabled distribution groups'), { description: 'Number of results', default: '25' })
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();
@@ -110,13 +94,9 @@ export function registerGroupsCommands(program: Command, getClient: () => GraphC
       await printList(client, '/groups', { queryParams }, opts);
     }));
 
-  groups
+  addListOptions(groups
     .command('teams')
-    .description('List groups that have a Team associated')
-    .option('--top <n>', 'Number of results', '25')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+    .description('List groups that have a Team associated'), { description: 'Number of results', default: '25' })
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();

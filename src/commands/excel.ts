@@ -2,7 +2,7 @@ import fs from 'fs';
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
-import { outputOption, odataQuote, info } from '../utils.js';
+import { addListOptions, outputOption, odataQuote, info } from '../utils.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 
 export function registerExcelCommands(program: Command, getClient: () => GraphClient): void {
@@ -130,19 +130,18 @@ export function registerExcelCommands(program: Command, getClient: () => GraphCl
   const tablePath = (driveId: string, itemId: string, table: string) =>
     `${wbPath(driveId, itemId)}/tables/${encodeURIComponent(table)}`;
 
-  excel
+  addListOptions(excel
     .command('tables <driveId> <itemId>')
-    .description('List tables in a workbook')
+    .description('List tables in a workbook'))
     .addOption(outputOption())
     .action(handleErrors(async (driveId: string, itemId: string, opts) => {
       const client = getClient();
       await printList(client, `${wbPath(driveId, itemId)}/tables`, {}, opts);
     }));
 
-  excel
+  addListOptions(excel
     .command('table-rows <driveId> <itemId> <table>')
-    .description('List rows of a table (table name or ID)')
-    .option('--top <n>', 'Number of rows')
+    .description('List rows of a table (table name or ID)'), { description: 'Number of rows' })
     .addOption(outputOption())
     .action(handleErrors(async (driveId: string, itemId: string, table: string, opts) => {
       const client = getClient();

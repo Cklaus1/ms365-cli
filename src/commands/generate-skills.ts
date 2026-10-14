@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { info } from '../utils.js';
 import { commandMeta } from '../catalog.js';
+import { describeSelector } from './describe.js';
 import { type Catalog, type CatalogCommand, type CatalogOption, renderSkills } from '../docs-gen.js';
 
 function describeOption(o: Option): CatalogOption {
@@ -32,6 +33,7 @@ export function buildCatalog(program: Command): Catalog {
         arguments: c.registeredArguments.map(a => ({ name: a.name(), required: a.required, variadic: a.variadic })),
         options: c.options.map(describeOption),
         scopes: meta?.scopes ?? null,
+        scopesBy: describeSelector(c, meta?.scopesBy),
         destructive: meta?.destructive ?? null,
         idempotent: meta?.idempotent ?? null,
         offline: meta?.offline ?? null,

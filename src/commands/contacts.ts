@@ -2,22 +2,18 @@ import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { handleErrors } from '../errors.js';
-import { outputOption, confirm, info } from '../utils.js';
+import { addListOptions, outputOption, confirm, info } from '../utils.js';
 
 export function registerContactsCommands(program: Command, getClient: () => GraphClient): void {
   const contacts = program.command('contacts').description('Outlook contacts');
 
-  contacts
+  addListOptions(contacts
     .command('list')
     .description('List contacts')
-    .option('--top <n>', 'Number of contacts')
     .option('--filter <filter>', 'OData filter')
     .option('--orderby <field>', 'Order results by field')
     .option('--select <fields>', 'Fields to return')
-    .option('--search <query>', 'Search query')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+    .option('--search <query>', 'Search query'), { description: 'Number of contacts' })
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();
@@ -162,15 +158,11 @@ export function registerContactsCommands(program: Command, getClient: () => Grap
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  contacts
+  addListOptions(contacts
     .command('folder-contacts <folderId>')
     .description('List contacts in a specific folder')
-    .option('--top <n>', 'Number of contacts')
     .option('--filter <filter>', 'OData filter')
-    .option('--orderby <field>', 'Order results by field')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+    .option('--orderby <field>', 'Order results by field'), { description: 'Number of contacts' })
     .addOption(outputOption())
     .action(handleErrors(async (folderId: string, opts) => {
       const client = getClient();

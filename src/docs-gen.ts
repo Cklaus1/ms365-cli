@@ -22,6 +22,8 @@ export interface CatalogCommand {
   destructive: boolean | null;
   idempotent: boolean | null;
   scopes: string[] | null;
+  /** Per-option or per-argument scope clauses (`describe`); `scopes` is their union. */
+  scopesBy: Record<string, unknown> | null;
   offline: boolean | null;
 }
 
@@ -35,7 +37,7 @@ export const BEGIN_MARKER = '<!-- BEGIN GENERATED COMMANDS -->';
 export const END_MARKER = '<!-- END GENERATED COMMANDS -->';
 
 /** Options every list command shares; documented once in the shared skill, not per command. */
-const COMMON_OPTIONS = new Set(['--output', '--page-limit', '--page-delay']);
+const COMMON_OPTIONS = new Set(['--output', '--all', '--page-limit', '--page-delay']);
 
 const cell = (s: string) => s.replace(/\|/g, '\\|').replace(/\n/g, ' ');
 const code = (s: string) => `\`${cell(s)}\``;
@@ -93,7 +95,7 @@ export function renderCommandReference(catalog: Catalog): string {
   const index = grouped.map(([g, cs]) => `[${g}](#${g}) (${cs.length})`).join(' · ');
   const sections = grouped.map(([g, cs]) => `### ${g}\n\n${commandTable(cs)}`);
   return [
-    `${catalog.commands.length} commands. Notes list the Graph scopes each command needs; **destructive** commands delete data, and most ask for confirmation, which needs a terminal. Options shared by list commands (\`-o\`, \`--page-limit\`, \`--page-delay\`) are left out of the tables; run \`ms365 <command> --help\` or \`ms365 describe <command> --json\` for the full list.`,
+    `${catalog.commands.length} commands. Notes list the Graph scopes each command needs; **destructive** commands delete data, and most ask for confirmation, which needs a terminal. Options shared by list commands (\`-o\`, \`--all\`, \`--page-limit\`, \`--page-delay\`) are left out of the tables; run \`ms365 <command> --help\` or \`ms365 describe <command> --json\` for the full list.`,
     index,
     `### All global flags\n\n${optionTable(catalog.globalOptions)}`,
     ...sections,

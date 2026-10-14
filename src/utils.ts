@@ -1,4 +1,4 @@
-import { Option } from 'commander';
+import { Command, InvalidArgumentError, Option } from 'commander';
 import readline from 'readline';
 import fs from 'fs';
 import path from 'path';
@@ -14,6 +14,31 @@ export function outputOption(overrideDefault?: string): Option {
   return new Option('-o, --output <format>', 'Output format: json, ndjson, table, csv, text, yaml')
     .choices([...OUTPUT_FORMATS])
     .default(overrideDefault ?? defaultFormat);
+}
+
+/** A commander parser for an integer in [min, max]; bad input is a usage error (exit 2, V-22). Keeps the value a string. */
+function intParser(min: number, max = Number.MAX_SAFE_INTEGER) {
+  return (value: string): string => {
+    const n = Number(value);
+    if (!/^-?\d+$/.test(value.trim()) || n < min || n > max) {
+      throw new InvalidArgumentError(max === Number.MAX_SAFE_INTEGER
+        ? `must be an integer ≥ ${min}.`
+        : `must be an integer from ${min} to ${max}.`);
+    }
+    return String(n);
+  };
+}
+
+/**
+ * The shared list flags (Q-9): --all, --page-limit, --page-delay, and --top when the endpoint takes $top.
+ * Every printList caller uses this so no list command silently ignores a paging flag.
+ */
+export function addListOptions(cmd: Command, top?: { description: string; default?: string }): Command {
+  if (top) cmd.option('--top <n>', top.description, intParser(1, 999), top.default);
+  return cmd
+    .option('--all', 'Fetch all pages')
+    .option('--page-limit <n>', 'Max pages when using --all', intParser(1))
+    .option('--page-delay <ms>', 'Delay between pages in ms', intParser(0));
 }
 
 /** Global quiet flag — suppressed confirmation messages when true. */

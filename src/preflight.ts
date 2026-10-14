@@ -1,3 +1,4 @@
+import type { ScopeClause } from './catalog.js';
 import { CliError, ExitCode } from './errors.js';
 
 /**
@@ -24,15 +25,15 @@ export function scopeSatisfied(required: string, granted: Set<string>): boolean 
 }
 
 /**
- * Throw missing_scope (exit 4) when NONE of the command's catalog scopes is satisfied.
- * "Any of" keeps false positives near zero for commands whose catalog lists alternatives.
+ * Throw missing_scope (exit 4) when any clause has none of its scopes satisfied (CNF, F14).
+ * "Any of" inside a clause keeps false positives near zero for clauses that list alternatives.
  */
-export function assertConsented(command: string, required: string[], granted: string[]): void {
-  if (required.length === 0) return;
+export function assertConsented(command: string, clauses: ScopeClause[], granted: string[]): void {
   const g = new Set(granted);
-  if (required.some(r => scopeSatisfied(r, g))) return;
-  throw new CliError(
-    `"${command}" needs one of these permissions, which your login hasn't consented to: ${required.join(', ')}.`,
-    { code: 'missing_scope', exitCode: ExitCode.PERMISSION, fix: 'ms365 auth login (re-consent; add --org-mode for org scopes)' },
-  );
+  const unmet = clauses.find(c => c.scopes.length > 0 && !c.scopes.some(r => scopeSatisfied(r, g)));
+  if (!unmet) return;
+  const what = unmet.for
+    ? `"${command}" ${unmet.for} needs ${unmet.scopes.join(' or ')}, which your login hasn't consented to.`
+    : `"${command}" needs one of these permissions, which your login hasn't consented to: ${unmet.scopes.join(', ')}.`;
+  throw new CliError(what, { code: 'missing_scope', exitCode: ExitCode.PERMISSION, fix: 'ms365 auth login (re-consent; add --org-mode for org scopes)' });
 }

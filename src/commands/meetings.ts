@@ -6,7 +6,7 @@ import { pipeline } from 'stream/promises';
 import type { ReadableStream as WebReadableStream } from 'stream/web';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
-import { outputOption, info, odataQuote, safeOutputPath, resolveTimeZone, preferTimeZone, parseTime, formatSize } from '../utils.js';
+import { addListOptions, outputOption, info, odataQuote, safeOutputPath, resolveTimeZone, preferTimeZone, parseTime, formatSize } from '../utils.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 
 const TZ_HELP = 'IANA time zone (default: MS365_CLI_TIMEZONE or the local zone)';
@@ -96,15 +96,12 @@ async function streamTo(stream: unknown, target: string | null): Promise<void> {
 export function registerMeetingsCommands(program: Command, getClient: () => GraphClient): void {
   const meetings = program.command('meetings').alias('meet').description('Teams online meetings, transcripts and recordings');
 
-  meetings
+  addListOptions(meetings
     .command('list')
     .description('List your online meetings in a time window (calendar events with a Teams link)')
     .option('--start <datetime>', `Window start (default: now): ${TIME_HELP}`)
     .option('--end <datetime>', `Window end (default: 7 days after the start): ${TIME_HELP}`)
-    .option('--timezone <tz>', `Zone for the window and returned times; ${TZ_HELP}`)
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+    .option('--timezone <tz>', `Zone for the window and returned times; ${TZ_HELP}`))
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const tz = resolveTimeZone(opts.timezone);
@@ -201,15 +198,12 @@ export function registerMeetingsCommands(program: Command, getClient: () => Grap
       await streamTo(response.stream, target);
     }));
 
-  meetings
+  addListOptions(meetings
     .command('all-transcripts')
     .description('List transcripts of all meetings you organized (beta API; needs --api-version beta)')
     .option('--start <datetime>', `Only transcripts created after: ${TIME_HELP}`)
     .option('--end <datetime>', `Only transcripts created before: ${TIME_HELP}`)
-    .option('--timezone <tz>', `Zone for --start/--end; ${TZ_HELP}`)
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+    .option('--timezone <tz>', `Zone for --start/--end; ${TZ_HELP}`))
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();

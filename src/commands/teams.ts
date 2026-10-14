@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
-import { outputOption, info, validateEmail } from '../utils.js';
+import { addListOptions, outputOption, info, validateEmail } from '../utils.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { resolve } from '../resolve.js';
 import { addContentOptions, contentOptions, htmlToText, messageTransform } from '../content.js';
@@ -71,15 +71,11 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  addContentOptions(teams
+  addListOptions(addContentOptions(teams
     .command('channel-messages')
     .argument('<teamId>', 'Team ID or name')
     .argument('<channelId>', 'Channel ID or name')
-    .description('List channel messages (marked untrusted; see --body, --wrap-untrusted)')
-    .option('--top <n>', 'Number of messages')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms'))
+    .description('List channel messages (marked untrusted; see --body, --wrap-untrusted)')), { description: 'Number of messages' })
     .addOption(outputOption())
     .action(handleErrors(async (teamArg: string, channelArg: string, opts) => {
       const client = getClient();
@@ -139,13 +135,9 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
   // Chats
   const chat = program.command('chat').description('Teams chat (requires --org-mode)');
 
-  chat
+  addListOptions(chat
     .command('list')
-    .description('List chats')
-    .option('--top <n>', 'Number of chats')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+    .description('List chats'), { description: 'Number of chats' })
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();
@@ -165,13 +157,9 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  addContentOptions(chat
+  addListOptions(addContentOptions(chat
     .command('messages <chatId>')
-    .description('List chat messages (marked untrusted; see --body, --wrap-untrusted)')
-    .option('--top <n>', 'Number of messages')
-    .option('--all', 'Fetch all pages')
-    .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms'))
+    .description('List chat messages (marked untrusted; see --body, --wrap-untrusted)')), { description: 'Number of messages' })
     .addOption(outputOption())
     .action(handleErrors(async (chatId: string, opts) => {
       const client = getClient();
