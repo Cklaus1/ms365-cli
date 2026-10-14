@@ -116,6 +116,7 @@ Researched on 2026-10-14. Sources are listed at the end.
 | G-8 | P3 | **Outlook quick-capture notes** (`/me/notes`, with delta). | GA August 2026 `[REVISED: not verifiable offline — post-dates reviewer knowledge; confirm endpoint shape and required scope against the Graph changelog before building PM-9's note item]` | Not covered. | See PM-9. |
 | G-9 | P3 | **Planner Premium** isn't reachable through `/planner`. | Ongoing | Premium plan IDs return 403/404 with no explanation. | Detect the error and print a "Premium plans aren't supported by Graph" hint. |
 | G-10 | P3 | **JSON batching and per-request throttling.** A batch can return 200 while individual items inside it return 429. | — | `$batch` is not used anywhere. | See P-5. |
+| G-11 | P1 | `[ADDED: user request 2026-10-14]` **Dependency sweep.** Every dependency is behind its latest stable release. `npm outdated` shows: <br>• runtime: `@azure/msal-node` 2.16.3 → 7.1.0, `commander` 11.1.0 → 15.0.0, `dotenv` 17.3.1 → 18.0.8 <br>• dev: `typescript` 5.9.3 → 7.0.2, `vitest` 4.1.2 → 5.0.4, `tsup` 8.5.1 → 9.0.0, `tsx` 4.21.0 → 4.23.15, `@types/node` 22.19 → 26.6 <br>`npm audit`: 1 moderate advisory at runtime (`uuid` via msal-node 2.x), plus high-severity dev-only advisories in vite, postcss, nanoid and source-map-js (through vitest and tsup). | Now | tsup 9 and vitest 5 require Node `^22.12` or `>=24`. Node 20 reached end of life on 2026-04-30. | Upgrade everything to the latest stable release (D25). |
 
 ## 5. Product: features, tweaks and gaps (PM view)
 
@@ -250,6 +251,7 @@ Every open question in this spec, resolved or escalated. **Engineering decisions
 | D22 | Natural-language times (§6) | (a) a library such as chrono-node; (b) a small built-in parser for `today`/`tomorrow`/`next <weekday>`/`+Nd`/`+Nh`/`HH:MM` | **(b)** | No new dependency. Anything it doesn't recognise falls back to ISO 8601. |
 | D23 | Idempotency (§6) | (a) none; (b) `--idempotency-key`. Events use `transactionId`. Mail sends record the key in `~/.config/ms365-cli/idempotency.json` for 24 h and skip a repeat send. | **(b)** | Prevents duplicates when an agent retries. |
 | D24 | Live-tenant verification (all † items, workstreams 5 and 8) | — | Implement to Graph's documented shape, test against mocks, and mark "unverified live" | No tenant is available, since the refresh token expired after 90 days. |
+| D25 | Dependency versions (G-11, which supersedes the versions in G-4 and G-6) | (a) minimal (msal-node only); (b) latest stable for everything | **(b)**: <br>• msal-node 7.1.0, commander 15, dotenv 18, tsup 9, tsx 4.23, vitest 5 <br>• typescript 7.0 ⚠ close call: fall back to the newest 5.x/6.x if TS 7 rejects the config <br>• `@types/node` stays on `^22` (match the oldest supported Node, not the newest) <br>• `engines.node` `>=22.12`, CI matrix 22 and 24 | Clears every audit advisory. Node 20 is end-of-life. Matching type definitions to the oldest supported Node stops code from using APIs that Node 22 lacks. |
 
 ### needs-human (left out of this run)
 
