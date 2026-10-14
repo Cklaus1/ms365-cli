@@ -48,12 +48,12 @@ Derived from commits. Waves are defined in tasks/build-loop.md.
 ## W4
 - [x] XT5
 - [x] XT7
-- [ ] DR-T7
-- [ ] QP-6
-- [ ] VT9
-- [ ] DR-T8
-- [ ] RT-11
-- [ ] QP-10
+- [x] DR-T7
+- [x] QP-6
+- [x] VT9
+- [x] DR-T8
+- [x] RT-11
+- [x] QP-10
 
 ## needs-human
 - [ ] N1 warm MCP server (XT10, XT11)
