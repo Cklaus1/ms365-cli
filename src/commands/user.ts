@@ -1,10 +1,41 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
-import { addListOptions, outputOption, info, parseTime, resolveTimeZone, safeOutputPath } from '../utils.js';
+import { addListOptions, outputOption, info, success, parseTime, resolveTimeZone, safeOutputPath } from '../utils.js';
 import fs from 'fs';
 import path from 'path';
+
+const usage = (msg: string) => new CliError(msg, { code: 'usage', exitCode: ExitCode.USAGE });
+
+/** setPresence's sessionId is the app's client ID: the one GraphClient resolved, or a placeholder when only previewing (DR-15). */
+function presenceSessionId(client: GraphClient): string {
+  const id = client.clientId();
+  if (id) return id;
+  if (client.isDryRun()) return '<client-id>';
+  throw new CliError('No client ID configured. Set MS365_CLI_CLIENT_ID in your .env file or run: ms365 auth setup',
+    { code: 'no_client_id', exitCode: ExitCode.AUTH, fix: 'ms365 auth setup' });
+}
+
+/** An Intl-valid IANA name or a Windows-shaped one ("Pacific Standard Time", "UTC") — Graph accepts both (F24). */
+function validateMailboxTimeZone(tz: string): void {
+  if (/^[A-Z][A-Za-z .+()-]* Time$|^UTC$/.test(tz)) return;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+  } catch {
+    throw usage(`Unknown time zone "${tz}". Use an IANA name (America/New_York) or a Windows name (Pacific Standard Time).`);
+  }
+}
+
+/** ISO 8601 duration PT[nH][nM], 5 minutes to 4 hours (setPresence's documented range †). */
+function parsePresenceDuration(value: string): string {
+  const m = /^PT(?:(\d+)H)?(?:(\d+)M)?$/.exec(value);
+  const minutes = m && (m[1] || m[2]) ? Number(m[1] ?? 0) * 60 + Number(m[2] ?? 0) : NaN;
+  if (!(minutes >= 5 && minutes <= 240)) throw usage(`Invalid --duration "${value}". Use an ISO 8601 duration from PT5M to PT4H (e.g. PT30M, PT1H30M).`);
+  return value;
+}
+
+const PHOTO_TYPES: Record<string, string> = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif' };
 
 export function registerUserCommands(program: Command, getClient: () => GraphClient): void {
   const user = program.command('user').description('User profile and management');
@@ -53,10 +84,10 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
   user
     .command('set-ooo')
     .description('Set out-of-office / automatic replies')
-    .requiredOption('--status <status>', 'Status: alwaysEnabled, scheduled, disabled')
+    .addOption(new Option('--status <status>', 'Auto-reply status').choices(['alwaysEnabled', 'scheduled', 'disabled']).makeOptionMandatory())
     .option('--internal <message>', 'Auto-reply for internal senders (HTML)')
     .option('--external <message>', 'Auto-reply for external senders (HTML)')
-    .option('--audience <audience>', 'External audience: all, contactsOnly, none', 'all')
+    .addOption(new Option('--audience <audience>', 'External audience').choices(['all', 'contactsOnly', 'none']).default('all'))
     .option('--start <datetime>', 'Schedule start (ISO 8601 or e.g. "tomorrow 9:00"; required if scheduled)')
     .option('--end <datetime>', 'Schedule end (ISO 8601 or e.g. "+3d"; required if scheduled)')
     .option('--timezone <tz>', 'IANA time zone for --start/--end (default: MS365_CLI_TIMEZONE or system zone)')
@@ -113,25 +144,23 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
 
   user
     .command('set-presence')
-    .description('Set your presence status')
-    .requiredOption('--availability <status>', 'Available, Busy, DoNotDisturb, BeRightBack, Away, Offline')
-    .requiredOption('--activity <activity>', 'Available, Busy, DoNotDisturb, BeRightBack, Away, OffWork, etc.')
-    .option('--duration <minutes>', 'Duration in minutes (ISO 8601 format, e.g. PT30M)', 'PT60M')
+    .description('Set your presence status for this app session (setPresence; values unverified live)')
+    .addOption(new Option('--availability <status>', 'Availability').choices(['Available', 'Busy', 'Away', 'DoNotDisturb']).makeOptionMandatory())
+    .addOption(new Option('--activity <activity>', 'Activity').choices(['Available', 'InACall', 'InAConferenceCall', 'Away', 'Presenting']).makeOptionMandatory())
+    .option('--duration <duration>', 'How long it lasts: ISO 8601 duration, PT5M to PT4H', 'PT60M')
     .action(handleErrors(async (opts) => {
+      const duration = parsePresenceDuration(opts.duration);
       const client = getClient();
-      // setPresence requires application ID — use the configured client ID
-      const clientId = process.env.MS365_CLI_CLIENT_ID;
-      if (!clientId) throw new Error('Client ID not configured. Set MS365_CLI_CLIENT_ID or run: ms365 auth setup');
       await client.request('/me/presence/setPresence', {
         method: 'POST',
         body: JSON.stringify({
-          sessionId: clientId,
+          sessionId: presenceSessionId(client),
           availability: opts.availability,
           activity: opts.activity,
-          expirationDuration: opts.duration,
+          expirationDuration: duration,
         }),
       });
-      console.log(`Presence set to ${opts.availability} (${opts.activity}).`);
+      success(`Presence set to ${opts.availability} (${opts.activity}).`);
     }));
 
   user
@@ -139,13 +168,11 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
     .description('Clear custom presence and revert to automatic')
     .action(handleErrors(async () => {
       const client = getClient();
-      const clientId = process.env.MS365_CLI_CLIENT_ID;
-      if (!clientId) throw new Error('Client ID not configured. Set MS365_CLI_CLIENT_ID or run: ms365 auth setup');
       await client.request('/me/presence/clearPresence', {
         method: 'POST',
-        body: JSON.stringify({ sessionId: clientId }),
+        body: JSON.stringify({ sessionId: presenceSessionId(client) }),
       });
-      info('Presence cleared.');
+      success('Presence cleared.');
     }));
 
   // ── Profile photo ───────────────────────────────────────────
@@ -172,9 +199,7 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
         response = await client.request('/me/photo/$value', { responseType: 'binary' });
       } catch (err) {
         if (err instanceof CliError && err.status === 404) {
-          info('No profile photo found.');
-          process.exitCode = ExitCode.NOT_FOUND;
-          return;
+          throw new CliError('No profile photo found.', { code: 'not_found', exitCode: ExitCode.NOT_FOUND, status: 404 });
         }
         throw err;
       }
@@ -189,26 +214,22 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
     .description('Upload/update profile photo (JPEG, PNG, GIF — max 4MB)')
     .action(handleErrors(async (filePath: string) => {
       const resolvedPath = path.resolve(filePath);
-      if (!fs.existsSync(resolvedPath)) {
-        throw new Error(`File not found: ${resolvedPath}`);
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(resolvedPath);
+      } catch {
+        throw usage(`File not found: ${resolvedPath}`);
       }
-
-      const client = getClient();
-      const ext = path.extname(resolvedPath).toLowerCase();
-      const mimeMap: Record<string, string> = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif' };
-      const contentType = mimeMap[ext] || 'image/jpeg';
-
-      const stat = fs.statSync(resolvedPath);
+      if (!stat.isFile()) throw usage(`Not a file: ${resolvedPath}`);
+      const contentType = PHOTO_TYPES[path.extname(resolvedPath).toLowerCase()];
+      if (!contentType) throw usage(`Unsupported photo type "${path.extname(resolvedPath)}". Use .jpg, .jpeg, .png or .gif.`);
       if (stat.size > 4 * 1024 * 1024) {
-        throw new Error(`Photo too large (${(stat.size / 1024 / 1024).toFixed(1)} MB). Maximum is 4 MB.`);
+        throw usage(`Photo too large (${(stat.size / 1024 / 1024).toFixed(1)} MB). Maximum is 4 MB.`);
       }
 
       // Upload raw binary directly — photo endpoint doesn't support upload sessions
-      const response = await client.uploadFile('/me/photo/$value', resolvedPath, contentType);
-      if (response.status >= 400) {
-        throw new Error(`Photo upload failed (${response.status})`);
-      }
-      info('Profile photo updated.');
+      await getClient().uploadFile('/me/photo/$value', resolvedPath, contentType);
+      success('Profile photo updated.');
     }));
 
   // ── Mailbox settings ────────────────────────────────────────
@@ -224,26 +245,32 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
 
   user
     .command('set-timezone <timezone>')
-    .description('Set mailbox timezone (e.g. "America/New_York", "UTC")')
+    .description('Set mailbox timezone: IANA ("America/New_York") or Windows ("Pacific Standard Time") name')
     .action(handleErrors(async (timezone: string) => {
+      validateMailboxTimeZone(timezone);
       const client = getClient();
       await client.request('/me/mailboxSettings', {
         method: 'PATCH',
         body: JSON.stringify({ timeZone: timezone }),
       });
-      console.log(`Timezone set to ${timezone}.`);
+      success(`Timezone set to ${timezone}.`);
     }));
 
   user
     .command('set-language <locale>')
     .description('Set mailbox language (e.g. "en-US", "fr-FR")')
     .action(handleErrors(async (locale: string) => {
+      try {
+        Intl.getCanonicalLocales(locale);
+      } catch {
+        throw usage(`Invalid language tag "${locale}". Use a BCP 47 tag like en-US or fr-FR.`);
+      }
       const client = getClient();
       await client.request('/me/mailboxSettings', {
         method: 'PATCH',
         body: JSON.stringify({ language: { locale } }),
       });
-      console.log(`Language set to ${locale}.`);
+      success(`Language set to ${locale}.`);
     }));
 
   user
