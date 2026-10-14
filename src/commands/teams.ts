@@ -1,7 +1,8 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
-import { addListOptions, outputOption, info, validateEmail } from '../utils.js';
+import { addListOptions, outputOption, success, validateEmail } from '../utils.js';
+import { idempotentSend, IDEMPOTENCY_HELP } from '../idempotency.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { resolve } from '../resolve.js';
 import { addContentOptions, contentOptions, htmlToText, messageTransform } from '../content.js';
@@ -9,14 +10,12 @@ import { addContentOptions, contentOptions, htmlToText, messageTransform } from 
 export function registerTeamsCommands(program: Command, getClient: () => GraphClient): void {
   const teams = program.command('teams').description('Microsoft Teams (requires --org-mode)');
 
-  teams
+  addListOptions(teams
     .command('list')
-    .description('List joined teams')
+    .description('List joined teams'))
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
-      const client = getClient();
-      const response = await client.request('/me/joinedTeams');
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(getClient(), '/me/joinedTeams', {}, opts);
     }));
 
   teams
@@ -31,28 +30,26 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  teams
+  addListOptions(teams
     .command('members')
     .argument('<teamId>', 'Team ID or name')
-    .description('List team members')
+    .description('List team members'))
     .addOption(outputOption())
     .action(handleErrors(async (teamArg: string, opts) => {
       const client = getClient();
       const teamId = await resolve(client, 'team', teamArg);
-      const response = await client.request(`/teams/${encodeURIComponent(teamId)}/members`);
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(client, `/teams/${encodeURIComponent(teamId)}/members`, {}, opts);
     }));
 
-  teams
+  addListOptions(teams
     .command('channels')
     .argument('<teamId>', 'Team ID or name')
-    .description('List team channels')
+    .description('List team channels'))
     .addOption(outputOption())
     .action(handleErrors(async (teamArg: string, opts) => {
       const client = getClient();
       const teamId = await resolve(client, 'team', teamArg);
-      const response = await client.request(`/teams/${encodeURIComponent(teamId)}/channels`);
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(client, `/teams/${encodeURIComponent(teamId)}/channels`, {}, opts);
     }));
 
   teams
@@ -96,16 +93,21 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
     .requiredOption('--body <body>', 'Message body')
     .option('--html', 'Body is HTML')
     .option('--mention <upn>', '@mention a user by UPN/email (repeatable)', collect, [])
+    .option('--idempotency-key <key>', IDEMPOTENCY_HELP)
     .action(handleErrors(async (teamArg: string, channelArg: string, opts) => {
       const upns = mentionUpns(opts.mention);
       const client = getClient();
       const teamId = await resolve(client, 'team', teamArg);
       const channelId = await resolve(client, 'channel', channelArg, teamId);
-      await client.request(
-        `/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages`,
-        { method: 'POST', body: JSON.stringify(await messagePayload(client, opts.body, !!opts.html, upns)) }
-      );
-      info('Channel message sent.');
+      const payload = await messagePayload(client, opts.body, !!opts.html, upns);
+      const request = { team: teamArg, channel: channelArg, payload };
+      const sent = await idempotentSend(client, opts.idempotencyKey, 'teams send-channel-message', request, async () => {
+        await client.request(
+          `/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages`,
+          { method: 'POST', body: JSON.stringify(payload) }
+        );
+      });
+      if (sent) success('Channel message sent.');
     }));
 
   teams
@@ -116,20 +118,20 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
     .description('Reply to a channel message (threaded)')
     .requiredOption('--body <body>', 'Reply body')
     .option('--html', 'Body is HTML')
+    .option('--idempotency-key <key>', IDEMPOTENCY_HELP)
     .action(handleErrors(async (teamArg: string, channelArg: string, messageId: string, opts) => {
       const client = getClient();
       const teamId = await resolve(client, 'team', teamArg);
       const channelId = await resolve(client, 'channel', channelArg, teamId);
-      await client.request(
-        `/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}/replies`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            body: { contentType: opts.html ? 'html' : 'text', content: opts.body },
-          }),
-        }
-      );
-      info('Reply sent to channel thread.');
+      const payload = { body: { contentType: opts.html ? 'html' : 'text', content: opts.body } };
+      const request = { team: teamArg, channel: channelArg, messageId, payload };
+      const sent = await idempotentSend(client, opts.idempotencyKey, 'teams reply-channel-message', request, async () => {
+        await client.request(
+          `/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}/replies`,
+          { method: 'POST', body: JSON.stringify(payload) }
+        );
+      });
+      if (sent) success('Reply sent to channel thread.');
     }));
 
   // Chats
@@ -143,6 +145,8 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       const client = getClient();
       const queryParams: Record<string, string> = {};
       if (opts.top) queryParams['$top'] = opts.top;
+      // topic is null for 1:1 chats; the table's members column tells them apart (X-13).
+      if (opts.output === 'table') queryParams['$expand'] = 'members($select=displayName)';
 
       await printList(client, '/me/chats', { queryParams }, opts);
     }));
@@ -177,7 +181,7 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
     .option('--topic <topic>', 'Group chat topic')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
-      const upns = String(opts.members).split(',').filter(e => e.trim()).map(usageEmail);
+      const upns = String(opts.members).split(',').filter(e => e.trim()).map(validateEmail);
       if (upns.length === 0) throw usage('--members needs at least one email');
       const chatType = upns.length === 1 ? 'oneOnOne' : 'group';
       if (opts.topic && chatType === 'oneOnOne') throw usage('--topic applies to group chats only (two or more members)');
@@ -202,14 +206,15 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
     .requiredOption('--body <body>', 'Message body')
     .option('--html', 'Body is HTML')
     .option('--mention <upn>', '@mention a user by UPN/email (repeatable)', collect, [])
+    .option('--idempotency-key <key>', IDEMPOTENCY_HELP)
     .action(handleErrors(async (chatId: string, opts) => {
       const upns = mentionUpns(opts.mention);
       const client = getClient();
-      await client.request(`/chats/${encodeURIComponent(chatId)}/messages`, {
-        method: 'POST',
-        body: JSON.stringify(await messagePayload(client, opts.body, !!opts.html, upns)),
+      const payload = await messagePayload(client, opts.body, !!opts.html, upns);
+      const sent = await idempotentSend(client, opts.idempotencyKey, 'chat send', { chat: chatId, payload }, async () => {
+        await client.request(`/chats/${encodeURIComponent(chatId)}/messages`, { method: 'POST', body: JSON.stringify(payload) });
       });
-      info('Message sent.');
+      if (sent) success('Message sent.');
     }));
 
   chat
@@ -217,32 +222,37 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
     .description('Reply to a chat message')
     .requiredOption('--body <body>', 'Reply body')
     .option('--html', 'Body is HTML')
+    .option('--idempotency-key <key>', IDEMPOTENCY_HELP)
     .action(handleErrors(async (chatId: string, messageId: string, opts) => {
       const client = getClient();
       // Chats have no /replies endpoint; Graph's documented "reply with quote" is a new
-      // message carrying a messageReference attachment to the original.
-      const messagesEndpoint = `/chats/${encodeURIComponent(chatId)}/messages`;
-      const original = (await client.request(`${messagesEndpoint}/${encodeURIComponent(messageId)}`)).data as {
-        body?: { content?: string };
-        from?: unknown;
-      };
-      const replyHtml = opts.html ? opts.body : escapeHtml(opts.body);
-      await client.request(messagesEndpoint, {
-        method: 'POST',
-        body: JSON.stringify({
-          body: { contentType: 'html', content: `<attachment id="${escapeHtml(messageId)}"></attachment>${replyHtml}` },
-          attachments: [{
-            id: messageId,
-            contentType: 'messageReference',
-            content: JSON.stringify({
-              messageId,
-              messagePreview: htmlToText(original.body?.content ?? ''),
-              messageSender: original.from,
-            }),
-          }],
-        }),
+      // message carrying a messageReference attachment to the original. The key covers the
+      // caller's input, not the quoted preview read from Graph.
+      const request = { chat: chatId, messageId, body: opts.body, html: !!opts.html };
+      const sent = await idempotentSend(client, opts.idempotencyKey, 'chat reply', request, async () => {
+        const messagesEndpoint = `/chats/${encodeURIComponent(chatId)}/messages`;
+        const original = (await client.request(`${messagesEndpoint}/${encodeURIComponent(messageId)}`)).data as {
+          body?: { content?: string };
+          from?: unknown;
+        };
+        const replyHtml = opts.html ? opts.body : escapeHtml(opts.body);
+        await client.request(messagesEndpoint, {
+          method: 'POST',
+          body: JSON.stringify({
+            body: { contentType: 'html', content: `<attachment id="${escapeHtml(messageId)}"></attachment>${replyHtml}` },
+            attachments: [{
+              id: messageId,
+              contentType: 'messageReference',
+              content: JSON.stringify({
+                messageId,
+                messagePreview: htmlToText(original.body?.content ?? ''),
+                messageSender: original.from,
+              }),
+            }],
+          }),
+        });
       });
-      info('Reply sent.');
+      if (sent) success('Reply sent.');
     }));
 }
 
@@ -252,20 +262,12 @@ function escapeHtml(text: string): string {
 
 const usage = (msg: string) => new CliError(msg, { code: 'usage', exitCode: ExitCode.USAGE });
 
-function usageEmail(email: string): string {
-  try {
-    return validateEmail(email);
-  } catch (e) {
-    throw usage((e as Error).message);
-  }
-}
-
 function collect(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
 
 function mentionUpns(values: string[] | undefined): string[] {
-  return (values ?? []).map(usageEmail);
+  return (values ?? []).map(validateEmail);
 }
 
 /**

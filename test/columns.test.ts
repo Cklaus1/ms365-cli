@@ -321,3 +321,35 @@ describe('table output uses default columns', () => {
     expect(formatOutput(data, 'yaml')).toContain('bodyPreview');
   });
 });
+
+describe('chat and planner plan columns (X-13, X-14)', () => {
+  const members = [
+    { '@odata.type': '#microsoft.graph.aadUserConversationMember', id: 'm1', displayName: 'Ada Lovelace' },
+    { '@odata.type': '#microsoft.graph.aadUserConversationMember', id: 'm2', displayName: 'Bob Builder' },
+  ];
+
+  it('a chat table shows the members (from $expand=members) so 1:1 chats can be told apart', () => {
+    const oneOnOne = { ...chat, topic: null, chatType: 'oneOnOne', members };
+    const out = formatOutput({ value: [oneOnOne] }, 'table');
+    expect(header(out)).toEqual(['topic', 'members', 'chatType', 'lastUpdatedDateTime']);
+    expect(out).toContain('Ada Lovelace, Bob Builder');
+  });
+
+  it('a chat without members keeps the other columns', () => {
+    expect(header(formatOutput({ value: [chat] }, 'table'))).toEqual(['topic', 'chatType', 'lastUpdatedDateTime']);
+  });
+
+  it('planner plans show container.type, not the deprecated owner GUID', () => {
+    expect(defaultColumns([plan])).toEqual(['title', 'container.type', 'createdDateTime']);
+    const out = formatOutput({ value: [plan] }, 'table');
+    expect(header(out)).toEqual(['title', 'container.type', 'createdDateTime']);
+    expect(out).not.toContain('ebf3b108');
+    const { container: _c, ...ownerOnly } = plan;
+    expect(detectShape(ownerOnly)?.name).toBe('plannerPlan');
+  });
+
+  it('no default shape has an id column (F9)', async () => {
+    const { SHAPES } = await import('../src/columns.js');
+    expect(SHAPES.filter(s => s.columns.some(c => c === 'id' || c.endsWith('.id')))).toEqual([]);
+  });
+});

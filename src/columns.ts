@@ -1,7 +1,8 @@
 /**
  * Default `-o table` columns per Graph resource shape (spec PM-10). Wide Graph objects make a
  * table unreadable, so table output shows these columns unless --fields is set or
- * MS365_CLI_TABLE_ALL_COLUMNS=1. Columns are dot paths into the item.
+ * MS365_CLI_TABLE_ALL_COLUMNS=1. Columns are dot paths into the item. No shape has an id column:
+ * table cells are cut to 50 characters, which breaks most Graph IDs (use --fields id,… or -o json; F9).
  */
 export interface Shape {
   name: string;
@@ -47,7 +48,7 @@ export const SHAPES: Shape[] = [
   {
     name: 'plannerPlan', types: ['plannerPlan'],
     match: has => has('title') && (has('owner') || has('container')),
-    columns: ['title', 'owner', 'createdDateTime'],
+    columns: ['title', 'container.type', 'createdDateTime'],
   },
   {
     name: 'notebook', types: ['notebook'],
@@ -82,7 +83,8 @@ export const SHAPES: Shape[] = [
   {
     name: 'chat', types: ['chat'],
     match: has => has('chatType'),
-    columns: ['topic', 'chatType', 'lastUpdatedDateTime'],
+    // members comes from chat list's table-only $expand=members (X-13): topic is null for 1:1 chats.
+    columns: ['topic', 'members', 'chatType', 'lastUpdatedDateTime'],
   },
   {
     name: 'channel', types: ['channel'],

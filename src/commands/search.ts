@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
-import { formatOutput, type OutputFormat } from '../formatter.js';
-import { outputOption } from '../utils.js';
+import { formatOutput, type OutputFormat, printList } from '../formatter.js';
+import { addListOptions, kqlQuote, outputOption } from '../utils.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 
 /**
@@ -90,18 +90,16 @@ export function registerSearchCommands(program: Command, getClient: () => GraphC
       console.log(formatOutput({ value: hits }, opts.output as OutputFormat));
     }));
 
-  search
+  addListOptions(search
     .command('people [query]')
-    .description('Search people')
-    .option('--top <n>', 'Number of results', '10')
+    .description('Search people'), { description: 'Number of results', default: '10' })
     .addOption(outputOption())
     .action(handleErrors(async (query: string | undefined, opts) => {
       const client = getClient();
       const queryParams: Record<string, string> = {};
       if (opts.top) queryParams['$top'] = opts.top;
-      if (query) queryParams['$search'] = `"${query}"`;
+      if (query) queryParams['$search'] = kqlQuote(query);
 
-      const response = await client.request('/me/people', { queryParams });
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(client, '/me/people', { queryParams }, opts);
     }));
 }

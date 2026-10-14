@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
-import { addListOptions, outputOption } from '../utils.js';
+import { addListOptions, outputOption, kqlQuote } from '../utils.js';
 import { handleErrors } from '../errors.js';
 
 export function registerGroupsCommands(program: Command, getClient: () => GraphClient): void {
@@ -21,7 +21,7 @@ export function registerGroupsCommands(program: Command, getClient: () => GraphC
       if (opts.top) queryParams['$top'] = opts.top;
       if (opts.filter) queryParams['$filter'] = opts.filter;
       if (opts.orderby) queryParams['$orderby'] = opts.orderby;
-      if (opts.search) queryParams['$search'] = `"displayName:${opts.search}"`;
+      if (opts.search) queryParams['$search'] = kqlQuote(`displayName:${opts.search}`);
       if (opts.select) queryParams['$select'] = opts.select;
 
       // ConsistencyLevel header required for $search
@@ -68,14 +68,13 @@ export function registerGroupsCommands(program: Command, getClient: () => GraphC
       await printList(client, endpoint, { queryParams }, opts);
     }));
 
-  groups
+  addListOptions(groups
     .command('owners <groupId>')
-    .description('List group owners')
+    .description('List group owners'))
     .addOption(outputOption())
     .action(handleErrors(async (groupId: string, opts) => {
       const client = getClient();
-      const response = await client.request(`/groups/${encodeURIComponent(groupId)}/owners`);
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(client, `/groups/${encodeURIComponent(groupId)}/owners`, {}, opts);
     }));
 
   // Distribution lists use the same /groups endpoint with mailEnabled=true

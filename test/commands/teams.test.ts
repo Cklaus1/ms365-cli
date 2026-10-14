@@ -1,4 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { runCommand } from '../helpers/cli.js';
 import { registerTeamsCommands } from '../../src/commands/teams.js';
 
@@ -93,5 +96,109 @@ describe('chat list --all honours --page-limit (M-26)', () => {
     expect(r.exitCode).toBe(0);
     expect(r.calls).toHaveLength(2);
     expect(JSON.parse(r.stdout).value).toHaveLength(2);
+  });
+});
+
+const TEAM_ID = '00000000-0000-0000-0000-0000000000a1';
+const CHANNEL_ID = '19:ch1@thread.tacv2';
+
+describe('teams list/members/channels paginate (Q-6)', () => {
+  const twoPages = (prefix: string) => [['GET', prefix, (c: { url: string }) => /skiptoken=2/.test(c.url)
+    ? { value: [{ id: 'b' }] }
+    : { value: [{ id: 'a' }], '@odata.nextLink': `${GRAPH}${prefix}?$skiptoken=2` }]] as never;
+  const cases: Array<[string[], string]> = [
+    [['teams', 'list'], '/me/joinedTeams'],
+    [['teams', 'members', TEAM_ID], `/teams/${TEAM_ID}/members`],
+    [['teams', 'channels', TEAM_ID], `/teams/${TEAM_ID}/channels`],
+  ];
+  for (const [argv, prefix] of cases) {
+    it(`${argv.slice(0, 2).join(' ')}: page 1 carries nextCursor; --all fetches both pages; --page-limit stops`, async () => {
+      const r1 = await runCommand(registerTeamsCommands, [...argv, '-o', 'json'], { routes: twoPages(prefix) });
+      expect(r1.exitCode).toBe(0);
+      expect(JSON.parse(r1.stdout).nextCursor).toEqual(expect.any(String));
+      const r2 = await runCommand(registerTeamsCommands, [...argv, '--all', '-o', 'json'], { routes: twoPages(prefix) });
+      expect(r2.exitCode).toBe(0);
+      expect(JSON.parse(r2.stdout).value.map((v: { id: string }) => v.id)).toEqual(['a', 'b']);
+      const r3 = await runCommand(registerTeamsCommands, [...argv, '--all', '--page-limit', '1', '-o', 'json'], { routes: twoPages(prefix) });
+      expect(r3.calls).toHaveLength(1);
+    });
+  }
+});
+
+describe('teams sends print no confirmation under --dry-run (DR-1)', () => {
+  it.each([
+    [['chat', 'send', 'C1', '--body', 'hi'], 'Message sent.'],
+    [['chat', 'reply', 'C1', 'M1', '--body', 'hi'], 'Reply sent.'],
+    [['teams', 'send-channel-message', TEAM_ID, CHANNEL_ID, '--body', 'hi'], 'Channel message sent.'],
+    [['teams', 'reply-channel-message', TEAM_ID, CHANNEL_ID, 'M1', '--body', 'hi'], 'Reply sent to channel thread.'],
+  ])('%j', async (argv, line) => {
+    const r = await runCommand(registerTeamsCommands, argv, { dryRun: true });
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).not.toContain(line);
+    expect(r.stderr).toContain('[dry-run] POST');
+  });
+});
+
+describe('teams sends with --idempotency-key (R-5, F19)', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ms365-teams-idem-'));
+    vi.stubEnv('MS365_CLI_CONFIG_DIR', path.join(dir, 'cfg'));
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  const original = { id: 'M1', body: { content: 'x' }, from: {} };
+  const routes = [['GET', '/chats/C1/messages/M1', () => original]] as never;
+
+  it.each([
+    ['chat send', ['chat', 'send', 'C1', '--body', 'hi']],
+    ['chat reply', ['chat', 'reply', 'C1', 'M1', '--body', 'hi']],
+    ['teams send-channel-message', ['teams', 'send-channel-message', TEAM_ID, CHANNEL_ID, '--body', 'hi']],
+    ['teams reply-channel-message', ['teams', 'reply-channel-message', TEAM_ID, CHANNEL_ID, 'M1', '--body', 'hi']],
+  ])('%s: a second run with the same key posts nothing; a different body conflicts', async (name, argv) => {
+    const args = [...argv, '--idempotency-key', `k-${name}`];
+    const first = await runCommand(registerTeamsCommands, args, { routes });
+    expect(first.exitCode).toBe(0);
+    expect(first.calls.filter(c => c.method === 'POST')).toHaveLength(1);
+
+    const second = await runCommand(registerTeamsCommands, args, { routes });
+    expect(second.exitCode).toBe(0);
+    expect(second.calls.filter(c => c.method === 'POST')).toHaveLength(0);
+    expect(second.stderr).toMatch(/not sent again/);
+    expect(JSON.parse(second.stdout)).toHaveProperty('sentAt');
+
+    const changed = args.map(a => (a === 'hi' ? 'bye' : a));
+    const third = await runCommand(registerTeamsCommands, changed, { routes });
+    expect(third.exitCode).toBe(2);
+    expect(third.calls.filter(c => c.method === 'POST')).toHaveLength(0);
+  });
+
+  it('the same body to a different chat is a different request', async () => {
+    await runCommand(registerTeamsCommands, ['chat', 'send', 'C1', '--body', 'hi', '--idempotency-key', 'k']);
+    const r = await runCommand(registerTeamsCommands, ['chat', 'send', 'C2', '--body', 'hi', '--idempotency-key', 'k']);
+    expect(r.exitCode).toBe(2);
+  });
+});
+
+describe('chat list table expands members (X-13)', () => {
+  it('-o table requests $expand=members and shows member names', async () => {
+    const r = await runCommand(registerTeamsCommands, ['chat', 'list', '-o', 'table'], {
+      routes: [['GET', '/me/chats', () => ({ value: [{
+        id: '19:x', topic: null, chatType: 'oneOnOne', lastUpdatedDateTime: '2026-10-01T10:00:00Z',
+        members: [{ displayName: 'Ada Lovelace' }, { displayName: 'Bob Builder' }],
+      }] })]],
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.calls[0].path).toContain('$expand=members($select=displayName)');
+    expect(r.stdout).toContain('Ada Lovelace, Bob Builder');
+  });
+
+  it('-o json leaves the request unexpanded', async () => {
+    const r = await runCommand(registerTeamsCommands, ['chat', 'list', '-o', 'json'], {
+      routes: [['GET', '/me/chats', () => ({ value: [] })]],
+    });
+    expect(r.calls[0].path).not.toContain('$expand');
   });
 });

@@ -1,8 +1,8 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
-import { handleErrors } from '../errors.js';
-import { addListOptions, outputOption, confirm, info } from '../utils.js';
+import { handleErrors, CliError, ExitCode } from '../errors.js';
+import { addListOptions, outputOption, confirm, kqlQuote, success } from '../utils.js';
 
 export function registerContactsCommands(program: Command, getClient: () => GraphClient): void {
   const contacts = program.command('contacts').description('Outlook contacts');
@@ -13,16 +13,20 @@ export function registerContactsCommands(program: Command, getClient: () => Grap
     .option('--filter <filter>', 'OData filter')
     .option('--orderby <field>', 'Order results by field')
     .option('--select <fields>', 'Fields to return')
-    .option('--search <query>', 'Search query'), { description: 'Number of contacts' })
+    .option('--search <query>', 'Search query (cannot be combined with --filter or --orderby)'), { description: 'Number of contacts' })
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
+      if (opts.search && (opts.filter || opts.orderby)) {
+        throw new CliError(`--search cannot be combined with ${opts.filter ? '--filter' : '--orderby'}: Outlook $search does not support $filter or $orderby.`,
+          { code: 'usage', exitCode: ExitCode.USAGE, fix: 'drop --filter/--orderby, or filter and sort the --search results client-side (e.g. with jq)' });
+      }
       const client = getClient();
       const queryParams: Record<string, string> = {};
       if (opts.top) queryParams['$top'] = opts.top;
       if (opts.filter) queryParams['$filter'] = opts.filter;
       if (opts.orderby) queryParams['$orderby'] = opts.orderby;
       if (opts.select) queryParams['$select'] = opts.select;
-      if (opts.search) queryParams['$search'] = `"${opts.search}"`;
+      if (opts.search) queryParams['$search'] = kqlQuote(opts.search);
 
       await printList(client, '/me/contacts', { queryParams }, opts);
     }));
@@ -111,7 +115,7 @@ export function registerContactsCommands(program: Command, getClient: () => Grap
       if (!await confirm(`Delete contact ${contactId.substring(0, 16)}...?`)) return;
       const client = getClient();
       await client.request(`/me/contacts/${encodeURIComponent(contactId)}`, { method: 'DELETE' });
-      info('Contact deleted.');
+      success('Contact deleted.');
     }));
 
   // ── Contact folders ─────────────────────────────────────────
