@@ -37,7 +37,6 @@ let dir: string;
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ms365-auth-'));
   vi.stubEnv('MS365_CLI_CONFIG_DIR', dir);
-  vi.stubEnv('MS365_CLI_NO_KEYRING', '1');
   vi.stubEnv('MS365_CLI_TOKEN', '');
   vi.stubEnv('MS365_MCP_OAUTH_TOKEN', '');
   vi.stubEnv('MS365_CLI_CLIENT_ID', CID);
@@ -180,8 +179,8 @@ describe('AuthManager behavior', () => {
     fs.utimesSync(path.join(dir, 'token-cache.json.lock'), old, old);
     const m = new AuthManager(['User.Read']);
     await m.initialize();
-    expect(await m.logout()).toEqual([]);
-    expect(fs.readdirSync(dir).filter(f => f !== '.keyring-migrated')).toEqual(['unrelated.txt']);
+    await m.logout();
+    expect(fs.readdirSync(dir)).toEqual(['unrelated.txt']);
   });
 
   it('missing client ID → exit 3 with a setup hint', () => {

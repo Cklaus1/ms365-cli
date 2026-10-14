@@ -36,8 +36,5 @@
   },
   "engines": {
     "node": ">=22.12"
-  },
-  "optionalDependencies": {
-    "keytar": "^7.9.0"
   }
 }

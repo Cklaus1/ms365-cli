@@ -4,17 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
-import { spawnSync } from 'child_process';
-import { createRequire } from 'module';
 import { CliError, ExitCode } from './errors.js';
-
-// libsecret needs a D-Bus session bus. Without one (headless Linux, WSLg with DISPLAY set),
-// it tries D-Bus autolaunch via X11 and keytar hangs in a native thread.
-const isHeadless = process.platform === 'linux' && !process.env.DBUS_SESSION_BUS_ADDRESS;
-
-const SERVICE_NAME = 'ms365-cli';
-const TOKEN_CACHE_ACCOUNT = 'msal-token-cache';
-const SELECTED_ACCOUNT_KEY = 'selected-account';
 
 /** Silent token requests use .default: the token carries whatever the user consented to at login. */
 export const GRAPH_DEFAULT_SCOPE = 'https://graph.microsoft.com/.default';
@@ -164,78 +154,14 @@ function readFileIfExists(p: string): string | undefined {
   }
 }
 
-// ── keytar: optional, used only to migrate entries written by older versions ──
-//
-// keytar calls can hang inside a native thread, and a hung thread also blocks
-// process.exit(). So keytar never loads in this process: each call runs in a short-lived
-// child process that is SIGKILLed on timeout.
-
-const KEYTAR_TIMEOUT_MS = 3000;
-
-function keyringDisabled(): boolean {
-  return isHeadless || process.env.MS365_CLI_NO_KEYRING === '1';
-}
-
-let keytarPath: string | null | undefined;
-function resolveKeytar(): string | null {
-  if (keytarPath === undefined) {
-    try {
-      keytarPath = createRequire(import.meta.url).resolve('keytar');
-    } catch {
-      keytarPath = null; // optional dependency not installed
-    }
-  }
-  return keytarPath;
-}
-
-/** Run one keytar call in a child process. Returns undefined if keytar is unavailable, failed or hung. */
-function keytarCall(op: 'get' | 'delete', account: string): string | undefined {
-  if (keyringDisabled()) return undefined;
-  const mod = resolveKeytar();
-  if (!mod) return undefined;
-  const script = `const k=require(${JSON.stringify(mod)});` +
-    `const p=${op === 'get' ? 'k.getPassword' : 'k.deletePassword'}(${JSON.stringify(SERVICE_NAME)},${JSON.stringify(account)});` +
-    `p.then(v=>{process.stdout.write(v===null||v===undefined?'':String(v));process.exit(0)},()=>process.exit(2));`;
-  const r = spawnSync(process.execPath, ['-e', script], { timeout: KEYTAR_TIMEOUT_MS, killSignal: 'SIGKILL', encoding: 'utf8' });
-  return r.status === 0 ? r.stdout : undefined;
-}
-
-const migrationMarker = () => path.join(configDir(), '.keyring-migrated');
-
-/** Read a legacy keyring entry at most once per config dir (the marker prevents repeated probes). */
-function keytarMigrate(account: string): string | undefined {
-  if (keyringDisabled() || fs.existsSync(migrationMarker())) return undefined;
-  const value = keytarCall('get', account) || undefined;
-  return value;
-}
-
-function markMigrated(): void {
-  try {
-    ensureConfigDir();
-    fs.writeFileSync(migrationMarker(), '', { mode: 0o600 });
-  } catch { /* best effort */ }
-}
-
-/** Delete a legacy keyring entry; false only when keytar is present but the delete failed or hung. */
-function keytarDelete(account: string): boolean {
-  if (keyringDisabled() || !resolveKeytar()) return true;
-  return keytarCall('delete', account) !== undefined;
-}
-
 /**
- * MSAL cache plugin backed by a 0600 file. MSAL calls afterCacheAccess after every token
+ * MSAL cache plugin backed by a single 0600 file (no OS keyring; see spec D28 / N6). MSAL calls afterCacheAccess after every token
  * operation and sets cacheHasChanged when a token was fetched from the network, so silent
  * refreshes (and rotated refresh tokens) are persisted without extra code paths.
  */
 export class FileTokenCachePlugin implements ICachePlugin {
   async beforeCacheAccess(ctx: TokenCacheContext): Promise<void> {
-    let data = readFileIfExists(tokenCachePath());
-    if (!data) {
-      // One-time migration from the OS keyring used by older versions.
-      data = keytarMigrate(TOKEN_CACHE_ACCOUNT);
-      if (data) writeFileAtomic(tokenCachePath(), data);
-      markMigrated();
-    }
+    const data = readFileIfExists(tokenCachePath());
     if (data) {
       try {
         ctx.tokenCache.deserialize(data);
@@ -297,11 +223,7 @@ export class AuthManager {
   }
 
   private async loadSelectedAccount(): Promise<void> {
-    let data = readFileIfExists(selectedAccountPath());
-    if (!data && !fs.existsSync(migrationMarker())) {
-      data = keytarMigrate(SELECTED_ACCOUNT_KEY);
-      if (data) writeFileAtomic(selectedAccountPath(), data);
-    }
+    const data = readFileIfExists(selectedAccountPath());
     try {
       if (data) this.selectedAccountId = JSON.parse(data).accountId ?? null;
     } catch {
@@ -397,8 +319,8 @@ export class AuthManager {
     return this.accessToken;
   }
 
-  /** Remove every account, the cache files, and any legacy keyring entries. Returns warnings. */
-  async logout(): Promise<string[]> {
+  /** Remove every account and all cache, selection, device-code, temp and lock files. */
+  async logout(): Promise<void> {
     const accounts = await this.msalApp.getTokenCache().getAllAccounts();
     for (const account of accounts) {
       await this.msalApp.getTokenCache().removeAccount(account);
@@ -407,7 +329,6 @@ export class AuthManager {
     this.tokenExpiry = null;
     this.selectedAccountId = null;
 
-    // Files first, so a hanging keyring can't leave the file cache behind.
     const dir = configDir();
     const names = fs.existsSync(dir) ? fs.readdirSync(dir) : [];
     for (const name of names) {
@@ -415,14 +336,6 @@ export class AuthManager {
         try { fs.unlinkSync(path.join(dir, name)); } catch { /* already gone */ }
       }
     }
-
-    const warnings: string[] = [];
-    for (const key of [TOKEN_CACHE_ACCOUNT, SELECTED_ACCOUNT_KEY]) {
-      if (!keytarDelete(key)) {
-        warnings.push(`Could not remove the "${key}" entry from the OS keyring; remove "${SERVICE_NAME}" entries manually.`);
-      }
-    }
-    return warnings;
   }
 
   async listAccounts(): Promise<AccountInfo[]> {

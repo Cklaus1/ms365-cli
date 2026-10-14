@@ -31,8 +31,7 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
     .action(handleErrors(async () => {
       const authManager = getAuth();
       await authManager.initialize();
-      const warnings = await authManager.logout();
-      for (const warning of warnings) info(warning);
+      await authManager.logout();
       info('Logged out successfully.');
     }));
 

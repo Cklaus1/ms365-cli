@@ -79,7 +79,7 @@ ms365 --org-mode teams list -o table
 - **Organization mode** — opt-in access to Teams, SharePoint, shared mailboxes, Groups
 - **Graph API version** — switch between `v1.0` and `beta` with `--api-version`
 - **Structured logging** — JSON log files with daily rotation
-- **Secure token storage** — OS keychain via `keytar` with file-based fallback
+- **Token storage** — a single owner-only (0600) file, `~/.config/ms365-cli/token-cache.json`, written atomically under a lock
 - **Zero MCP dependency** — standalone CLI, talks directly to Microsoft Graph API
 
 ---
@@ -159,13 +159,7 @@ Prints a URL and code. Open the URL in your browser, enter the code, and sign in
 
 ### Token storage
 
-| OS      | Backend                    |
-|---------|----------------------------|
-| macOS   | Keychain                   |
-| Windows | Credential Manager         |
-| Linux   | libsecret (GNOME Keyring)  |
-
-Fallback: `~/.config/ms365-cli/token-cache.json`
+Tokens are stored in `~/.config/ms365-cli/token-cache.json` (mode 0600, directory 0700), written atomically under a lock so parallel commands are safe. Override the directory with `MS365_CLI_CONFIG_DIR`. Refreshed tokens are persisted automatically; `ms365 auth logout` deletes the file.
 
 ### Multiple accounts
 
@@ -777,7 +771,6 @@ ms365-cli/
 | `@azure/msal-node` | Microsoft authentication (device code, token cache) |
 | `commander`        | CLI argument parsing and help                    |
 | `dotenv`           | `.env` file loading                              |
-| `keytar`           | OS keychain access for secure token storage      |
 
 ---
 

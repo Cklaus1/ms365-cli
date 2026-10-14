@@ -138,11 +138,13 @@ describe('auth status / logout (M-28)', () => {
     expect(r.exitCode).toBe(3);
   });
 
-  it('auth logout prints each warning on stderr', async () => {
-    const fake = { initialize: async () => {}, logout: async () => ['keyring warning A', 'keyring warning B'] };
+  it('auth logout reports success on stderr only', async () => {
+    let called = false;
+    const fake = { initialize: async () => {}, logout: async () => { called = true; } };
     const r = await runCommand(registerAuth(() => fake as never), ['auth', 'logout']);
-    expect(r.stderr).toContain('keyring warning A');
-    expect(r.stderr).toContain('keyring warning B');
+    expect(called).toBe(true);
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).toContain('Logged out');
     expect(r.stdout).toBe('');
   });
 });
