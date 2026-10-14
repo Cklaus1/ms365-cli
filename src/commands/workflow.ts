@@ -2,30 +2,39 @@ import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { handleErrors } from '../errors.js';
-import { parseDate, truncate, outputOption } from '../utils.js';
+import {
+  parseDate, outputOption, info, resolveTimeZone, preferTimeZone, parseGraphDateTime, dayRange, toGraphDateTime,
+} from '../utils.js';
 
-function todayRange(): { start: string; end: string } {
+const WEEKDAY_INDEX: Record<string, number> = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
+
+/** Monday 00:00 to next Monday 00:00 (exclusive) of the current week in `tz`, as UTC ISO strings. */
+function weekRange(tz: string): { start: string; end: string } {
   const now = new Date();
-  const start = new Date(now);
-  start.setUTCHours(0, 0, 0, 0);
-  const end = new Date(now);
-  end.setUTCHours(23, 59, 59, 999);
-  return {
-    start: start.toISOString(),
-    end: end.toISOString(),
-  };
+  const weekday = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short' }).format(now);
+  // Step back from midday so a DST shift can't move us into a neighbouring day.
+  const midday = new Date(new Date(dayRange(now, tz).start).getTime() + 12 * 3600e3);
+  const monday = new Date(midday.getTime() - WEEKDAY_INDEX[weekday] * 86400e3);
+  return dayRange(monday, tz, 7);
 }
 
-function weekRange(): { start: string; end: string } {
-  const now = new Date();
-  const dayOfWeek = now.getDay();
-  const monday = new Date(now);
-  monday.setDate(now.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
-  monday.setHours(0, 0, 0, 0);
-  const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
-  sunday.setHours(23, 59, 59, 999);
-  return { start: monday.toISOString(), end: sunday.toISOString() };
+type GraphTime = { dateTime: string; timeZone?: string };
+
+const clock = (d: Date, tz: string) => d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: tz });
+
+/** Minutes since midnight of the wall-clock time of `d` in `tz`. */
+function minuteOfDay(d: Date, tz: string): number {
+  const [h, m] = toGraphDateTime(d, tz).slice(11, 16).split(':').map(Number);
+  return h * 60 + m;
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+async function inboxUnreadCount(client: GraphClient): Promise<number> {
+  const res = await client.request('/me/mailFolders/inbox', { queryParams: { '$select': 'unreadItemCount' } });
+  return ((res.data as Record<string, unknown>).unreadItemCount as number) ?? 0;
 }
 
 export function registerWorkflowCommands(program: Command, getClient: () => GraphClient): void {
@@ -35,14 +44,17 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
   wf
     .command('standup')
     .description("Today's standup: calendar events + open tasks + unread email count")
+    .option('--timezone <tz>', 'IANA time zone (default: MS365_CLI_TIMEZONE or system zone)')
     .addOption(outputOption('text'))
     .action(handleErrors(async (opts) => {
       const client = getClient();
-      const { start, end } = todayRange();
+      const tz = resolveTimeZone(opts.timezone);
+      const { start, end } = dayRange(new Date(), tz);
 
-      // Fetch in parallel: today's events, my planner tasks, todo tasks, unread count
-      const [eventsRes, unreadRes] = await Promise.all([
+      // Fetch in parallel: today's events and the inbox unread count
+      const [eventsRes, unreadCount] = await Promise.all([
         client.request('/me/calendarView', {
+          headers: preferTimeZone(tz),
           queryParams: {
             startDateTime: start,
             endDateTime: end,
@@ -51,30 +63,18 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
             '$top': '50',
           },
         }),
-        client.request('/me/messages', {
-          queryParams: {
-            '$filter': 'isRead eq false',
-            '$select': 'id',
-            '$top': '1',
-            '$count': 'true',
-          },
-        }),
+        inboxUnreadCount(client),
       ]);
 
       const events = ((eventsRes.data as Record<string, unknown>).value as Array<Record<string, unknown>>) || [];
-      const unreadData = unreadRes.data as Record<string, unknown>;
-      // Graph doesn't always return @odata.count, estimate from value array
-      const unreadCount = (unreadData.value as unknown[])?.length ?? 0;
-      const hasMoreUnread = unreadRes.nextLink ? '+' : '';
 
       if (opts.output === 'json') {
-        console.log(JSON.stringify({ events, unreadEmails: `${unreadCount}${hasMoreUnread}` }, null, 2));
+        console.log(JSON.stringify({ events, unreadEmails: unreadCount }, null, 2));
         return;
       }
 
       // Human-readable standup report
-      const now = new Date();
-      const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+      const dateStr = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: tz });
 
       console.log(`Standup Report — ${dateStr}`);
       console.log('='.repeat(50));
@@ -85,10 +85,8 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
         console.log('  No meetings today.');
       } else {
         for (const ev of events) {
-          const s = ev.start as Record<string, unknown>;
-          const e = ev.end as Record<string, unknown>;
-          const startTime = new Date(s.dateTime as string).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-          const endTime = new Date(e.dateTime as string).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+          const startTime = clock(parseGraphDateTime(ev.start as GraphTime, tz), tz);
+          const endTime = clock(parseGraphDateTime(ev.end as GraphTime, tz), tz);
           const loc = (ev.location as Record<string, unknown>)?.displayName;
           const locStr = loc ? ` @ ${loc}` : '';
           if (ev.isAllDay) {
@@ -100,7 +98,7 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
       }
 
       // Unread emails
-      console.log(`\nUnread Emails: ${unreadCount}${hasMoreUnread}`);
+      console.log(`\nUnread Emails: ${unreadCount}`);
 
       console.log('');
     }));
@@ -110,38 +108,46 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
     .command('meeting-prep')
     .description('Get details for the next upcoming meeting: attendees, agenda, location')
     .option('--event-id <id>', 'Specific event ID (default: next upcoming event)')
+    .option('--timezone <tz>', 'IANA time zone (default: MS365_CLI_TIMEZONE or system zone)')
     .addOption(outputOption('text'))
     .action(handleErrors(async (opts) => {
       const client = getClient();
+      const tz = resolveTimeZone(opts.timezone);
 
       let event: Record<string, unknown>;
 
       if (opts.eventId) {
         const res = await client.request(`/me/events/${encodeURIComponent(opts.eventId)}`, {
+          headers: preferTimeZone(tz),
           queryParams: {
             '$select': 'subject,start,end,location,body,attendees,organizer,onlineMeeting,isAllDay',
           },
         });
         event = res.data as Record<string, unknown>;
       } else {
-        // Find the next upcoming event
-        const now = new Date().toISOString();
-        const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+        // Find the next upcoming real meeting: not all-day, not already started, not declined
+        const now = new Date();
+        const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
         const res = await client.request('/me/calendarView', {
+          headers: preferTimeZone(tz),
           queryParams: {
-            startDateTime: now,
-            endDateTime: tomorrow,
-            '$select': 'subject,start,end,location,body,attendees,organizer,onlineMeeting,isAllDay',
+            startDateTime: now.toISOString(),
+            endDateTime: tomorrow.toISOString(),
+            '$select': 'subject,start,end,location,body,attendees,organizer,onlineMeeting,isAllDay,responseStatus',
             '$orderby': 'start/dateTime',
-            '$top': '1',
+            '$top': '50',
           },
         });
         const events = ((res.data as Record<string, unknown>).value as Array<Record<string, unknown>>) || [];
-        if (events.length === 0) {
-          console.log('No upcoming meetings in the next 24 hours.');
+        const next = events.find(ev =>
+          !ev.isAllDay
+          && (ev.responseStatus as Record<string, unknown> | undefined)?.response !== 'declined'
+          && parseGraphDateTime(ev.start as GraphTime, tz) >= now);
+        if (!next) {
+          info('No upcoming meetings in the next 24 hours.');
           return;
         }
-        event = events[0];
+        event = next;
       }
 
       if (opts.output === 'json') {
@@ -150,12 +156,10 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
       }
 
       // Human-readable meeting prep
-      const start = event.start as Record<string, unknown>;
-      const end = event.end as Record<string, unknown>;
-      const startTime = new Date(start.dateTime as string).toLocaleString('en-US', {
-        weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+      const startTime = parseGraphDateTime(event.start as GraphTime, tz).toLocaleString('en-US', {
+        weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: tz,
       });
-      const endTime = new Date(end.dateTime as string).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+      const endTime = clock(parseGraphDateTime(event.end as GraphTime, tz), tz);
       const loc = (event.location as Record<string, unknown>)?.displayName;
       const organizer = (event.organizer as Record<string, unknown>)?.emailAddress as Record<string, unknown>;
       const attendees = (event.attendees as Array<Record<string, unknown>>) || [];
@@ -201,9 +205,11 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
     .option('--list <listId>', 'To Do list ID (default: first list)')
     .option('--due <date>', 'Due date (YYYY-MM-DD)')
     .option('--importance <level>', 'Importance: low, normal, high', 'normal')
+    .option('--timezone <tz>', 'IANA time zone (default: MS365_CLI_TIMEZONE or system zone)')
     .addOption(outputOption())
     .action(handleErrors(async (messageId: string, opts) => {
       const client = getClient();
+      const tz = resolveTimeZone(opts.timezone);
 
       // Fetch the email
       const msgRes = await client.request(`/me/messages/${encodeURIComponent(messageId)}`, {
@@ -241,7 +247,7 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
       };
 
       if (opts.due) {
-        task.dueDateTime = { dateTime: parseDate(opts.due) + 'T00:00:00', timeZone: 'UTC' };
+        task.dueDateTime = { dateTime: parseDate(opts.due) + 'T00:00:00', timeZone: tz };
       }
 
       const taskRes = await client.request(`/me/todo/lists/${encodeURIComponent(listId)}/tasks`, {
@@ -262,14 +268,17 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
   wf
     .command('digest')
     .description('Weekly digest: meetings this week, unread emails, tasks due')
+    .option('--timezone <tz>', 'IANA time zone (default: MS365_CLI_TIMEZONE or system zone)')
     .addOption(outputOption('text'))
     .action(handleErrors(async (opts) => {
       const client = getClient();
-      const { start, end } = weekRange();
+      const tz = resolveTimeZone(opts.timezone);
+      const { start, end } = weekRange(tz);
 
       // Fetch in parallel
-      const [eventsRes, unreadRes, todoListsRes] = await Promise.all([
+      const [eventsRes, unreadCount, todoListsRes] = await Promise.all([
         client.requestAllPages('/me/calendarView', {
+          headers: preferTimeZone(tz),
           queryParams: {
             startDateTime: start,
             endDateTime: end,
@@ -278,21 +287,13 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
             '$top': '100',
           },
         }),
-        client.request('/me/messages', {
-          queryParams: {
-            '$filter': 'isRead eq false',
-            '$select': 'id',
-            '$top': '1',
-          },
-        }),
+        inboxUnreadCount(client),
         client.request('/me/todo/lists', {
           queryParams: { '$top': '10' },
         }),
       ]);
 
       const events = ((eventsRes.data as Record<string, unknown>).value as Array<Record<string, unknown>>) || [];
-      const unreadCount = ((unreadRes.data as Record<string, unknown>).value as unknown[])?.length || 0;
-      const hasMoreUnread = unreadRes.nextLink ? '+' : '';
       const todoLists = ((todoListsRes.data as Record<string, unknown>).value as Array<Record<string, unknown>>) || [];
 
       // Count tasks due this week across all lists
@@ -311,16 +312,15 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
         );
         const tasks = ((tasksRes.data as Record<string, unknown>).value as Array<Record<string, unknown>>) || [];
         for (const t of tasks) {
-          const due = t.dueDateTime as Record<string, unknown>;
+          const due = t.dueDateTime as GraphTime | undefined;
           if (due?.dateTime) {
-            const dueDate = new Date(due.dateTime as string);
-            const endDate = new Date(end);
-            if (dueDate <= endDate) {
+            const dueDate = parseGraphDateTime(due, 'UTC');
+            if (dueDate < new Date(end)) {
               tasksDueCount++;
               if (dueDate < new Date()) {
                 overdueTasks.push({
                   title: t.title as string,
-                  due: dueDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                  due: dueDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: tz }),
                 });
               }
             }
@@ -332,7 +332,7 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
         console.log(JSON.stringify({
           week: { start, end },
           meetings: events.length,
-          unreadEmails: `${unreadCount}${hasMoreUnread}`,
+          unreadEmails: unreadCount,
           tasksDueThisWeek: tasksDueCount,
           overdueTasks,
         }, null, 2));
@@ -342,19 +342,18 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
       // Group events by day
       const eventsByDay: Record<string, Array<Record<string, unknown>>> = {};
       for (const ev of events) {
-        const s = ev.start as Record<string, unknown>;
-        const day = new Date(s.dateTime as string).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        const day = parseGraphDateTime(ev.start as GraphTime, tz).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: tz });
         if (!eventsByDay[day]) eventsByDay[day] = [];
         eventsByDay[day].push(ev);
       }
 
-      const weekStart = new Date(start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      const weekEnd = new Date(end).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const weekStart = new Date(start).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: tz });
+      const weekEnd = new Date(new Date(end).getTime() - 1).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: tz });
 
       console.log(`Weekly Digest — ${weekStart} to ${weekEnd}`);
       console.log('='.repeat(50));
       console.log(`Meetings:     ${events.length}`);
-      console.log(`Unread Email: ${unreadCount}${hasMoreUnread}`);
+      console.log(`Unread Email: ${unreadCount}`);
       console.log(`Tasks Due:    ${tasksDueCount}`);
       if (overdueTasks.length > 0) {
         console.log(`Overdue:      ${overdueTasks.length}`);
@@ -365,13 +364,11 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
         for (const [day, dayEvents] of Object.entries(eventsByDay)) {
           console.log(`  ${day}:`);
           for (const ev of dayEvents) {
-            const s = ev.start as Record<string, unknown>;
-            const e = ev.end as Record<string, unknown>;
             if (ev.isAllDay) {
               console.log(`    [all day] ${ev.subject}`);
             } else {
-              const st = new Date(s.dateTime as string).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-              const et = new Date(e.dateTime as string).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+              const st = clock(parseGraphDateTime(ev.start as GraphTime, tz), tz);
+              const et = clock(parseGraphDateTime(ev.end as GraphTime, tz), tz);
               console.log(`    ${st}–${et}  ${ev.subject}`);
             }
           }
@@ -406,13 +403,14 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
       const file = fileRes.data as Record<string, unknown>;
 
       const sizeKb = Math.round((file.size as number || 0) / 1024);
-      const customMsg = opts.message || `New file shared: **${file.name}**`;
+      const name = escapeHtml(String(file.name ?? ''));
+      const intro = opts.message ? escapeHtml(opts.message) : `New file shared: <b>${name}</b>`;
       const body = [
-        customMsg,
+        intro,
         '',
-        `File: [${file.name}](${file.webUrl})`,
+        `File: <a href="${escapeHtml(String(file.webUrl ?? ''))}">${name}</a>`,
         `Size: ${sizeKb} KB`,
-        `Modified: ${file.lastModifiedDateTime}`,
+        `Modified: ${escapeHtml(String(file.lastModifiedDateTime ?? ''))}`,
       ].join('<br>');
 
       // Post to channel
@@ -426,7 +424,7 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
         }
       );
 
-      console.log(`Announced "${file.name}" to channel.`);
+      info(`Announced "${file.name}" to channel.`);
     }));
 
   // ── focus-time ──────────────────────────────────────────────────
@@ -435,12 +433,18 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
     .description('Find gaps in your calendar today for focus time')
     .option('--work-start <hour>', 'Work day start hour (24h)', '9')
     .option('--work-end <hour>', 'Work day end hour (24h)', '17')
+    .option('--timezone <tz>', 'IANA time zone (default: MS365_CLI_TIMEZONE or system zone)')
     .addOption(outputOption('text'))
     .action(handleErrors(async (opts) => {
       const client = getClient();
-      const { start, end } = todayRange();
+      const tz = resolveTimeZone(opts.timezone);
+      const now = new Date();
+      const { start, end } = dayRange(now, tz);
+      const dayStart = new Date(start);
+      const dayEnd = new Date(end);
 
       const eventsRes = await client.request('/me/calendarView', {
+        headers: preferTimeZone(tz),
         queryParams: {
           startDateTime: start,
           endDateTime: end,
@@ -454,8 +458,6 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
 
       const workStart = parseInt(opts.workStart);
       const workEnd = parseInt(opts.workEnd);
-      const now = new Date();
-      const today = new Date(now);
 
       // Build busy intervals (skip all-day and free events)
       const workStartMin = workStart * 60;
@@ -464,12 +466,11 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
       for (const ev of events) {
         if (ev.isAllDay) continue;
         if (ev.showAs === 'free') continue;
-        const s = new Date((ev.start as Record<string, unknown>).dateTime as string);
-        const e = new Date((ev.end as Record<string, unknown>).dateTime as string);
-        let startMin = s.getHours() * 60 + s.getMinutes();
-        let endMin = e.getHours() * 60 + e.getMinutes();
-        // Handle midnight-crossing meetings: clamp to work window end
-        if (endMin <= startMin) endMin = endMinute;
+        const s = parseGraphDateTime(ev.start as GraphTime, tz);
+        const e = parseGraphDateTime(ev.end as GraphTime, tz);
+        // Events that cross midnight are clamped to today's bounds
+        let startMin = s <= dayStart ? 0 : minuteOfDay(s, tz);
+        let endMin = e >= dayEnd ? 24 * 60 : minuteOfDay(e, tz);
         // Clamp to work window
         startMin = Math.max(startMin, workStartMin);
         endMin = Math.min(endMin, endMinute);
@@ -492,7 +493,7 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
       }
 
       const gaps: Array<{ start: number; end: number; minutes: number }> = [];
-      let cursor = Math.max(workStartMin, now.getHours() * 60 + now.getMinutes());
+      let cursor = Math.max(workStartMin, minuteOfDay(now, tz));
 
       for (const block of merged) {
         if (block.start > cursor) {
@@ -530,7 +531,7 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
 
       const totalFocus = gaps.reduce((s, g) => s + g.minutes, 0);
 
-      console.log(`Focus Time — ${today.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}`);
+      console.log(`Focus Time — ${now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', timeZone: tz })}`);
       console.log('='.repeat(50));
       console.log(`Meetings: ${busy.length}  |  Available focus: ${Math.floor(totalFocus / 60)}h ${totalFocus % 60}m\n`);
 
