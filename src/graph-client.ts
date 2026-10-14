@@ -1,6 +1,7 @@
 import { AuthManager } from './auth.js';
 import logger from './logger.js';
 import { CliError, ExitCode } from './errors.js';
+import { recordAudit } from './audit.js';
 
 const MAX_RETRIES = 3;
 const MAX_PAGES = 100;
@@ -54,6 +55,9 @@ const BATCH_SIZE = 20;
 
 /** Methods that are safe to retry after a timeout or 5xx (the server may have processed them). */
 const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE', 'PATCH']);
+
+/** CliError codes raised before anything was sent to Graph (not audited). */
+const NOT_SENT_CODES = new Set<string | undefined>(['read_only', 'untrusted_url', 'auth_required']);
 
 /** Hosts that may receive our bearer token when following redirects. */
 export function isTrustedHost(url: string): boolean {
@@ -109,6 +113,36 @@ export class GraphClient {
    * https://graph.microsoft.com URL (pagination nextLinks).
    */
   async request(endpoint: string, options: GraphRequestOptions = {}): Promise<GraphResponse> {
+    const method = (options.method || 'GET').toUpperCase();
+    if (method === 'GET') return this.send(endpoint, options);
+    return this.audited(method, endpoint, () => this.send(endpoint, options));
+  }
+
+  // --- audit hook (T37): one line per non-GET call that reached Graph ---
+  /** Run `fn` and record its outcome. Dry runs (status 0) and calls refused before sending are not logged. */
+  private async audited(method: string, endpoint: string, fn: () => Promise<GraphResponse>): Promise<GraphResponse> {
+    let res: GraphResponse;
+    try {
+      res = await fn();
+    } catch (err) {
+      const e = err as CliError;
+      if (!NOT_SENT_CODES.has(e.code)) this.audit(method, endpoint, e.status ?? 0, e.requestId, false);
+      throw err;
+    }
+    if (res.status !== 0) this.audit(method, endpoint, res.status, res.headers?.get('request-id') ?? undefined, true);
+    return res;
+  }
+
+  private audit(method: string, endpoint: string, status: number, requestId: string | undefined, ok: boolean): void {
+    recordAudit({ method, endpoint, status, requestId, ok });
+  }
+  private auditBatchItem(r: BatchRequest, status: number, requestId: string | undefined): void {
+    if (r.method.toUpperCase() !== 'GET') this.audit(r.method.toUpperCase(), r.url, status, requestId, status >= 200 && status < 300);
+  }
+  // --- end audit hook ---
+
+  /** request() without the audit hook. */
+  private async send(endpoint: string, options: GraphRequestOptions = {}): Promise<GraphResponse> {
     if (/^https:\/\//.test(endpoint) && new URL(endpoint).hostname !== 'graph.microsoft.com') {
       throw new CliError(`Refusing to send credentials to non-Graph URL: ${new URL(endpoint).hostname}`, { code: 'untrusted_url' });
     }
@@ -290,7 +324,7 @@ export class GraphClient {
       throw new CliError('Read-only mode: file uploads are blocked. Remove --read-only to proceed.', { code: 'read_only', exitCode: ExitCode.PERMISSION });
     }
 
-    const { statSync, readFileSync, openSync, readSync, closeSync } = await import('fs');
+    const { statSync, readFileSync } = await import('fs');
     const fileSize = statSync(filePath).size;
     const simpleLimit = options?.maxSimpleSize ?? 4 * 1024 * 1024;
     // Chunks must be a multiple of 320 KiB; 10 MiB = 32 × 320 KiB.
@@ -328,7 +362,13 @@ export class GraphClient {
         : response;
     }
 
-    const session = await this.request(sessionEndpoint!, {
+    return this.audited('PUT', endpoint, () => this.uploadInSession(sessionEndpoint!, filePath, fileSize, chunkSize));
+  }
+
+  /** Large upload through an upload session (audited as one PUT by uploadFile). */
+  private async uploadInSession(sessionEndpoint: string, filePath: string, fileSize: number, chunkSize: number): Promise<GraphResponse> {
+    const { openSync, readSync, closeSync } = await import('fs');
+    const session = await this.send(sessionEndpoint, {
       method: 'POST',
       body: JSON.stringify({ item: { '@microsoft.graph.conflictBehavior': 'replace' } }),
     });
@@ -456,7 +496,14 @@ export class GraphClient {
             return item;
           }),
         };
-        const res = await this.request('/$batch', { method: 'POST', body: JSON.stringify(payload), responseType: 'json' });
+        let res: GraphResponse;
+        try {
+          res = await this.send('/$batch', { method: 'POST', body: JSON.stringify(payload), responseType: 'json' });
+        } catch (err) {
+          const e = err as CliError;
+          if (!NOT_SENT_CODES.has(e.code)) for (const idx of chunk) this.auditBatchItem(requests[idx], e.status ?? 0, e.requestId);
+          throw err;
+        }
         const responses = ((res.data as { responses?: Array<{ id: string; status: number; body?: unknown; headers?: Record<string, string> }> }).responses) ?? [];
         for (const r of responses) {
           const idx = Number(r.id);
@@ -469,6 +516,7 @@ export class GraphClient {
           } else {
             if (r.body && typeof r.body === 'object') removeODataProps(r.body);
             results[idx] = { status: r.status, body: r.body ?? null, headers: r.headers };
+            this.auditBatchItem(requests[idx], r.status, r.headers?.['request-id'] ?? res.headers?.get('request-id') ?? undefined);
           }
         }
       }
