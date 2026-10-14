@@ -4,18 +4,55 @@ import { CliError, ExitCode } from './errors.js';
 
 const MAX_RETRIES = 3;
 const MAX_PAGES = 100;
+const MAX_REDIRECTS = 5;
+const REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * How the caller wants the response body:
+ * - auto (default): JSON → parsed; text/html/xml → { rawResponse }; anything else → base64 contentBytes
+ * - json / text / binary: force that decoding
+ * - stream: body is not read; GraphResponse.stream carries it (for large downloads)
+ */
+export type ResponseType = 'auto' | 'json' | 'text' | 'binary' | 'stream';
 
 export interface GraphRequestOptions {
   method?: string;
   headers?: Record<string, string>;
   body?: string;
   queryParams?: Record<string, string>;
+  responseType?: ResponseType;
 }
 
 export interface GraphResponse {
   data: unknown;
   status: number;
   nextLink?: string;
+  deltaLink?: string;
+  count?: number;
+  headers?: Headers;
+  /** Set when responseType is 'stream'. */
+  stream?: ReadableStream<Uint8Array> | null;
+}
+
+/** Methods that are safe to retry after a timeout or 5xx (the server may have processed them). */
+const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE', 'PATCH']);
+
+/** Hosts that may receive our bearer token when following redirects. */
+export function isTrustedHost(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === 'graph.microsoft.com'
+      || host.endsWith('.sharepoint.com')
+      || host.endsWith('.svc.ms');
+  } catch {
+    return false;
+  }
+}
+
+/** Connection errors raised before any request bytes reached the server. */
+function isPreSendError(err: unknown): boolean {
+  const code = (err as { cause?: { code?: string } })?.cause?.code;
+  return code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'EAI_AGAIN';
 }
 
 export class GraphClient {
@@ -34,7 +71,7 @@ export class GraphClient {
   }
 
   buildUrl(endpoint: string, queryParams?: Record<string, string>): string {
-    let url = `${this.baseUrl}${endpoint}`;
+    let url = /^https:\/\//.test(endpoint) ? endpoint : `${this.baseUrl}${endpoint}`;
 
     if (queryParams && Object.keys(queryParams).length > 0) {
       const qs = Object.entries(queryParams)
@@ -49,9 +86,17 @@ export class GraphClient {
     return url;
   }
 
+  /**
+   * Send a Graph request. `endpoint` is a path under the API base, or an absolute
+   * https://graph.microsoft.com URL (pagination nextLinks).
+   */
   async request(endpoint: string, options: GraphRequestOptions = {}): Promise<GraphResponse> {
+    if (/^https:\/\//.test(endpoint) && new URL(endpoint).hostname !== 'graph.microsoft.com') {
+      throw new CliError(`Refusing to send credentials to non-Graph URL: ${new URL(endpoint).hostname}`, { code: 'untrusted_url' });
+    }
     const url = this.buildUrl(endpoint, options.queryParams);
-    const method = options.method || 'GET';
+    const method = (options.method || 'GET').toUpperCase();
+    const responseType = options.responseType ?? 'auto';
 
     logger.debug(`${method} ${url}`, options.body ? { bodyLength: options.body.length } : undefined);
 
@@ -78,59 +123,54 @@ export class GraphClient {
       ...options.headers,
     };
 
+    const idempotent = IDEMPOTENT_METHODS.has(method);
     let lastError: Error | null = null;
     let retriedWith401 = false;
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30_000);
-
       let response: Response;
       try {
-        response = await fetch(url, {
-          method,
-          headers,
-          body: options.body,
-          signal: controller.signal,
-        });
+        response = await this.fetchFollowingRedirects(url, method, headers, options.body);
       } catch (err: unknown) {
-        clearTimeout(timeout);
-        if (err instanceof Error && err.name === 'AbortError') {
-          lastError = new Error(`Request timed out after 30s: ${method} ${url}`);
-          if (attempt < MAX_RETRIES - 1) {
-            logger.warn(`Request timed out. Retrying...`);
-            continue;
-          }
-          break;
+        const timedOut = err instanceof Error && err.name === 'AbortError';
+        const retryable = idempotent || isPreSendError(err);
+        if (timedOut) {
+          lastError = new CliError(
+            `Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s: ${method} ${url}` + (idempotent ? '' : ' (not retried; it may have been processed)'),
+            { code: 'timeout' },
+          );
+        } else {
+          lastError = err instanceof Error ? err : new Error(String(err));
         }
-        throw err;
+        if (retryable && attempt < MAX_RETRIES - 1) {
+          const waitMs = Math.pow(2, attempt) * 1000;
+          logger.warn(`${timedOut ? 'Request timed out' : 'Connection error'}. Retrying in ${waitMs / 1000}s...`);
+          await sleep(waitMs);
+          continue;
+        }
+        throw lastError;
       }
-      clearTimeout(timeout);
 
       logger.debug(`Response: ${response.status} ${response.statusText}`, { attempt });
 
-      // Rate limited — retry with backoff
-      if (response.status === 429) {
+      // Rate limited — the request was not processed, so any method may retry
+      if (response.status === 429 && attempt < MAX_RETRIES - 1) {
         const waitMs = parseRetryAfter(response.headers.get('Retry-After'), Math.pow(2, attempt) * 1000);
-        lastError = new Error(`Rate limited (429) after ${attempt + 1} attempts`);
-        if (attempt < MAX_RETRIES - 1) {
-          logger.warn(`Rate limited. Retrying in ${waitMs / 1000}s...`);
-          console.error(`Rate limited. Retrying in ${waitMs / 1000}s...`);
-          await sleep(waitMs);
-          continue;
-        }
+        logger.warn(`Rate limited. Retrying in ${waitMs / 1000}s...`);
+        console.error(`Rate limited. Retrying in ${waitMs / 1000}s...`);
+        await response.body?.cancel();
+        await sleep(waitMs);
+        continue;
       }
 
-      // Server error — retry with backoff
-      if (response.status >= 500) {
-        lastError = new Error(`Server error (${response.status}) after ${attempt + 1} attempts`);
-        if (attempt < MAX_RETRIES - 1) {
-          const waitMs = Math.pow(2, attempt) * 1000;
-          logger.warn(`Server error (${response.status}). Retrying in ${waitMs / 1000}s...`);
-          console.error(`Server error (${response.status}). Retrying in ${waitMs / 1000}s...`);
-          await sleep(waitMs);
-          continue;
-        }
+      // Server error — retry only idempotent methods (a POST may already have been applied)
+      if (response.status >= 500 && idempotent && attempt < MAX_RETRIES - 1) {
+        const waitMs = Math.pow(2, attempt) * 1000;
+        logger.warn(`Server error (${response.status}). Retrying in ${waitMs / 1000}s...`);
+        console.error(`Server error (${response.status}). Retrying in ${waitMs / 1000}s...`);
+        await response.body?.cancel();
+        await sleep(waitMs);
+        continue;
       }
 
       if (!response.ok) {
@@ -158,6 +198,7 @@ export class GraphClient {
             const freshToken = await this.auth.getToken(true);
             headers['Authorization'] = `Bearer ${freshToken}`;
             logger.info('Token refreshed, retrying request...');
+            attempt--; // a token refresh is not a failed attempt
             continue;
           } catch {
             throw new CliError(`Authentication failed. Run: ms365 auth login`,
@@ -167,96 +208,49 @@ export class GraphClient {
         throw graphError(response.status, errorMessage, details);
       }
 
-      // Handle binary content
-      const contentType = response.headers.get('content-type') || '';
-      if (
-        contentType.startsWith('audio/') ||
-        contentType.startsWith('video/') ||
-        contentType.startsWith('image/') ||
-        contentType === 'application/octet-stream'
-      ) {
-        const buffer = await response.arrayBuffer();
-        return {
-          data: {
-            contentBytes: Buffer.from(buffer).toString('base64'),
-            contentType,
-            size: buffer.byteLength,
-          },
-          status: response.status,
-        };
-      }
-
-      const text = await response.text();
-      if (!text) {
-        return { data: { message: 'OK' }, status: response.status };
-      }
-
-      try {
-        const json = JSON.parse(text);
-        const nextLink = json['@odata.nextLink'] || undefined;
-        removeODataProps(json);
-        return { data: json, status: response.status, nextLink };
-      } catch {
-        return { data: { rawResponse: text }, status: response.status };
-      }
+      return decodeResponse(response, responseType);
     }
 
     throw lastError || new Error('Request failed after retries');
   }
 
-  /** Fetch a full URL directly (used for pagination nextLinks). Retries on 429/5xx. */
-  private async requestDirect(fullUrl: string): Promise<GraphResponse> {
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      const token = await this.auth.getToken();
+  /**
+   * fetch with a 30s timeout to response headers. GET redirects are followed manually
+   * so the bearer token is only re-sent to trusted Microsoft hosts (tempauth retirement).
+   */
+  private async fetchFollowingRedirects(
+    url: string,
+    method: string,
+    headers: Record<string, string>,
+    body?: string,
+  ): Promise<Response> {
+    let currentUrl = url;
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30_000);
-
+      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      const hopHeaders = { ...headers };
+      if (hop > 0 && !isTrustedHost(currentUrl)) delete hopHeaders['Authorization'];
       let response: Response;
       try {
-        response = await fetch(fullUrl, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
+        response = await fetch(currentUrl, {
+          method,
+          headers: hopHeaders,
+          body,
           signal: controller.signal,
+          redirect: method === 'GET' ? 'manual' : 'follow',
         });
-      } catch (err: unknown) {
+      } finally {
         clearTimeout(timeout);
-        if (err instanceof Error && err.name === 'AbortError') {
-          if (attempt < MAX_RETRIES - 1) continue;
-          throw new Error(`Pagination request timed out: ${fullUrl}`);
-        }
-        throw err;
       }
-      clearTimeout(timeout);
-
-      if (response.status === 429 || response.status >= 500) {
-        if (attempt < MAX_RETRIES - 1) {
-          const waitMs = parseRetryAfter(response.headers.get('Retry-After'), Math.pow(2, attempt) * 1000);
-          await sleep(waitMs);
-          continue;
-        }
+      const location = response.headers.get('location');
+      if (method === 'GET' && response.status >= 300 && response.status < 400 && location) {
+        await response.body?.cancel();
+        currentUrl = new URL(location, currentUrl).toString();
+        continue;
       }
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw graphError(response.status, errorText, { status: response.status, requestId: response.headers.get('request-id') || undefined });
-      }
-
-      const text = await response.text();
-      if (!text) return { data: { message: 'OK' }, status: response.status };
-
-      try {
-        const json = JSON.parse(text);
-        const nextLink = json['@odata.nextLink'] || undefined;
-        removeODataProps(json);
-        return { data: json, status: response.status, nextLink };
-      } catch {
-        return { data: { rawResponse: text }, status: response.status };
-      }
+      return response;
     }
-
-    throw new Error(`Pagination request failed after ${MAX_RETRIES} retries: ${fullUrl}`);
+    throw new CliError(`Too many redirects: ${url}`, { code: 'redirect_loop' });
   }
 
   /**
@@ -397,6 +391,7 @@ export class GraphClient {
   /**
    * Async generator that yields items page-by-page for streaming output.
    * Use this for large result sets to avoid buffering everything in memory.
+   * Next pages reuse the original headers (e.g. ConsistencyLevel) and retry rules.
    */
   async *requestPagesStreaming(
     endpoint: string,
@@ -421,7 +416,7 @@ export class GraphClient {
 
     while (nextLink && pageCount < maxPages) {
       if (delayMs > 0) await sleep(delayMs);
-      const nextResponse = await this.requestDirect(nextLink);
+      const nextResponse = await this.request(nextLink, { headers: options.headers });
       const nextData = nextResponse.data as Record<string, unknown>;
 
       if (nextData.value && Array.isArray(nextData.value)) {
@@ -452,6 +447,59 @@ export class GraphClient {
   }
 }
 
+function isTextContentType(contentType: string): boolean {
+  return contentType.startsWith('text/') || /\b(xml|html)\b/.test(contentType);
+}
+
+/** Decode a successful response according to the caller's responseType. */
+async function decodeResponse(response: Response, responseType: ResponseType): Promise<GraphResponse> {
+  const contentType = response.headers.get('content-type') || '';
+  const base = { status: response.status, headers: response.headers };
+
+  if (responseType === 'stream') {
+    return { ...base, data: { contentType, size: Number(response.headers.get('content-length')) || undefined }, stream: response.body };
+  }
+
+  const isJson = contentType.includes('json');
+  if (responseType === 'binary' || (responseType === 'auto' && contentType && !isJson && !isTextContentType(contentType))) {
+    const buffer = Buffer.from(await response.arrayBuffer());
+    return {
+      ...base,
+      data: { contentBytes: buffer.toString('base64'), contentType, size: buffer.byteLength },
+    };
+  }
+
+  const text = await response.text();
+  if (responseType === 'text') {
+    return { ...base, data: text };
+  }
+  if (!text) {
+    return { ...base, data: { message: 'OK' } };
+  }
+
+  try {
+    const json = JSON.parse(text);
+    const meta = extractODataMeta(json);
+    removeODataProps(json);
+    return { ...base, data: json, ...meta };
+  } catch {
+    if (responseType === 'json') {
+      throw new CliError(`Expected JSON response but got ${contentType || 'unknown content type'}`, { code: 'bad_response' });
+    }
+    return { ...base, data: { rawResponse: text } };
+  }
+}
+
+function extractODataMeta(json: unknown): { nextLink?: string; deltaLink?: string; count?: number } {
+  if (typeof json !== 'object' || json === null || Array.isArray(json)) return {};
+  const o = json as Record<string, unknown>;
+  const meta: { nextLink?: string; deltaLink?: string; count?: number } = {};
+  if (typeof o['@odata.nextLink'] === 'string') meta.nextLink = o['@odata.nextLink'];
+  if (typeof o['@odata.deltaLink'] === 'string') meta.deltaLink = o['@odata.deltaLink'];
+  if (typeof o['@odata.count'] === 'number') meta.count = o['@odata.count'];
+  return meta;
+}
+
 /** Map a failed Graph response to a CliError with the matching exit code. */
 export function graphError(
   status: number,
@@ -477,14 +525,17 @@ export function graphError(
   return new CliError(`Graph API error (${status}): ${message}`, { ...d, code: 'graph_error' });
 }
 
-function removeODataProps(obj: unknown): void {
+/** Keys that are transport metadata, not resource data. Type/etag/count are kept. */
+const STRIPPED_ODATA_KEYS = new Set(['@odata.context', '@odata.nextLink', '@odata.deltaLink']);
+
+export function removeODataProps(obj: unknown): void {
   if (typeof obj !== 'object' || obj === null) return;
   if (Array.isArray(obj)) {
     obj.forEach(removeODataProps);
     return;
   }
   for (const key of Object.keys(obj as Record<string, unknown>)) {
-    if (key.startsWith('@odata.')) {
+    if (STRIPPED_ODATA_KEYS.has(key)) {
       delete (obj as Record<string, unknown>)[key];
     } else {
       removeODataProps((obj as Record<string, unknown>)[key]);

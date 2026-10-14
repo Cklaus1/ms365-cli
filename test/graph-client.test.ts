@@ -282,7 +282,7 @@ describe('GraphClient', () => {
       expect((response.data as any).message).toBe('OK');
     });
 
-    it('strips @odata properties from response', async () => {
+    it('strips transport @odata metadata but keeps type/etag (D6)', async () => {
       globalThis.fetch = vi.fn(async () => {
         return new Response(JSON.stringify({
           '@odata.context': 'https://graph.microsoft.com/...',
@@ -300,7 +300,8 @@ describe('GraphClient', () => {
       const data = response.data as any;
       expect(data['@odata.context']).toBeUndefined();
       expect(data.id).toBe('1');
-      expect(data.value[0]['@odata.type']).toBeUndefined();
+      expect(data['@odata.nextLink']).toBeUndefined();
+      expect(data.value[0]['@odata.type']).toBe('#message');
       expect(data.value[0].id).toBe('m1');
       // nextLink extracted before stripping
       expect(response.nextLink).toBe('https://graph.microsoft.com/...?skiptoken=abc');

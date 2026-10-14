@@ -90,6 +90,7 @@ export function formatOutput(data: unknown, format: OutputFormat): string {
 function flattenObject(obj: Record<string, unknown>, prefix = ''): Record<string, string> {
   const result: Record<string, string> = {};
   for (const [key, val] of Object.entries(obj)) {
+    if (key.startsWith('@odata.')) continue; // metadata (type/etag) stays in JSON output only
     const fullKey = prefix ? `${prefix}.${key}` : key;
     if (val === null || val === undefined) {
       result[fullKey] = '';
