@@ -7,6 +7,7 @@ import type { Command } from 'commander';
 import { runCommand } from '../helpers/cli.js';
 import { registerAuthCommands } from '../../src/commands/auth.js';
 import { registerSetupCommand, openBrowserCommand } from '../../src/commands/setup.js';
+import { registerMailCommands } from '../../src/commands/mail.js';
 import { registerGenerateSkillsCommand } from '../../src/commands/generate-skills.js';
 import { AuthManager, buildScopes } from '../../src/auth.js';
 
@@ -164,7 +165,8 @@ describe('buildScopes saved scopes (M-12)', () => {
 });
 
 describe('generate-skills (M-28)', () => {
-  const gen = (argv: string[]) => runCommand(registerGenerateSkillsCommand as never, ['generate-skills', ...argv]);
+  // generate-skills renders the live tree, so register a real group alongside it
+  const gen = (argv: string[]) => runCommand((p, g) => { registerMailCommands(p as never, g); registerGenerateSkillsCommand(p as never); }, ['generate-skills', ...argv]);
 
   it('does not claim json is the default or that every list command has --filter/--select/--all', async () => {
     const out = path.join(tmp, 'skills');

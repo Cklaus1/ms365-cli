@@ -13,7 +13,9 @@
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "docs": "tsx scripts/gen-docs.ts",
+    "docs:check": "tsx scripts/gen-docs.ts --check"
   },
   "keywords": [
     "microsoft",
