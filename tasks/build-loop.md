@@ -237,3 +237,22 @@ READY → IN_PROGRESS → (test fails first) → IMPLEMENTED → VERIFIED (suite
 - M-18: scope in T08, endpoint in T11
 - M-28: per command
 - PM-10: `--fields` in T21, completions in T44
+
+## Divergence log (meta loop)
+
+- **Spec additions during the run:**
+  - M-32 (teams `info` import): found by the T02 typecheck.
+  - M-33 (missing login scopes): found by the T30 catalog.
+  - M-34 (delete-attachment had no confirmation): found by the T31 docs generation.
+  - G-11 (dependency sweep): added at the user's request.
+- **New decisions:**
+  - D26 (`.default` silent scopes), discovered in T08.
+  - D27–D30, after the user said there are no legacy consumers and no legacy MCP env names: one JSON envelope, keytar removed, compatibility flags removed, `MS365_MCP_*` aliases removed. N5 (envelope) moved from needs-human into canon (D27).
+- **Task changes:**
+  - T05: P-7 was measured at 70 ms and deferred (REVISED).
+  - T08 needed a follow-up commit: keytar hung in a native thread and blocked `process.exit`. D28 later removed keytar entirely.
+  - T39 split: `auth scopes` and `grantedScopes` landed with T40/T41; the pre-flight check (src/preflight.ts) landed in the Wave A wiring commit.
+  - T35+T36 and T39–T41 ran as combined agents because they share files.
+- **Execution changes:**
+  - Tier 4 ran as two waves of parallel agents. The orchestrator owned `index.ts`, `catalog.ts` and the snapshots, to avoid concurrent edits to one file.
+  - A test sandbox was added (`test/setup-env.ts`) after a fail-first run deleted the developer's real (expired) token cache; see lessons 8.

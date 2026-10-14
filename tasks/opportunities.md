@@ -21,3 +21,4 @@ Things discovered mid-build that have no assigned task. Each entry gives a propo
 - **[P3] `mail reply --html` is ignored**; the comment is always sent as plain text. (T35)
 - **[P3] `auth accounts` marks "(active)" from the saved selection** even when `--account` is passed. (T40)
 - **[P3] Catalog scope approximations.** `search query` and `watch` list the union of their resource types' scopes, and `user list` uses `User.Read.All`. Per-option scopes would be more precise. (T30)
+- **[P3] `mail shared-send` has no `--idempotency-key`.** A crash mid-send leaves a pending claim that blocks the key for 24 h; the error explains this. (T38)

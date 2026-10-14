@@ -35,18 +35,18 @@ Derived view of commit history (`git log --grep '^T[0-9]'`). The commits are the
 
 ## Tier 4
 - [x] T30: `describe --json` catalogue (args, options, destructive, idempotent, scopes)
-- [ ] T31: Generate the README command table and SKILL.md from the catalogue; CI drift check
-- [ ] T32: `mcp serve` (stdio JSON-RPC that spawns the CLI per call)
+- [x] T31: Generate the README command table and SKILL.md from the catalogue; CI drift check
+- [x] T32: `mcp serve` (stdio JSON-RPC that spawns the CLI per call)
 - [x] T33: `meetings` group; `cal create --teams`; `cal find-time`
 - [x] T34: `watch` (delta with a saved cursor, NDJSON output)
 - [x] T35: `mail send/draft/reply --attach`
 - [x] T36: `--body text\
 - [x] T37: Audit log for non-GET calls, `audit tail`, `--actor`
-- [ ] T38: `--idempotency-key` (D23)
+- [x] T38: `--idempotency-key` (D23)
 - [x] T39: `auth scopes`; pre-flight `missing_scope` error
 - [x] T40: `--account` and `--profile` (D21)
 - [x] T41: `auth login --browser` (PKCE loopback)
-- [ ] T42: Name resolution: `resolve` command; names accepted for todo lists, team/channel and planner plan
+- [x] T42: Name resolution: `resolve` command; names accepted for todo lists, team/channel and planner plan
 - [ ] T43: Coverage gaps: excel tables and rows, todo checklist, teams chat create and @mentions, Outlook notes, multi-entity search
 - [ ] T44: Shell completion and default table columns
 
