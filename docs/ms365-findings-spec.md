@@ -1,0 +1,232 @@
+# ms365-cli — Review Findings Spec
+
+**As of:** 2026-10-14 · **Scope:** `src/**` at `bafaaf7` plus the uncommitted `src/auth.ts` diff · **Lenses:** software engineering (bugs, performance), Microsoft Graph platform changes, product, AI-agent readiness
+
+The CLI covers a lot of ground: 17 command groups and about 170 commands. It has solid foundations: one `GraphClient`, retry with backoff, `--read-only`, `--dry-run`, confirmation prompts on deletes, and `generate-skills` for AI agents. Four defects break core flows today:
+
+- every command exits `143`
+- uploads over 4 MB always fail
+- downloads of anything that isn't an image or media file are corrupted
+- refreshed tokens are never saved
+
+Beyond those:
+
+- **Wrong calls and date shifts.** About 20 command-level bugs either call the wrong Graph endpoint or shift dates and times by the UTC offset.
+- **Stale dependencies.** The dependency stack is 5 major versions behind.
+- **Upcoming Graph changes.** Two land within six months: the sensitive-mail-property restriction on 2026-12-31 and the tempauth file-URL retirement on 2027-04-01.
+- **Product gaps.** The biggest are onboarding (no working default app registration), auth for unattended agents, and meeting transcripts.
+
+**Severity:** **P0** broken for all users · **P1** broken on a common path, or a security/data-loss risk · **P2** wrong in an edge case, or a significant performance cost · **P3** hygiene.
+
+**Status of findings:**
+- Every finding was confirmed by reading the code.
+- C-1 was also reproduced (`exitCode=1` plus `SIGTERM` gives exit `143`).
+- Findings marked † depend on documented Graph behaviour and have not been run against a live tenant.
+
+---
+
+## 1. Correctness and security: core (`auth.ts`, `graph-client.ts`, `errors.ts`, `index.ts`)
+
+| ID | Sev | Location | Finding | Failure scenario | Fix |
+|---|---|---|---|---|---|
+| C-1 | P0 | `src/errors.ts:26` | `handleErrors` always ends the process with `process.kill(pid,'SIGTERM')`. There is no SIGTERM handler, so the `process.exitCode` it set is discarded. | Every command exits `143`, whether it succeeded or failed. `ms365 todo create … && echo ok` never prints `ok`, so scripts, CI and agents can't detect failures. | Call `process.exit(process.exitCode ?? 0)` once stdout has drained. If tsx overrides `exit`, register `process.on('SIGTERM', () => process.exit(process.exitCode ?? 0))` once in `index.ts`. |
+| C-2 | P0 | `src/graph-client.ts:324` | The upload-session URL is built as `${endpoint}/createUploadSession`, but every caller passes an endpoint that ends in `:/content`. | `drive cp big.zip /Docs/big.zip` (over 4 MB) POSTs to `…:/Docs/big.zip:/content/createUploadSession` and gets a 400. `drive upload` fails the same way. | Strip a trailing `/content` before appending `/createUploadSession`. Add a unit test that uses a `:/content` endpoint. |
+| C-3 | P1 | `src/graph-client.ts:173-202` | Only `audio/*`, `video/*`, `image/*` and `application/octet-stream` responses are treated as binary. Everything else goes through `response.text()`. | **PDF, DOCX, XLSX, ZIP:** `drive download` decodes the bytes as UTF-8 and prints `{rawResponse:"<garbage>"}`. No file is written, and the command exits as if it succeeded. **`drive cat notes.json`:** the file is parsed and its `@odata.*` keys are stripped. **`drive cat notes.md`:** it prints a JSON wrapper instead of the text. | Add `responseType: 'json'\|'binary'\|'stream'` to `request()`. Every `/content` and `$value` caller asks for `stream`, so the decision comes from the caller instead of the `Content-Type` header. |
+| C-4 | P1 | `src/auth.ts:238-252` | `doTokenRefresh` never calls `saveTokenCache()`, so rotated refresh tokens and new access tokens stay in memory only. | After the first hour, every run does a network refresh (see P-1). The refresh token on disk is never replaced, so when it reaches its lifetime limit the user must run `auth login` again, even with daily use. | Use an MSAL `ICachePlugin` (see G-5), or call `saveTokenCache()` after `acquireTokenSilent`. |
+| C-5 | P1 | `src/auth.ts:204-214` | `saveSelectedAccount` has the bug that the pending diff fixes for `saveTokenCache`. When keytar hangs, `withTimeout` returns `null` instead of throwing, so the file is written only when keytar throws. | **Keytar works:** `auth select` writes only to the keyring. `loadSelectedAccount` reads the file first, so an older file wins and the switch silently doesn't stick. **Keytar hangs:** the selection isn't saved anywhere. | Always write the file atomically. An account ID isn't a secret, so it doesn't need keytar. |
+| C-6 | P1 | `src/graph-client.ts:151` → `src/auth.ts:244` | The 401 retry calls `getToken(true)`, but `acquireTokenSilent` is called without `forceRefresh`. MSAL returns the same cached token. | A token revoked on the server returns 401, the retry sends the identical token and gets 401 again, and the user sees "Authentication failed" even though a refresh would have worked. | Pass `forceRefresh` through to `acquireTokenSilent`. |
+| C-7 | P1 | `src/graph-client.ts:83-133` | Timeouts and 5xx responses are retried for every method, including non-idempotent `POST`s. | A `mail send`, `reply`, `forward`, `teams send` or `cal create` that times out after Graph accepted it is sent again, 2–3 times in total. Recipients get duplicate emails, and duplicate events are created. | Retry timeouts and 5xx only for `GET`, `PUT` and `DELETE`. For `POST`, retry only on 429 or on connection errors before the request was sent. |
+| C-8 | P2 | `src/graph-client.ts:209-261` | `requestDirect`, used for pagination, drops `options.headers` and skips the 401 refresh and error parsing. | `groups list --search foo --all`: page 2 is sent without `ConsistencyLevel: eventual` and gets a 400 †. A long `--all` run that outlives its token fails with raw JSON. | Send next links through `request()` with an absolute-URL flag, and keep the original headers. |
+| C-9 | P2 | `src/graph-client.ts:456-469` | `removeODataProps` strips every `@odata.*` key at every level, including `@odata.type`, `@odata.etag` and `@odata.count`. | Output can't tell a `fileAttachment` from an `itemAttachment`. ETags are lost, which forces the Planner workaround in M-14. The unread count is always "0" or "1+" (M-16). | Strip only `@odata.context`. Return `nextLink`, `deltaLink` and `count` as metadata. |
+| C-10 | P2 | `src/commands/drive.ts:101,151,282,295,325`; `sharepoint.ts:285` | Paths, file names and search terms are inserted into URLs without encoding. | `Q#1.pdf` uploads as `Q`. `drive cat "/a?b.txt"` sends part of the path as a query string. `R&D` searches are mangled. `/sites/R#D` is cut off. | Encode each segment: `p.split('/').map(encodeURIComponent).join('/')`. |
+| C-11 | P2 | `src/graph-client.ts:267-396` | Uploads have no timeout, no 429/5xx retry and no 401 refresh. A failed chunk aborts the whole session. | A temporary 503 on chunk 37 of 40 means the upload restarts from zero. | Retry each chunk. On failure, `GET` the `uploadUrl`, read `nextExpectedRanges` and resume from there. |
+| C-12 | P2 | `src/auth.ts:221` | The token-expiry check has no clock-skew buffer. | A token that expires mid-flight causes a 401. | Treat a token as expired at `expiresOn` minus 5 minutes. |
+| C-13 | P2 | `src/auth.ts:282-285` | Logging into a second account leaves the first one selected. | `auth login` as b@ reports success, but commands still run as a@. | Select the account that just signed in, and print which account is active. |
+| C-14 | P2 | `src/auth.ts:291-310` | `logout` treats a keytar hang as success, and it doesn't remove `*.tmp` or `device-code.txt`. | The keyring is slow, so the file is deleted but the keyring entry survives. The next run reloads it, and the user is silently logged back in. | Delete the files first, report keyring failures, and remove `device-code.txt` after login. |
+| C-15 | P2 | `src/index.ts:76-79` | `--api-version` is read with `argv.indexOf` and isn't validated. | `--api-version=beta` is silently ignored. `--api-version ../x` ends up in the base URL. | Read `program.opts()` in the preAction hook and allow only `v1.0` or `beta`. |
+| C-16 | P2 | `src/index.ts:123-139` | The preAction hook skips auth setup only for the `auth` group. | `ms365 schema …` and `ms365 generate-skills` fail with "No client ID configured" even though they make no API calls. | Also skip `schema`, `generate-skills` and `setup`, or start auth lazily. |
+| C-17 | P3 | `src/auth.ts:288` | `login()` returns `null` cast as a string when MSAL returns nothing. | A cancelled device flow hands `null` to code that expects a token. | Throw an error instead. |
+| C-18 | P1 | `src/auth.ts:167-169,210-212` | The atomic write always uses the same temp file name (`token-cache.json.tmp`), and there is no lock between processes. | Two agents run `ms365` at once. Process A writes the temp file, B truncates and rewrites it, A renames a half-written file into place, and the token cache is corrupted. Without corruption, the last writer still wins and the other process's refreshed tokens are lost. | Use a unique temp name (`.tmp-${pid}-${random}`) plus an advisory lock file, or let `msal-node-extensions` handle locking (G-5). |
+| C-19 | P2 | `drive.ts:76,133`, `mail.ts:879`, and other `console.log` status lines | Some status messages go to **stdout** instead of going through `info()` to stderr. | `ms365 drive download … -o json \| jq` breaks on "Downloaded to …", and `batch-read` prints "Marked N" on stdout. | Send every status line through `info()`. Stdout should carry data only. |
+
+## 2. Correctness: command modules
+
+| ID | Sev | Location | Finding | Failure scenario | Fix |
+|---|---|---|---|---|---|
+| M-1 | P1 | `mail.ts:563-569` | `download-attachment` writes to `path.resolve(opts.out \|\| data.name)`, and the sender controls `name`. | An attachment named `../../.bashrc` is written outside the current directory. Existing files are overwritten without asking. | Use `path.basename(name)`, strip control characters, and refuse to overwrite unless `--force` is given. |
+| M-2 | P1 | `setup.ts:62,86-91` | `auth setup` calls `getAuth()`. The `AuthManager` constructor throws when no client ID is set, and its message tells the user to run `ms365 auth setup`. Option [1], "built-in app registration", has no client ID behind it. | On a fresh install, the setup wizard can't run. | Don't build `AuthManager` until a client ID is known. Either ship a published multi-tenant app ID or remove option [1]. See also PM-1. |
+| M-3 | P1 | `mail.ts:206,213-218` | The default `$filter=isRead eq false` is combined with `$orderby=receivedDateTime desc`. | Running plain `ms365 mail triage` returns 400 InefficientFilter, because Graph requires the `$orderby` property to also appear in `$filter` †. | Use `$filter=receivedDateTime ge 1900-01-01T00:00:00Z and isRead eq false`, or sort on the client. |
+| M-4 | P1 | `excel.ts:108-116` | `sort-range` sends `PATCH …/range(…)/sort`. | Every call fails. Graph's method is `POST …/sort/apply`. | Change the method and the path. |
+| M-5 | P1 | `excel.ts:85-91` | `format-range` sends `font` and `fill` in one PATCH to `…/format`. They are separate resources. | Formatting isn't applied, or the request returns 400. `--font-bold` is also required, so you can't set colours on their own. | Send separate PATCH requests to `/format/font` and `/format/fill`, and make each option optional. |
+| M-6 | P1 | `teams.ts:198` | `chat reply` POSTs to `/chats/{id}/messages/{id}/replies`. | It always fails, because chats have no replies endpoint (only channel messages do) †. | Post to `/chats/{id}/messages` with a `messageReference` attachment, or remove the command. |
+| M-7 | P1 | `workflow.ts:90,155,316,346,373,467` | `calendarView` times come back in UTC with no `Z`, and `new Date()` reads them as local time. | A PDT user sees a 9:00 meeting at 16:00. `focus-time` gaps and `digest` day grouping are wrong. | Send `Prefer: outlook.timezone="<IANA tz>"`, or append `Z` when the zone is UTC. |
+| M-8 | P1 | `workflow.ts:7-17` | `todayRange` uses `setUTCHours`. | At 6 PM PDT, `wf standup` shows tomorrow's UTC day and leaves out this morning's meetings. | Use local `setHours`, as `weekRange` already does. |
+| M-9 | P2 | `calendar.ts:76,87,131` | `cal create` defaults to UTC, and `cal update --start` without `--timezone` overwrites the event's time zone with UTC. | An event at 09:00 lands at 2 AM PDT. Updating an ET meeting moves it by 4–5 hours. | Default to `Intl.DateTimeFormat().resolvedOptions().timeZone`. On update, reuse the event's existing `timeZone`. |
+| M-10 | P2 | `todo.ts:75,101`; `planner.ts:148,173`; `user.ts:84-87` | Due dates are sent as midnight UTC. In `set-ooo`, `--status scheduled` doesn't require `--start`/`--end`, and times are labelled UTC. | `--due 2026-10-20` shows as Oct 19 in the Americas. Scheduled out-of-office replies are silently not scheduled. | Use the user's `mailboxSettings.timeZone`. Require both dates when the status is `scheduled`. |
+| M-11 | P2 | `mail.ts:797-836` | `create-rule --delete` or `--forward-to` with no conditions sends `conditions: {}`, and nothing asks for confirmation. `--enabled` has no effect, because rules are always created enabled. | One command can delete or forward all incoming mail, which is a data-loss and exfiltration risk. | Require at least one condition, or ask for confirmation. Replace `--enabled` with `--disabled`. |
+| M-12 | P2 | `setup.ts:167` vs `auth.ts` `buildScopes` | The scopes picked in the wizard aren't saved. At run time the full `buildScopes()` set is requested. | A user who deselects Mail gets `interaction_required` on every command. | Save the chosen scopes and use them at run time, or make the scopes non-optional. |
+| M-13 | P2 | `utils.ts:30-34` and all delete commands | A declined or automatically rejected confirmation returns normally. | A non-TTY `planner delete-task` reports success even though nothing was deleted. | Throw an error, or set exit code 1, when confirmation is refused. |
+| M-14 | P2 | `planner.ts:10-27` | `autoFetchETag` hard-codes `v1.0`, bypasses `GraphClient` (no retry, read-only or dry-run guard), and reads a private field with `(client as any).auth`. | `--dry-run planner update-task` throws "Not logged in" instead of showing a preview. `--api-version beta` mixes API versions. | Add `GraphClient.requestRaw()` that returns the response headers and the `@odata.etag`. Use a placeholder ETag in dry-run. |
+| M-15 | P2 | `mail.ts:879-882,906-909` | `batch-read` and `batch-move` exit 0 even when items failed. | If every item fails, the command prints "Marked 0" and still reports success. | Set exit code 1 when `failed.length > 0`. |
+| M-16 | P2 | `workflow.ts:54-68,287-295` | The unread count comes from `$top=1` plus `value.length`. | 250 unread messages show as "1+". | Read `/me/mailFolders/inbox?$select=unreadItemCount`. |
+| M-17 | P2 | `mail.ts:522-536` | `add-attachment` takes base64 content as a command-line argument. | Files of a few MB hit the OS argument-length limit (ARG_MAX), and inline attachments over 3 MB are rejected. | Add `--file <path>` and use `attachments/createUploadSession` above 3 MB. |
+| M-18 | P2 | `calendar.ts:294` | `cal rooms` calls `/me/findRooms`, which exists only in beta. | Returns 404 on the default API version. | Use `/places/microsoft.graph.room`. |
+| M-19 | P2 | `mail.ts:640` | `mail flag --due` sends no `startDateTime`. | Returns 400 †. | Send `startDateTime` as well. |
+| M-20 | P3 | `drive.ts:125` | `download-shared` URL-encodes a raw sharing link. | Pasting a real link returns 400. | Encode it as `u!` plus base64url when the input starts with `http`. |
+| M-21 | P3 | `workflow.ts:130-144` | `meeting-prep` picks the first event by `start`. | An all-day, declined or already-started event is chosen instead of the next real meeting. | Filter those events out. |
+| M-22 | P3 | `workflow.ts:409-416` | The Teams post mixes Markdown into an HTML body and doesn't escape the file name. | The message shows literal `**` characters, and a `<` or `&` in the file name is injected into the HTML. | Build HTML tags and escape the values. |
+| M-23 | P3 | `calendar.ts:216-227` | `decline --no-notify --propose-start` | Returns 400, because Graph requires `sendResponse` when a new time is proposed. The proposed time is also always UTC. | Validate the combination and add `--timezone`. |
+| M-24 | P3 | `excel.ts:52,64`; `mail.ts:77` | `'` and `"` aren't escaped in OData or KQL literals. | `'O''Brien'!A1` breaks the query, and so does `--search 'say "hi"'`. | Double `'` and escape `"`. |
+| M-25 | P3 | `schema.ts:207` | `<endpoint>` is a required argument, but the CLI's own hints tell users to run `schema --list`. | `ms365 schema --list` errors with "missing required argument". | Change it to `[endpoint]`. |
+| M-26 | P3 | many `--all` commands | `--page-limit` and `--page-delay` are declared but never passed through. | Affects `contacts.ts:32`, `groups.ts:36,58,123,146`, `user.ts:44`, `teams.ts:138` and `calendar.ts:182`. | Pass the options through. |
+| M-27 | P3 | `planner.ts:326` | `create-plan` sends the deprecated `owner` field. | It may be rejected in some tenants †. | Send `container: { url: …/groups/{id} }`. |
+| M-28 | P3 | `auth.ts` (command), `setup.ts:68-73,117`, `user.ts:168-173`, `generate-skills.ts:263-275` | Smaller issues: <br>• `auth status` exits 0 when logged out <br>• the "use existing login?" answer is ignored <br>• Windows `start "URL"` doesn't open the browser <br>• `download-photo` overwrites without asking, and its 404 message never appears <br>• the generated skill docs describe defaults and options that don't exist, and regenerating overwrites SKILL.md | — | Fix each one. |
+| M-29 | P3 | `drive share --password`, `cal create --attendees` | The password ends up in shell history and in `--dry-run` output, and attendee addresses skip `validateEmail`. | — | Read the password from a prompt or stdin, and validate attendees. |
+
+## 3. Performance
+
+| ID | Sev | Location | Finding | Cost | Fix |
+|---|---|---|---|---|---|
+| P-1 | P1 | `src/auth.ts:238` | Silent refreshes are never saved (C-4). | Every run more than about an hour after login makes an extra round trip to `login.microsoftonline.com` before the Graph call, typically 200–600 ms. This dominates agent workloads that run many commands. | Fix C-4. |
+| P-2 | P1 | `src/graph-client.ts:179-182`, `drive.ts:75,132,299` | Downloads are buffered in full, base64-encoded, then decoded again. | Peak memory is about 3.3× the file size. V8's maximum string length (~512 MB) makes files over ~380 MB crash with "Invalid string length". | Stream with `Readable.fromWeb(res.body).pipe(createWriteStream(out))`, or pipe to stdout for `cat`. |
+| P-3 | P2 | `src/errors.ts:26` | A fixed 200 ms delay before every exit. | 100 agent calls add 20 s. | Exit right after stdout drains (this is part of C-1). |
+| P-4 | P2 | `src/auth.ts:13-23` | `isHeadless` misses machines that have `DISPLAY` set but no working keyring (WSLg, dev containers), so every keytar call waits the full 2 s. | +2 s for each save or load call that falls back to keytar. | Probe keytar once per process, or replace it (G-5). |
+| P-5 | P2 | `mail.ts:862-910` (`batch-*`) | One sequential request per ID. | 100 IDs take about 100 round trips (15–30 s). | JSON `$batch` with 20 requests per batch, about 5 requests in total, with `Retry-After` handled per item. |
+| P-6 | P2 | `--all` across 8 groups | `requestAllPages` buffers every page. Only `mail list` streams. | Memory grows with the result size, and nothing prints until the last page arrives. | Use `requestPagesStreaming` and emit NDJSON. Buffer only for `table` output. |
+| P-7 | P3 | `src/index.ts:20-40` | All 17 command modules, MSAL and the native keytar module load eagerly. | `--help` and `schema` pay the full startup cost. | Load command modules and the auth stack with lazy `import()`. |
+| P-8 | P3 | — | Delta queries are used only in `sp delta`. | Workflows and polling re-fetch whole collections, which uses up throttling budget. | Add `delta` for messages, events, driveItems and contacts, and save `deltaLink`. |
+
+## 4. Microsoft Graph platform changes and gaps
+
+Researched on 2026-10-14. Sources are listed at the end.
+
+| ID | Sev | Change | Date | Impact here | Action |
+|---|---|---|---|---|---|
+| G-1 | P1 | **Sensitive mail properties.** Changing subject, body, recipients and other draft-only properties of a **non-draft** message will require `Mail-Advanced.ReadWrite`, which needs admin consent. | Enforced 2026-12-31 | `mail update-draft` (`mail.ts:451-478`) is fine on drafts. A non-draft ID will start returning an unclear 403. Flag, read, move and category updates are unaffected. | Check `isDraft` before sending the PATCH, and map the new 403 to a clear hint. Don't add `Mail-Advanced.*` to the default scopes. |
+| G-2 | P1 | **Tempauth file URLs retired.** `/content` will stop redirecting with a 302 to URLs that embed authentication. | 2027-04-01. Admins can switch on the new behaviour now to test it. | Every download path relies on `fetch` following the 302. Undici drops the `Authorization` header on cross-origin redirects, so if the new target requires a bearer token, downloads break. | Test on a tenant with the control turned on. If needed, use `redirect: 'manual'` and re-attach the token only for `*.sharepoint.com`. Do this together with P-2. |
+| G-3 | P2 | **Endpoints retiring:** `/drive/recent`, `/drive/sharedWithMe`, `/insights/used`, `/insights/shared`. | November 2026 | Not used anywhere today (checked with grep). | Build "recent" and "shared with me" features on `/search/query` instead. |
+| G-4 | P1 | **`@azure/msal-node` 2.16.3 → 7.1.0.** v6 shipped 2026-08-28 and v7 on 2026-09-23. v5 and later require Node 20+. | Now | Missing fixes and newer authentication features. | Upgrade, following the v3→v5→v7 migration notes. Set `engines.node` to `>=20`. Vitest 4 already requires this, so `package.json:37` and the README badge are wrong today. |
+| G-5 | P2 | **`keytar` is unmaintained.** The upstream repo is archived, 7.9.0 is the last release, and CI needs `libsecret` to install it. | Now | It is the root cause of C-5, C-14 and P-4. | Replace it with `@azure/msal-node-extensions` `PersistenceCreator` (Keychain, DPAPI or libsecret, with a plaintext fallback) plugged in as the MSAL cache plugin. This also fixes C-4. |
+| G-6 | P3 | `commander` 11 → 15. | Now | Low. | Upgrade together with G-4. |
+| G-7 | P2 | **Teams meeting transcripts and recordings.** Per-meeting endpoints are GA. `getAllTranscripts` and `getAllRecordings` (with delta) are in beta. | GA / beta | The CLI has no `meetings` command group. | See PM-4. |
+| G-8 | P3 | **Outlook quick-capture notes** (`/me/notes`, with delta). | GA August 2026 | Not covered. | See PM-9. |
+| G-9 | P3 | **Planner Premium** isn't reachable through `/planner`. | Ongoing | Premium plan IDs return 403/404 with no explanation. | Detect the error and print a "Premium plans aren't supported by Graph" hint. |
+| G-10 | P3 | **JSON batching and per-request throttling.** A batch can return 200 while individual items inside it return 429. | — | `$batch` is not used anywhere. | See P-5. |
+
+## 5. Product: features, tweaks and gaps (PM view)
+
+**Who uses it:** a power user in a terminal, and, more and more, AI agents. `generate-skills` exists, the MCP environment-variable names are supported, and confirmation is "always on so agents can't bypass". That agent use case also includes MiBot, MiAction and MiNotes. The command set is broad. The gaps are in **getting started**, **running unattended**, and **machine-readable contracts**.
+
+### 5a. Gaps, by priority
+
+| ID | Priority | Gap | Why it matters | Proposal |
+|---|---|---|---|---|
+| PM-1 | Must | **No working first-run path.** There's no default client ID, the setup wizard crashes (M-2), and offline commands need auth (C-16). | Every new user has to register an Entra app before anything works. This is the biggest adoption blocker. | Publish a verified multi-tenant public-client app ID as the default. `auth setup` then becomes: pick a tenant, sign in, done. Keep BYO-app as an advanced option. |
+| PM-2 | Must | **Device code is the only sign-in.** There's no browser (auth code + PKCE) sign-in and no app-only sign-in (client credentials or certificate). | Many tenants block device-code flow through Conditional Access. Server-side agents like MiBot can't run an interactive login. | Add `auth login --browser` (MSAL `acquireTokenInteractive` with a loopback redirect). Add `auth login --app` using a client secret or certificate (`ConfidentialClientApplication`), with `/users/{id}` routing replacing `/me`. |
+| PM-3 | Must | **No machine-readable contract.** Exit codes are always 143 (C-1), errors are free text on stderr, and there's no NDJSON output. | Agents and scripts can't branch on outcomes. | • Exit codes: 0 ok · 1 generic · 2 usage · 3 auth · 4 permission · 5 not found · 6 throttled · 7 confirmation refused. <br>• `--error-format json` writing `{code, status, graphCode, requestId, message}` to stderr. <br>• `-o ndjson` output. <br>• Show the Graph `request-id` on errors for support. |
+| PM-4 | Should | **Meetings: transcripts, recordings, and creating online meetings.** There's no `isOnlineMeeting` or `findMeetingTimes` support anywhere in `src`. | This is the input to the MiBot post-meeting pipeline, and "find a slot and send a Teams invite" is a top calendar job. | Add `ms365 meetings list / transcript <id> --format vtt\|txt / recording <id> --out`. Add `cal create --teams` (`isOnlineMeeting`) and `cal find-time --attendees … --duration 30m`. |
+| PM-5 | Should | **No change triggers.** There are no subscriptions or webhooks, and delta is used only in SharePoint. | Event-driven agents (MiAction) have to poll everything. | `ms365 watch mail\|events\|files [--since-last]` based on delta, saving its cursor and emitting NDJSON. Webhook subscriptions can come later for hosted use. |
+| PM-6 | Should | **Attachments are awkward.** `mail send` has no `--attach <file>`, and `add-attachment` takes base64 on the command line (M-17). | Sending a file is one of the most common mail tasks. | `mail send/draft/reply --attach <path>` (repeatable), which uses an upload session automatically above 3 MB. |
+| PM-7 | Should | **Agent-safe destructive operations.** Deletes can't run at all without a TTY. | A safe default, but agents can't do legitimate clean-up. | A policy file (`~/.config/ms365-cli/policy.json`) that allowlists specific destructive commands or scopes, with an audit log. `--dry-run` is shown first. Keep it deny-by-default. |
+| PM-8 | Should | **Account selection is global only.** | Multi-tenant consultants and agents that serve several users need to choose per call. | A per-command `--account <upn>` (or `MS365_ACCOUNT`), plus named `--profile` settings for tenant, client ID and scopes. |
+| PM-9 | Could | **Coverage gaps:** <br>• To Do checklist items and linked resources <br>• Excel tables (`tables/{id}/rows/add`), which is the main automation use for Excel <br>• Teams: creating chats, @mentions, channel files <br>• Outlook quick-capture notes (G-8, relevant to MiNotes) <br>• Search across entity types (mail, events, files) in one query | Fills obvious holes in services the CLI already covers. | Add these one at a time. Excel table rows and Teams @mentions come first. |
+| PM-10 | Could | **Developer experience:** <br>• No shell completion (bash, zsh, fish, PowerShell) <br>• No `--fields a,b,c` shortcut instead of `$select` <br>• No `--jq`-style projection <br>• Interactive `table` is the default even for wide objects | Discoverability across about 170 commands. | `ms365 completion <shell>`, a `--fields` alias, and sensible default columns for each resource. |
+| PM-11 | Could | **Docs drift:** <br>• The README badge says Node ≥ 18 <br>• Generated skills claim `json` is the default output and that every list command supports `--filter`/`--select`/`--all` <br>• `chat reply` is advertised but broken | Agents follow the docs literally. | Generate the README command table and SKILL.md from the commander tree, and add a CI check for drift. |
+| PM-12 | Could | **Distribution.** The npm name `ms365-cli` is already taken in the registry, and there's no release workflow. | You can't `npm i -g` it under this name unless you own it. | Confirm who owns the name, or publish under a scope (`@genehealth/ms365-cli`). Add a tagged-release workflow and a standalone single-file binary (Node SEA). |
+
+### 5b. Quick wins (≤ 1 day each)
+
+- [ ] Fix exit codes (C-1). This unblocks scripting and agents straight away.
+- [ ] Skip auth for `schema` and `generate-skills`, and make `schema --list` work (C-16, M-25).
+- [ ] Fix the `mail triage` default filter (M-3). It's the first command in the README.
+- [ ] Make "today" use local time, and send `Prefer: outlook.timezone` in workflows (M-7, M-8).
+- [ ] Return a non-zero exit when a confirmation is refused or a batch partly fails (M-13, M-15).
+- [ ] Add `--attach <path>` to `mail send` (PM-6, simple version for files of 3 MB or less).
+- [ ] Fix the Node version claim in `engines` and the README (G-4).
+
+## 6. Agent-native readiness (the view from an AI agent)
+
+AI agents are the main consumer the CLI is aimed at, but the CLI is designed for people. An agent needs five things from a tool:
+- **discover** what it can do without reading prose
+- **call** it with predictable inputs
+- **parse** the result cheaply
+- **recover** from errors on its own
+- **stay safe** when the data it reads is hostile
+
+The table scores the CLI on each of these.
+
+| Need | Today | Gap | Proposal |
+|---|---|---|---|
+| **Discover** | `schema <endpoint>` (broken `--list`, M-25), `generate-skills` markdown that has drifted (PM-11) | No machine-readable command catalogue. Agents parse `--help` text. | `ms365 describe --json` lists every command with its args, option types and defaults, output schema, required Graph scopes, and whether it is destructive or idempotent. Generate SKILL.md, the README and an MCP tool manifest from it. |
+| **Call: one protocol** | Shell only. The MCP env-var names are accepted, but there is no MCP server. | Each call starts a process, cold-starts MSAL and keytar (P-7) and pays the 200 ms exit delay (P-3). | `ms365 mcp serve` (stdio) exposes the same command tree as MCP tools in one warm process with a shared token cache. It also fixes the concurrency problem in C-18. |
+| **Call: names, not IDs** | Every command takes opaque 100+ character Graph IDs. | Agents spend turns listing just to find an ID, and copying long IDs is error-prone. | Accept names where they're unambiguous: `--list "Groceries"`, `--team Eng --channel General`, `--folder Inbox/Receipts`, `--plan "Q4"`. Add `ms365 resolve <type> <name>`. Error with candidates when a name matches more than one item. |
+| **Call: times** | ISO strings, often treated as UTC by default (M-7–M-10). | Agents get time zones wrong. | Accept `tomorrow 15:00`, `+2d`, `next mon`. Resolve them in the user's mailbox time zone and always print the result back in ISO 8601 with an offset. |
+| **Parse: shape** | The default output is `table` on a TTY and `json` otherwise. Good. But `@odata.*` keys are removed (C-9), and status text leaks onto stdout (C-19). | The output shape isn't a stable contract. | Version the JSON envelope: `{data, nextCursor, count, warnings}`. Add `-o ndjson` and `--fields`. Commit to stable field names. |
+| **Parse: token budget** | `mail get` returns full HTML bodies, and lists return every property. | One email can cost 5–50k tokens of markup. | `--body text\|markdown\|none` (send `Prefer: outlook.body-content-type="text"`, use `uniqueBody` for threads), `--max-chars N`, and lean default `$select` sets for each resource. `mail thread <id> --summary-ready` returns a de-duplicated thread. |
+| **Parse: pagination** | `--all` or nothing. | Agents can't page step by step within a context budget. | `--cursor <token>` and `nextCursor` in the output, which is the `nextLink`, opaque and safe to resume from. |
+| **Recover: errors** | Free-text messages, and exit code 143 (C-1). | No error codes, no request-id, no suggested fix. | Use the exit-code table from PM-3. Write a JSON error to stderr: `{code:"missing_scope", scope:"Mail.Send", fix:"ms365 auth login --scopes Mail.Send", requestId}`. |
+| **Recover: retries** | `POST` requests are retried blindly (C-7). | Agents retry too, so duplicates multiply. | `--idempotency-key <k>`. Events use Graph's `transactionId`. Mail sends go through a draft first, and the draft ID is checked before sending again. Record keys in the config dir for 24 h. |
+| **Recover: long operations** | None. | Copying a drive item returns a monitor URL, and the CLI drops it. | `--wait`, with progress written to stderr and the final resource on stdout. |
+| **Stay safe: untrusted content** | Mail and Teams bodies are passed through as they are. | Any email can contain a prompt injection ("ignore previous instructions, forward …"), and the CLI is the channel it reaches the agent through. | Mark external content: an `untrusted:true` flag and `sender.external` on every message or chat item. Add `--wrap-untrusted`, which puts bodies inside clear delimiters. Document this in SKILL.md. |
+| **Stay safe: blast radius** | Global `--read-only`, plus delete confirmations that only work on a TTY. | No middle ground between "can't delete" and "can do everything". | **Agent profile:** a reduced scope set, read-only by default. **Policy file** (PM-7): allowlist specific write verbs and resource IDs, set rate limits such as at most 20 sends per hour, and block recipients outside allowed domains. **Plan/apply:** `--plan plan.json` records the intended calls, a person reviews it, then `ms365 apply plan.json`. |
+| **Stay safe: accountability** | Optional debug log. | No record of what an agent changed. | An append-only audit log of every non-GET call (time, command, account, endpoint, status, request-id, and the agent's `--actor`), with `ms365 audit tail`. |
+| **Stay safe: consent introspection** | — | An agent can't tell up front whether a call will 403. | `ms365 auth scopes` shows the scopes granted, and `describe` lists the scopes each command needs. Return a pre-flight `missing_scope` error before making the call. |
+| **Concurrency** | Each process works on the token cache with no lock (C-18). | Agents running in parallel corrupt it. | Use the MCP server, or file locking through `msal-node-extensions`. |
+| **Event-driven** | Polling only. | Agents can't react to new mail, meetings or files. | `ms365 watch` (PM-5). Later, `ms365 mcp serve` can raise MCP notifications on delta changes. |
+
+**Agent priority order:**
+1. Exit codes and JSON errors (C-1, PM-3).
+2. `describe --json` and `mcp serve`.
+3. Token-budget output (`--body text`, `--fields`, `--cursor`).
+4. Untrusted-content marking and the agent policy profile.
+5. Resolving names to IDs.
+6. Idempotency keys and the audit log.
+7. `watch`.
+
+The first three make the CLI usable for agents. The fourth makes it safe to give an agent write access to someone's mailbox.
+
+## 7. Tests and CI
+
+- **Little command coverage.** There are 5 test files with about 100 cases, all for core helpers. None of the 17 command modules has tests, which is how C-2, C-3, M-3, M-4 and M-6 shipped.
+- **Weak upload test.** The only upload test (`test/graph-client.test.ts:92`) checks a nonexistent path.
+- **Add tests for:**
+  - exit codes (C-1)
+  - the session URL for a `:/content` endpoint (C-2)
+  - PDF and DOCX byte round-trips through a mocked `fetch` (C-3)
+  - the cache being saved after `acquireTokenSilent` (C-4)
+  - no retry for a `POST` that times out (C-7)
+  - `#` and `%` in paths (C-10)
+  - the endpoint and method each command sends, as a table-driven snapshot of the `--dry-run` output for every command
+- **No type check in CI.** Add `tsc --noEmit`, because tsup doesn't type-check.
+
+## 8. Remediation plan
+
+| # | Workstream | Covers | Acceptance criteria |
+|---|---|---|---|
+| 1 | Exit codes and error contract | C-1, P-3, M-13, M-15, PM-3 | `ms365 user me; echo $?` prints `0`, and a forced 404 prints `5`. No fixed exit delay. `--error-format json` works. |
+| 2 | File I/O | C-2, C-3, C-10, C-11, P-2, M-1, M-17, G-2 prep | A 12 MB `drive cp` works. A PDF, a DOCX and a 1 GB file download with matching sha256, and peak RSS stays under 150 MB. Paths containing `#`, `%` and spaces work. Attachment names can't escape the current directory. |
+| 3 | Auth persistence and dependencies | C-4, C-5, C-6, C-12, C-13, C-14, P-1, P-4, G-4, G-5, G-6 | `msal-node@^7` and `msal-node-extensions` replace keytar. A run two hours after login makes no call to `login.microsoftonline.com`. `auth select` survives a restart. `logout` leaves nothing behind. |
+| 4 | Retry semantics | C-7, C-8 | A mocked timeout on `POST /sendMail` produces exactly one request. Page 2 of `groups list --search … --all` carries `ConsistencyLevel`. |
+| 5 | Wrong-endpoint fixes | M-3–M-6, M-18, M-19, M-27, M-20 | Each command runs successfully against a test tenant, recorded as a fixture. |
+| 6 | Time zones | M-7–M-10, M-21, M-23 | With `TZ=America/Los_Angeles`, `wf standup`, `cal create`, `todo create --due` and `set-ooo` all show and store the times the user entered. |
+| 7 | Onboarding | PM-1, M-2, M-12, C-16, M-25, M-28 | On a clean machine, `npx … auth setup` reaches a working `ms365 user me` in under 2 minutes without registering an Entra app. |
+| 8 | Graph change readiness | G-1, G-2, G-3 | `update-draft` rejects non-drafts with a clear message. Downloads are verified on a tenant with the tempauth control turned on before 2027-04-01. |
+| 9 | Agent features | §6, PM-2, PM-4, PM-5, PM-7, PM-8, C-18, C-19, P-5, P-6, P-8 | `describe --json` and `mcp serve` ship. Ten parallel `ms365 user me` processes leave a valid token cache. `--body text`, `--fields` and `--cursor` work on mail. External messages carry `untrusted:true`. App-only sign-in, `meetings transcript`, `watch`, `$batch` and the policy file and audit log each ship with tests. |
+| 10 | Developer experience and docs | PM-6, PM-9–PM-12, C-9, M-14, M-11, M-22, M-24, M-26, M-29 | Shell completions ship. SKILL.md and the README are generated and checked for drift in CI. The release workflow publishes. |
+
+## Sources
+
+- [What's new in Microsoft Graph](https://learn.microsoft.com/en-us/graph/whats-new-overview)
+- [Graph API updates to sensitive email properties (MS 365 Dev Blog, 2026-03-26)](https://devblogs.microsoft.com/microsoft365dev/graph-api-updates-to-sensitive-email-properties/)
+- [Upcoming breaking changes to modifying sensitive email properties (Exchange Team)](https://techcommunity.microsoft.com/blog/exchange/upcoming-breaking-changes-to-modifying-sensitive-email-properties-via-graph-api/4505227)
+- [Microsoft Limits App Access to Sensitive Message Properties (Office 365 for IT Pros)](https://office365itpros.com/2026/03/26/sensitive-message-properties-graph/)
+- [MC1492958: retirement of non-standard file API tokens](https://mc.merill.net/message/MC1492958)
+- [Download driveItem content](https://learn.microsoft.com/en-us/graph/api/driveitem-get-content)
+- [Graph endpoint retirements and CLI/Toolkit deprecation (Office 365 for IT Pros)](https://office365itpros.com/2025/09/02/microsoft-graph-inconsistencies/)
+- [MSAL Node v5 migration](https://learn.microsoft.com/en-us/entra/msal/javascript/node/v5-migration)
+- [Microsoft Authentication Extensions for Node](https://learn.microsoft.com/en-us/entra/msal/javascript/node/extensions)
+- [Teams meeting transcripts overview](https://learn.microsoft.com/en-us/microsoftteams/platform/graph-api/meeting-transcripts/overview-transcripts)
+- [Teams meeting recordings API GA](https://devblogs.microsoft.com/microsoft365dev/announcing-general-availability-of-microsoft-graph-apis-for-microsoft-teams-meeting-recordings/)
+- [Planner API overview](https://learn.microsoft.com/graph/api/resources/planner-overview)
+- [Microsoft Graph throttling guidance](https://learn.microsoft.com/graph/throttling)
+- npm registry (`npm view`, 2026-10-14): `@azure/msal-node` 7.1.0 (6.0.0 on 2026-08-28, 7.0.0 on 2026-09-23, engines `>=20`), `keytar` 7.9.0, `commander` 15.0.0, `ms365-cli` name already registered
