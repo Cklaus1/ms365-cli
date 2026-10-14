@@ -667,6 +667,7 @@ exports[`dry-run endpoint snapshot (every command) > mail batch-move 1`] = `
     "[dry-run] GET https://graph.microsoft.com/v1.0/me/mailFolders?$select=id%2CdisplayName&$top=100",
     "[dry-run] POST https://graph.microsoft.com/v1.0/me/messages/ID1/move",
     "[dry-run] POST https://graph.microsoft.com/v1.0/me/messages/ID2/move",
+    "[dry-run] (sent as 1 POST https://graph.microsoft.com/v1.0/$batch request(s))",
   ],
 }
 `;
@@ -679,6 +680,7 @@ exports[`dry-run endpoint snapshot (every command) > mail batch-read 1`] = `
   "requests": [
     "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/messages/ID1",
     "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/messages/ID2",
+    "[dry-run] (sent as 1 POST https://graph.microsoft.com/v1.0/$batch request(s))",
   ],
 }
 `;

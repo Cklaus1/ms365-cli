@@ -187,7 +187,10 @@ describe('status lines go to stderr (C-19)', () => {
       ['shared-send', 'u@b.com', '--to', 'a@b.com', '--subject', 's', '--body', 'b'],
     ];
     for (const argv of cases) {
-      const r = await run(argv, { routes: [['POST', '/me/messages', () => ({ id: 'D1' })]] });
+      const r = await run(argv, { routes: [
+        ['POST', '/$batch', (c) => ({ responses: (c.body as { requests: Array<{ id: string }> }).requests.map(q => ({ id: q.id, status: 200, body: {} })) })],
+        ['POST', '/me/messages', () => ({ id: 'D1' })],
+      ] });
       expect(r.exitCode, argv.join(' ')).toBe(0);
       expect(r.stdout, argv.join(' ')).toBe('');
       expect(r.stderr.length, argv.join(' ')).toBeGreaterThan(0);

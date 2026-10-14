@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { GraphClient } from '../graph-client.js';
+import { GraphClient, type BatchResult } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import {
@@ -943,56 +943,42 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
   // ── Batch operations ────────────────────────────────────────
   mail
     .command('batch-read <messageIds>')
-    .description('Mark multiple messages as read (comma-separated IDs)')
+    .description('Mark multiple messages as read (comma-separated IDs; sent via JSON batching)')
     .action(handleErrors(async (messageIds: string) => {
-      const client = getClient();
       const ids = messageIds.split(',').map(id => id.trim()).filter(Boolean);
-      let succeeded = 0;
-      const failed: Array<{ id: string; error: string }> = [];
-      for (const id of ids) {
-        try {
-          await client.request(`/me/messages/${encodeURIComponent(id)}`, {
-            method: 'PATCH',
-            body: JSON.stringify({ isRead: true }),
-          });
-          succeeded++;
-        } catch (err) {
-          failed.push({ id, error: (err as Error).message });
-        }
-      }
-      info(`Marked ${succeeded} message(s) as read.`);
-      if (failed.length > 0) {
-        throw new CliError(`Failed ${failed.length} of ${ids.length}: ${failed.map(f => f.id.substring(0, 12) + '...').join(', ')}`,
-          { code: 'partial_failure' });
-      }
+      const results = await getClient().batch(ids.map(id => ({
+        method: 'PATCH', url: `/me/messages/${encodeURIComponent(id)}`, body: { isRead: true },
+      })));
+      reportBatch(ids, results, 'Marked', 'as read');
     }));
 
   mail
     .command('batch-move <messageIds>')
-    .description('Move multiple messages to a folder (comma-separated IDs)')
+    .description('Move multiple messages to a folder (comma-separated IDs; sent via JSON batching)')
     .requiredOption('--folder <folderId>', 'Destination folder name or ID')
     .action(handleErrors(async (messageIds: string, opts) => {
       const client = getClient();
       const folderId = await resolveFolderName(client, opts.folder) || opts.folder;
       const ids = messageIds.split(',').map(id => id.trim()).filter(Boolean);
-      let succeeded = 0;
-      const failed: Array<{ id: string; error: string }> = [];
-      for (const id of ids) {
-        try {
-          await client.request(`/me/messages/${encodeURIComponent(id)}/move`, {
-            method: 'POST',
-            body: JSON.stringify({ destinationId: folderId }),
-          });
-          succeeded++;
-        } catch (err) {
-          failed.push({ id, error: (err as Error).message });
-        }
-      }
-      info(`Moved ${succeeded} message(s).`);
-      if (failed.length > 0) {
-        throw new CliError(`Failed ${failed.length} of ${ids.length}: ${failed.map(f => f.id.substring(0, 12) + '...').join(', ')}`,
-          { code: 'partial_failure' });
-      }
+      const results = await client.batch(ids.map(id => ({
+        method: 'POST', url: `/me/messages/${encodeURIComponent(id)}/move`, body: { destinationId: folderId },
+      })));
+      reportBatch(ids, results, 'Moved', '');
     }));
 
+}
+
+/** Summarize batch results on stderr; fail (exit 1) when any item failed. */
+function reportBatch(ids: string[], results: BatchResult[], verb: string, suffix: string): void {
+  const failed = ids
+    .map((id, i) => ({ id, r: results[i] }))
+    .filter(({ r }) => !(r.status === 0 && (r.body as { dryRun?: boolean } | null)?.dryRun) && (r.status < 200 || r.status >= 300));
+  info(`${verb} ${ids.length - failed.length} message(s)${suffix ? ' ' + suffix : ''}.`);
+  if (failed.length > 0) {
+    const detail = failed.map(({ id, r }) => {
+      const msg = (r.body as { error?: { message?: string } } | null)?.error?.message ?? `status ${r.status}`;
+      return `${id.substring(0, 12)}...: ${msg}`;
+    }).join('; ');
+    throw new CliError(`Failed ${failed.length} of ${ids.length}: ${detail}`, { code: 'partial_failure' });
+  }
 }

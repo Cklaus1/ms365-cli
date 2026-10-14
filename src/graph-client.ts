@@ -36,6 +36,22 @@ export interface GraphResponse {
   stream?: ReadableStream<Uint8Array> | null;
 }
 
+export interface BatchRequest {
+  method: string;
+  /** Path relative to the API version, e.g. "/me/messages/123". */
+  url: string;
+  body?: unknown;
+  headers?: Record<string, string>;
+}
+
+export interface BatchResult {
+  status: number;
+  body: unknown;
+  headers?: Record<string, string>;
+}
+
+const BATCH_SIZE = 20;
+
 /** Methods that are safe to retry after a timeout or 5xx (the server may have processed them). */
 const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE', 'PATCH']);
 
@@ -400,6 +416,70 @@ export class GraphClient {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Send requests through JSON batching (POST /$batch, 20 per batch). Results come back in
+   * input order. Items throttled with 429 — and 5xx on idempotent methods — are retried in a
+   * new batch after the longest Retry-After, up to MAX_RETRIES rounds.
+   */
+  async batch(requests: BatchRequest[]): Promise<BatchResult[]> {
+    if (this.readOnly && requests.some(r => r.method.toUpperCase() !== 'GET')) {
+      throw new CliError('Read-only mode: batch contains write requests. Remove --read-only to proceed.', { code: 'read_only', exitCode: ExitCode.PERMISSION });
+    }
+    if (this.dryRun) {
+      for (const r of requests) {
+        console.log(`[dry-run] ${r.method.toUpperCase()} ${this.baseUrl}${r.url}`);
+        if (r.body !== undefined) console.log(`[dry-run] Body: ${JSON.stringify(r.body)}`);
+      }
+      console.log(`[dry-run] (sent as ${Math.ceil(requests.length / BATCH_SIZE)} POST ${this.baseUrl}/$batch request(s))`);
+      return requests.map(() => ({ status: 0, body: { dryRun: true } }));
+    }
+
+    const results: Array<BatchResult | undefined> = new Array(requests.length);
+    let pending = requests.map((_, i) => i);
+    for (let round = 0; round < MAX_RETRIES && pending.length > 0; round++) {
+      const retry: number[] = [];
+      let waitMs = 0;
+      for (let start = 0; start < pending.length; start += BATCH_SIZE) {
+        const chunk = pending.slice(start, start + BATCH_SIZE);
+        const payload = {
+          requests: chunk.map((idx) => {
+            const r = requests[idx];
+            const item: Record<string, unknown> = { id: String(idx), method: r.method.toUpperCase(), url: r.url };
+            if (r.body !== undefined) {
+              item.body = r.body;
+              item.headers = { 'Content-Type': 'application/json', ...r.headers };
+            } else if (r.headers) {
+              item.headers = r.headers;
+            }
+            return item;
+          }),
+        };
+        const res = await this.request('/$batch', { method: 'POST', body: JSON.stringify(payload), responseType: 'json' });
+        const responses = ((res.data as { responses?: Array<{ id: string; status: number; body?: unknown; headers?: Record<string, string> }> }).responses) ?? [];
+        for (const r of responses) {
+          const idx = Number(r.id);
+          const method = requests[idx].method.toUpperCase();
+          const retryable = r.status === 429 || (r.status >= 500 && IDEMPOTENT_METHODS.has(method));
+          if (retryable && round < MAX_RETRIES - 1) {
+            retry.push(idx);
+            const ra = r.headers?.['Retry-After'] ?? r.headers?.['retry-after'] ?? null;
+            waitMs = Math.max(waitMs, parseRetryAfter(ra, Math.pow(2, round) * 1000));
+          } else {
+            if (r.body && typeof r.body === 'object') removeODataProps(r.body);
+            results[idx] = { status: r.status, body: r.body ?? null, headers: r.headers };
+          }
+        }
+      }
+      if (retry.length > 0) {
+        logger.warn(`${retry.length} batch item(s) throttled or failed; retrying in ${waitMs / 1000}s`);
+        await sleep(waitMs);
+      }
+      pending = retry;
+    }
+    // Array.from, not map: map skips the holes left by items Graph never answered
+    return Array.from({ length: requests.length }, (_, i) => results[i] ?? { status: 0, body: { error: { message: 'No response for batch item' } } });
   }
 
   /**
