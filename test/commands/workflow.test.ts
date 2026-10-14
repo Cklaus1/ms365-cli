@@ -152,3 +152,122 @@ describe('workflow file-announce', () => {
     expect(content).toContain('see &lt;script&gt;');
   });
 });
+
+describe('workflow under --dry-run (DR-9…DR-12, F6)', () => {
+  const traced = (stderr: string) => stderr.split('\n').filter(l => /^\[dry-run\] (GET|POST) /.test(l));
+
+  it.each([
+    [['wf', 'standup'], 2],
+    [['wf', 'digest'], 3],
+    [['wf', 'focus-time'], 1],
+    [['wf', 'meeting-prep'], 1],
+    [['wf', 'meeting-prep', '--event-id', 'E1'], 1],
+  ])('%j prints the trace only and no report (text)', async (argv, gets) => {
+    const r = await runCommand(registerWorkflowCommands, argv, { dryRun: true, env });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe('');
+    expect(traced(r.stderr)).toHaveLength(gets);
+    expect(r.stderr).not.toMatch(/No upcoming meetings|No focus time/);
+    expect(r.stderr).toContain(`${gets} request(s) previewed; nothing was sent.`);
+  });
+
+  it.each([
+    [['wf', 'standup']], [['wf', 'digest']], [['wf', 'focus-time']], [['wf', 'meeting-prep']],
+    [['wf', 'meeting-prep', '--event-id', 'E1']],
+  ])('%j -o json prints exactly {"dryRun":true}', async (argv) => {
+    const r = await runCommand(registerWorkflowCommands, [...argv, '-o', 'json'], { dryRun: true, env });
+    expect(r.exitCode).toBe(0);
+    expect(JSON.parse(r.stdout)).toEqual({ dryRun: true });
+  });
+
+  it('email-to-task without --list previews the POST to the <first-list> placeholder, body marked <from GET> (DR-10, DR-11)', async () => {
+    const r = await runCommand(registerWorkflowCommands, ['wf', 'email-to-task', 'M1', '--due', '2026-10-20', '-o', 'json'], { dryRun: true, env });
+    expect(r.exitCode).toBe(0);
+    expect(traced(r.stderr)).toEqual([
+      expect.stringContaining('GET https://graph.microsoft.com/v1.0/me/messages/M1'),
+      expect.stringContaining('GET https://graph.microsoft.com/v1.0/me/todo/lists'),
+      expect.stringContaining(`POST https://graph.microsoft.com/v1.0/me/todo/lists/${encodeURIComponent('<first-list>')}/tasks`),
+    ]);
+    const out = JSON.parse(r.stdout);
+    expect(out.dryRun).toBe(true);
+    expect(out.body.title).toBe('[Email] <from GET>');
+    expect(out.body.body.content).toContain('Date: <from GET>');
+    expect(out.body.body.content).not.toContain('undefined');
+    expect(r.stderr).not.toContain('Task created');
+  });
+
+  it('file-announce marks read values <from GET> and prints no "Announced" line (DR-11, DR-1)', async () => {
+    const r = await runCommand(registerWorkflowCommands, ['wf', 'file-announce', 'D1', 'I1', '--team', 'T', '--channel', 'C'], { dryRun: true });
+    expect(r.exitCode).toBe(0);
+    const post = r.stderr.split('\n').find(l => l.startsWith('[dry-run] Body:') || l.includes('"content"'))!;
+    expect(post).toContain('<b><from GET></b>');
+    expect(post).toContain('Size: <from GET>');
+    expect(post).not.toContain('undefined');
+    expect(r.stderr).not.toContain('Announced');
+  });
+});
+
+describe('workflow validation (VT7: V-13, V-19, V-20, V-21)', () => {
+  it.each([
+    ['--work-start', 'abc'], ['--work-end', '25'], ['--work-start', '9:75'], ['--work-start', '-1'],
+  ])('focus-time %s %s exits 2 before any request', async (flag, value) => {
+    const r = await runCommand(registerWorkflowCommands, ['wf', 'focus-time', flag, value], { env });
+    expect(r.exitCode).toBe(2);
+    expect(r.calls).toHaveLength(0);
+  });
+
+  it('focus-time rejects --work-start not before --work-end (exit 2), also under dry-run', async () => {
+    const r = await runCommand(registerWorkflowCommands, ['wf', 'focus-time', '--work-start', '17', '--work-end', '9'], { env, dryRun: true });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).not.toContain('[dry-run] GET');
+  });
+
+  it('focus-time accepts HH:MM work hours', async () => {
+    vi.setSystemTime(new Date('2026-10-14T15:00:00Z')); // 08:00 PDT
+    const r = await runCommand(registerWorkflowCommands, ['wf', 'focus-time', '--work-start', '08:30', '--work-end', '12:15', '-o', 'json'], {
+      env, routes: [['GET', '/me/calendarView', () => ({ value: [] })]],
+    });
+    expect(r.exitCode).toBe(0);
+    expect(JSON.parse(r.stdout).gaps).toEqual([{ start: '8:30', end: '12:15', minutes: 225 }]);
+  });
+
+  it('email-to-task --due 2026-02-30 exits 2 before any request (V-13)', async () => {
+    const r = await runCommand(registerWorkflowCommands, ['wf', 'email-to-task', 'M1', '--due', '2026-02-30'], { env });
+    expect(r.exitCode).toBe(2);
+    expect(r.calls).toHaveLength(0);
+  });
+
+  it('email-to-task --importance outside low|normal|high exits 2 (V-19)', async () => {
+    const r = await runCommand(registerWorkflowCommands, ['wf', 'email-to-task', 'M1', '--importance', 'urgent'], { env });
+    expect(r.exitCode).toBe(2);
+    expect(r.calls).toHaveLength(0);
+  });
+
+  it('email-to-task with no To Do lists exits 5 not_found (V-18)', async () => {
+    const r = await runCommand(registerWorkflowCommands, ['wf', 'email-to-task', 'M1'], {
+      env, routes: [['GET', '/me/messages/M1', () => ({ subject: 'Hi' })], ['GET', '/me/todo/lists', () => ({ value: [] })]],
+    });
+    expect(r.exitCode).toBe(5);
+    expect(r.calls.some(c => c.method === 'POST')).toBe(false);
+  });
+
+  const routes = [
+    ['GET', '/me/messages/M1', () => ({ subject: 'Hi' })],
+    ['POST', '/me/todo/lists/L1/tasks', () => ({ id: 'T1', title: '[Email] Hi' })],
+  ] as never;
+
+  it('email-to-task -o yaml prints YAML, not prose (V-21)', async () => {
+    const r = await runCommand(registerWorkflowCommands, ['wf', 'email-to-task', 'M1', '--list', 'L1', '-o', 'yaml'], { env, routes });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('id: T1');
+    expect(r.stdout).not.toContain('Task created');
+  });
+
+  it('email-to-task -o text keeps the human status line on stderr (V-21, DR-1)', async () => {
+    const r = await runCommand(registerWorkflowCommands, ['wf', 'email-to-task', 'M1', '--list', 'L1', '-o', 'text'], { env, routes });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('Task created: "[Email] Hi"');
+    expect(r.stderr).toContain('ID: T1');
+  });
+});

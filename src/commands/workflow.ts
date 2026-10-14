@@ -1,10 +1,33 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { GraphClient } from '../graph-client.js';
-import { formatOutput, type OutputFormat } from '../formatter.js';
-import { handleErrors } from '../errors.js';
+import { formatOutput } from '../formatter.js';
+import { CliError, ExitCode, handleErrors } from '../errors.js';
 import {
-  parseDate, outputOption, info, resolveTimeZone, preferTimeZone, parseGraphDateTime, dayRange, toGraphDateTime,
+  parseDate, outputOption, info, success, resolveTimeZone, preferTimeZone, parseGraphDateTime, dayRange, toGraphDateTime,
 } from '../utils.js';
+
+/** Under --dry-run, stands in for a value the real run reads from Graph (DR-11, F5). */
+const FROM_GET = '<from GET>';
+/** Under --dry-run, stands in for the list the real run picks from GET /me/todo/lists (DR-10). */
+const FIRST_LIST = '<first-list>';
+
+/**
+ * Read-aggregate workflows under --dry-run: the reads are traced, but a report built from placeholders
+ * would be invented, so print nothing (text) or exactly {"dryRun":true} (json) (DR-12, F6).
+ */
+function previewReport(output: string): void {
+  if (output === 'json') console.log(JSON.stringify({ dryRun: true }));
+}
+
+/** Parse a work-day bound "H", "HH" or "HH:MM" (24h) into minutes since midnight; usage error otherwise (V-20). */
+function workMinute(flag: string, input: string): number {
+  const m = /^(\d{1,2})(?::([0-5]\d))?$/.exec(input);
+  const minutes = m ? Number(m[1]) * 60 + Number(m[2] ?? 0) : NaN;
+  if (!(minutes <= 24 * 60)) {
+    throw new CliError(`Invalid ${flag}: "${input}". Use an hour 0-24 or HH:MM (24h).`, { code: 'usage', exitCode: ExitCode.USAGE });
+  }
+  return minutes;
+}
 
 const WEEKDAY_INDEX: Record<string, number> = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 };
 
@@ -65,6 +88,7 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
         }),
         inboxUnreadCount(client),
       ]);
+      if (client.isDryRun()) return previewReport(opts.output);
 
       const events = ((eventsRes.data as Record<string, unknown>).value as Array<Record<string, unknown>>) || [];
 
@@ -123,6 +147,7 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
             '$select': 'subject,start,end,location,body,attendees,organizer,onlineMeeting,isAllDay',
           },
         });
+        if (client.isPreview(res)) return previewReport(opts.output);
         event = res.data as Record<string, unknown>;
       } else {
         // Find the next upcoming real meeting: not all-day, not already started, not declined
@@ -138,6 +163,7 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
             '$top': '50',
           },
         });
+        if (client.isPreview(res)) return previewReport(opts.output);
         const events = ((res.data as Record<string, unknown>).value as Array<Record<string, unknown>>) || [];
         const next = events.find(ev =>
           !ev.isAllDay
@@ -204,18 +230,22 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
     .description('Convert an email into a To Do task')
     .option('--list <listId>', 'To Do list ID (default: first list)')
     .option('--due <date>', 'Due date (YYYY-MM-DD)')
-    .option('--importance <level>', 'Importance: low, normal, high', 'normal')
+    .addOption(new Option('--importance <level>', 'Importance').choices(['low', 'normal', 'high']).default('normal'))
     .option('--timezone <tz>', 'IANA time zone (default: MS365_CLI_TIMEZONE or system zone)')
     .addOption(outputOption())
     .action(handleErrors(async (messageId: string, opts) => {
       const client = getClient();
       const tz = resolveTimeZone(opts.timezone);
+      // Validate before any request so a bad date exits 2 without touching Graph (V-13)
+      const due = opts.due ? parseDate(opts.due) : undefined;
 
-      // Fetch the email
+      // Fetch the email; under dry-run its fields are only known to the real run (DR-11)
       const msgRes = await client.request(`/me/messages/${encodeURIComponent(messageId)}`, {
         queryParams: { '$select': 'subject,from,bodyPreview,webLink,receivedDateTime' },
       });
-      const msg = msgRes.data as Record<string, unknown>;
+      const msg: Record<string, unknown> = client.isPreview(msgRes)
+        ? { subject: FROM_GET, from: { emailAddress: { name: FROM_GET, address: FROM_GET } }, receivedDateTime: FROM_GET, bodyPreview: FROM_GET, webLink: FROM_GET }
+        : msgRes.data as Record<string, unknown>;
       const from = (msg.from as Record<string, unknown>)?.emailAddress as Record<string, unknown>;
 
       // Determine target list
@@ -224,11 +254,15 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
         const listsRes = await client.request('/me/todo/lists', {
           queryParams: { '$top': '1' },
         });
-        const lists = ((listsRes.data as Record<string, unknown>).value as Array<Record<string, unknown>>) || [];
-        if (lists.length === 0) {
-          throw new Error('No To Do lists found. Create one first.');
+        if (client.isPreview(listsRes)) {
+          listId = FIRST_LIST;
+        } else {
+          const lists = ((listsRes.data as Record<string, unknown>).value as Array<Record<string, unknown>>) || [];
+          if (lists.length === 0) {
+            throw new CliError('No To Do lists found. Create one first.', { code: 'not_found', exitCode: ExitCode.NOT_FOUND });
+          }
+          listId = lists[0].id as string;
         }
-        listId = lists[0].id as string;
       }
 
       // Create the task
@@ -246,8 +280,8 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
         },
       };
 
-      if (opts.due) {
-        task.dueDateTime = { dateTime: parseDate(opts.due) + 'T00:00:00', timeZone: tz };
+      if (due) {
+        task.dueDateTime = { dateTime: due + 'T00:00:00', timeZone: tz };
       }
 
       const taskRes = await client.request(`/me/todo/lists/${encodeURIComponent(listId)}/tasks`, {
@@ -255,12 +289,13 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
         body: JSON.stringify(task),
       });
 
-      if (opts.output === 'json') {
-        console.log(formatOutput(taskRes.data, 'json'));
-      } else {
+      // Prose only for -o text, and as a status line; every other format gets the data (V-21, DR-1)
+      if (opts.output === 'text') {
         const created = taskRes.data as Record<string, unknown>;
-        console.log(`Task created: "${created.title}"`);
-        if (created.id) console.log(`ID: ${created.id}`);
+        success(`Task created: "${created.title}"`);
+        if (created.id) success(`ID: ${created.id}`);
+      } else {
+        console.log(formatOutput(taskRes.data, opts.output));
       }
     }));
 
@@ -327,6 +362,8 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
           }
         }
       }
+
+      if (client.isDryRun()) return previewReport(opts.output);
 
       if (opts.output === 'json') {
         console.log(JSON.stringify({
@@ -401,16 +438,19 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
         { queryParams: { '$select': 'name,webUrl,size,lastModifiedDateTime,createdBy' } }
       );
       const file = fileRes.data as Record<string, unknown>;
+      // Under dry-run the file's fields are only known to the real run (DR-11)
+      const preview = client.isPreview(fileRes);
+      const field = (v: unknown) => preview ? FROM_GET : escapeHtml(String(v ?? ''));
 
-      const sizeKb = Math.round((file.size as number || 0) / 1024);
-      const name = escapeHtml(String(file.name ?? ''));
+      const sizeKb = preview ? FROM_GET : String(Math.round((file.size as number || 0) / 1024));
+      const name = field(file.name);
       const intro = opts.message ? escapeHtml(opts.message) : `New file shared: <b>${name}</b>`;
       const body = [
         intro,
         '',
-        `File: <a href="${escapeHtml(String(file.webUrl ?? ''))}">${name}</a>`,
+        `File: <a href="${field(file.webUrl)}">${name}</a>`,
         `Size: ${sizeKb} KB`,
-        `Modified: ${escapeHtml(String(file.lastModifiedDateTime ?? ''))}`,
+        `Modified: ${field(file.lastModifiedDateTime)}`,
       ].join('<br>');
 
       // Post to channel
@@ -424,20 +464,26 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
         }
       );
 
-      info(`Announced "${file.name}" to channel.`);
+      success(`Announced "${file.name}" to channel.`);
     }));
 
   // ── focus-time ──────────────────────────────────────────────────
   wf
     .command('focus-time')
     .description('Find gaps in your calendar today for focus time')
-    .option('--work-start <hour>', 'Work day start hour (24h)', '9')
-    .option('--work-end <hour>', 'Work day end hour (24h)', '17')
+    .option('--work-start <time>', 'Work day start, 24h hour or HH:MM', '9')
+    .option('--work-end <time>', 'Work day end, 24h hour or HH:MM', '17')
     .option('--timezone <tz>', 'IANA time zone (default: MS365_CLI_TIMEZONE or system zone)')
     .addOption(outputOption('text'))
     .action(handleErrors(async (opts) => {
       const client = getClient();
       const tz = resolveTimeZone(opts.timezone);
+      // Validate before the read so a bad bound exits 2, also under dry-run (V-20)
+      const workStartMin = workMinute('--work-start', opts.workStart);
+      const endMinute = workMinute('--work-end', opts.workEnd);
+      if (workStartMin >= endMinute) {
+        throw new CliError(`--work-start (${opts.workStart}) must be before --work-end (${opts.workEnd}).`, { code: 'usage', exitCode: ExitCode.USAGE });
+      }
       const now = new Date();
       const { start, end } = dayRange(now, tz);
       const dayStart = new Date(start);
@@ -454,14 +500,11 @@ export function registerWorkflowCommands(program: Command, getClient: () => Grap
         },
       });
 
+      if (client.isPreview(eventsRes)) return previewReport(opts.output);
+
       const events = ((eventsRes.data as Record<string, unknown>).value as Array<Record<string, unknown>>) || [];
 
-      const workStart = parseInt(opts.workStart);
-      const workEnd = parseInt(opts.workEnd);
-
       // Build busy intervals (skip all-day and free events)
-      const workStartMin = workStart * 60;
-      const endMinute = workEnd * 60;
       const busy: Array<{ start: number; end: number; subject: string }> = [];
       for (const ev of events) {
         if (ev.isAllDay) continue;
