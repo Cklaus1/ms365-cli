@@ -3,6 +3,7 @@ import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { outputOption, info } from '../utils.js';
 import { handleErrors } from '../errors.js';
+import { addContentOptions, contentOptions, htmlToText, messageTransform } from '../content.js';
 
 export function registerTeamsCommands(program: Command, getClient: () => GraphClient): void {
   const teams = program.command('teams').description('Microsoft Teams (requires --org-mode)');
@@ -59,13 +60,13 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  teams
+  addContentOptions(teams
     .command('channel-messages <teamId> <channelId>')
-    .description('List channel messages')
+    .description('List channel messages (marked untrusted; see --body, --wrap-untrusted)')
     .option('--top <n>', 'Number of messages')
     .option('--all', 'Fetch all pages')
     .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+    .option('--page-delay <ms>', 'Delay between pages in ms'))
     .addOption(outputOption())
     .action(handleErrors(async (teamId: string, channelId: string, opts) => {
       const client = getClient();
@@ -73,7 +74,7 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       if (opts.top) queryParams['$top'] = opts.top;
 
       const endpoint = `/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages`;
-      await printList(client, endpoint, { queryParams }, opts);
+      await printList(client, endpoint, { queryParams }, opts, { transform: messageTransform(client, 'teams', contentOptions(opts)) });
     }));
 
   teams
@@ -143,13 +144,13 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  chat
+  addContentOptions(chat
     .command('messages <chatId>')
-    .description('List chat messages')
+    .description('List chat messages (marked untrusted; see --body, --wrap-untrusted)')
     .option('--top <n>', 'Number of messages')
     .option('--all', 'Fetch all pages')
     .option('--page-limit <n>', 'Max pages when using --all')
-    .option('--page-delay <ms>', 'Delay between pages in ms')
+    .option('--page-delay <ms>', 'Delay between pages in ms'))
     .addOption(outputOption())
     .action(handleErrors(async (chatId: string, opts) => {
       const client = getClient();
@@ -157,7 +158,7 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       if (opts.top) queryParams['$top'] = opts.top;
 
       const endpoint = `/chats/${encodeURIComponent(chatId)}/messages`;
-      await printList(client, endpoint, { queryParams }, opts);
+      await printList(client, endpoint, { queryParams }, opts, { transform: messageTransform(client, 'teams', contentOptions(opts)) });
     }));
 
   chat
@@ -212,11 +213,4 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
 
 function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-function htmlToText(html: string): string {
-  return html
-    .replace(/<[^>]*>/g, '')
-    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
-    .trim();
 }
