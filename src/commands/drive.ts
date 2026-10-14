@@ -1,11 +1,52 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
-import { handleErrors } from '../errors.js';
+import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { detectMimeType } from '../mime.js';
-import { formatSize, outputOption, confirm, info } from '../utils.js';
+import { formatSize, outputOption, confirm, info, encodePath, odataQuote, safeOutputPath } from '../utils.js';
 import fs from 'fs';
 import path from 'path';
+import { Readable } from 'stream';
+import { once } from 'events';
+import { pipeline } from 'stream/promises';
+import type { ReadableStream as WebReadableStream } from 'stream/web';
+
+/** Fetch a /content endpoint and stream its body to `target` (a file path) or stdout. */
+async function download(client: GraphClient, endpoint: string, target: string | null): Promise<void> {
+  const response = await client.request(endpoint, { responseType: 'stream' });
+  if (!response.stream) {
+    // --dry-run (or an empty body): nothing to save
+    console.log(formatOutput(response.data, 'json'));
+    return;
+  }
+  const body = Readable.fromWeb(response.stream as WebReadableStream<Uint8Array>);
+  if (target === null) {
+    for await (const chunk of body) {
+      if (!process.stdout.write(chunk)) await once(process.stdout, 'drain');
+    }
+    return;
+  }
+  try {
+    await pipeline(body, fs.createWriteStream(target));
+  } catch (err) {
+    fs.rmSync(target, { force: true });
+    throw err;
+  }
+  info(`Downloaded to ${target} (${formatSize(fs.statSync(target).size)})`);
+}
+
+/** Graph shares API: a sharing URL is addressed as "u!" + unpadded base64url of the URL. */
+function shareToken(input: string): string {
+  return /^https?:\/\//i.test(input)
+    ? 'u!' + Buffer.from(input).toString('base64url')
+    : encodeURIComponent(input);
+}
+
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks).toString('utf8').replace(/\r?\n$/, '');
+}
 
 export function registerDriveCommands(program: Command, getClient: () => GraphClient): void {
   const drive = program.command('drive').description('OneDrive file operations');
@@ -64,19 +105,11 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
     .command('download <driveId> <itemId> <childId>')
     .description('Download a file')
     .option('--out <path>', 'Output file path')
+    .option('--force', 'Overwrite an existing file')
     .action(handleErrors(async (driveId: string, itemId: string, childId: string, opts) => {
-      const client = getClient();
+      const target = safeOutputPath(`download_${childId}`, { out: opts.out, force: opts.force });
       const endpoint = `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}/children/${encodeURIComponent(childId)}/content`;
-      const response = await client.request(endpoint);
-      const data = response.data as Record<string, unknown>;
-
-      if (data.contentBytes) {
-        const outPath = path.resolve(opts.out || `download_${childId}`);
-        fs.writeFileSync(outPath, Buffer.from(data.contentBytes as string, 'base64'));
-        console.log(`Downloaded to ${outPath} (${data.size} bytes)`);
-      } else {
-        console.log(formatOutput(response.data, 'json'));
-      }
+      await download(getClient(), endpoint, target);
     }));
 
   drive
@@ -98,7 +131,7 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
       console.error(`Uploading ${fileName} (${formatSize(stat.size)}, ${contentType})`);
 
       // Use colon-based path syntax — colons are delimiters, not encoded
-      const endpoint = `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(parentId)}:/${fileName}:/content`;
+      const endpoint = `/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(parentId)}:/${encodeURIComponent(fileName)}:/content`;
       const response = await client.uploadFile(endpoint, resolvedPath, contentType);
 
       console.log(formatOutput(response.data, opts.output as OutputFormat));
@@ -118,22 +151,12 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
 
   drive
     .command('download-shared <shareId>')
-    .description('Download a file via sharing link')
+    .description('Download a file via share ID or sharing link URL')
     .option('--out <path>', 'Output file path')
+    .option('--force', 'Overwrite an existing file')
     .action(handleErrors(async (shareId: string, opts) => {
-      const client = getClient();
-      const response = await client.request(
-        `/shares/${encodeURIComponent(shareId)}/driveItem/content`
-      );
-      const data = response.data as Record<string, unknown>;
-
-      if (data.contentBytes) {
-        const outPath = path.resolve(opts.out || `shared_download`);
-        fs.writeFileSync(outPath, Buffer.from(data.contentBytes as string, 'base64'));
-        console.log(`Downloaded to ${outPath} (${data.size} bytes)`);
-      } else {
-        console.log(formatOutput(response.data, 'json'));
-      }
+      const target = safeOutputPath('shared_download', { out: opts.out, force: opts.force });
+      await download(getClient(), `/shares/${shareToken(shareId)}/driveItem/content`, target);
     }));
   // ── Search ───────────────────────────────────────────────────
   drive
@@ -146,9 +169,8 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
       const client = getClient();
       const queryParams: Record<string, string> = { '$top': opts.top };
 
-      // Don't encodeURIComponent the query — it's part of the OData function URL,
-      // and buildUrl will encode query params separately. Single quotes are escaped.
-      const safeQuery = query.replace(/'/g, "''");
+      // The term sits inside an OData function call in the path: escape quotes, then percent-encode.
+      const safeQuery = encodeURIComponent(odataQuote(query));
       const endpoint = opts.drive
         ? `/drives/${encodeURIComponent(opts.drive)}/root/search(q='${safeQuery}')`
         : `/me/drive/root/search(q='${safeQuery}')`;
@@ -184,16 +206,25 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
     .description('Create a sharing link for a file or folder')
     .option('--type <type>', 'Link type: view, edit, embed', 'view')
     .option('--scope <scope>', 'Link scope: anonymous, organization, users', 'organization')
-    .option('--password <password>', 'Password-protect the link')
+    .option('--password <password>', 'Password-protect the link (visible in shell history; prefer --password-stdin)')
+    .option('--password-stdin', 'Read the link password from stdin')
     .option('--expiry <datetime>', 'Expiration datetime (ISO 8601)')
     .addOption(outputOption())
     .action(handleErrors(async (driveId: string, itemId: string, opts) => {
+      if (opts.password && opts.passwordStdin) {
+        throw new CliError('Use either --password or --password-stdin, not both.', { code: 'usage', exitCode: ExitCode.USAGE });
+      }
       const client = getClient();
       const body: Record<string, unknown> = {
         type: opts.type,
         scope: opts.scope,
       };
-      if (opts.password) body.password = opts.password;
+      if (opts.password) {
+        info('Warning: --password is visible in shell history and process lists; prefer --password-stdin.');
+        body.password = opts.password;
+      } else if (opts.passwordStdin) {
+        body.password = await readStdin();
+      }
       if (opts.expiry) body.expirationDateTime = opts.expiry;
 
       const response = await client.request(
@@ -279,7 +310,7 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
       if (opts.top) queryParams['$top'] = opts.top;
 
       const endpoint = drivePath
-        ? `/me/drive/root:/${drivePath.replace(/^\//, '')}:/children`
+        ? `/me/drive/root:/${encodePath(drivePath.replace(/^\//, ''))}:/children`
         : '/me/drive/root/children';
       const response = await client.request(endpoint, { queryParams });
       console.log(formatOutput(response.data, opts.output as OutputFormat));
@@ -289,24 +320,11 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
     .command('cat <path>')
     .description('Download a file by path (e.g. "/Documents/notes.md")')
     .option('--out <file>', 'Save to file instead of stdout')
+    .option('--force', 'Overwrite an existing --out file')
     .action(handleErrors(async (drivePath: string, opts) => {
-      const client = getClient();
-      const cleanPath = drivePath.replace(/^\//, '');
-      const response = await client.request(`/me/drive/root:/${cleanPath}:/content`);
-      const data = response.data as Record<string, unknown>;
-
-      if (data.contentBytes) {
-        const buf = Buffer.from(data.contentBytes as string, 'base64');
-        if (opts.out) {
-          const outPath = (await import('path')).resolve(opts.out);
-          (await import('fs')).writeFileSync(outPath, buf);
-          info(`Saved to ${outPath} (${formatSize(buf.length)})`);
-        } else {
-          process.stdout.write(buf);
-        }
-      } else {
-        console.log(formatOutput(response.data, 'json'));
-      }
+      const target = opts.out ? safeOutputPath('', { out: opts.out, force: opts.force }) : null;
+      const cleanPath = encodePath(drivePath.replace(/^\//, ''));
+      await download(getClient(), `/me/drive/root:/${cleanPath}:/content`, target);
     }));
 
   drive
@@ -321,7 +339,7 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
       }
       const client = getClient();
       const contentType = opts.contentType || detectMimeType(path.basename(resolvedPath));
-      const cleanPath = remotePath.replace(/^\//, '');
+      const cleanPath = encodePath(remotePath.replace(/^\//, ''));
       const endpoint = `/me/drive/root:/${cleanPath}:/content`;
       const response = await client.uploadFile(endpoint, resolvedPath, contentType);
       console.log(formatOutput(response.data, opts.output as OutputFormat));
