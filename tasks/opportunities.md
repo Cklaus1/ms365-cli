@@ -14,3 +14,5 @@ Things discovered mid-build that have no assigned task. Each entry gives a propo
 - **[P2] Dry-run leaks the share password.** `GraphClient` dry-run prints request bodies to stdout, including `drive share --password` values. Redact known secret fields in dry-run output. (T15)
 - **[P3] Mail folder names in move/triage.** `move --folder` and `triage --folder` don't resolve folder names. Attachment upload-session chunks have no retry or resume, unlike `uploadFile`. (T10)
 - **[P2] Calendar time-zone defaults.** `calendar.ts` `--timezone` defaults to `'UTC'`, which T11 is fixing (M-9). Logged by T12; no action needed if T11 covers it.
+- **[P3] free-busy --emails isn't validated**, and dry-run `cal update` prints the zone-read GET. (T11)
+- **[P3] Setup wizard with piped stdin.** With non-TTY stdin, the second prompt never gets its input and the wizard exits 0 silently (this predates the run). `setup.ts` `prompt()` duplicates the readline code in `confirm()`. (T18)
