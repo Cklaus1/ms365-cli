@@ -1,9 +1,12 @@
 import crypto from 'crypto';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { configDir, withFileLock, writeFileAtomic } from './auth.js';
 import { CliError, ExitCode } from './errors.js';
+import { formatOutput } from './formatter.js';
 import type { GraphClient } from './graph-client.js';
+import { info } from './utils.js';
 
 /**
  * Idempotency-key ledger (spec §6 "Recover: retries", D23): `${configDir()}/idempotency.json` maps a caller's key
@@ -13,19 +16,28 @@ import type { GraphClient } from './graph-client.js';
 
 export type IdempotencyResult = Record<string, unknown>;
 
-interface Entry {
+/**
+ * pending: claimed by the run in {pid, host, startedAt}. done: sent; `result` replays.
+ * unknown: the send failed in a way that may still have reached Graph (CliError.maybeProcessed, R-7).
+ */
+export interface Entry {
   key: string;
   command: string;
   fingerprint: string;
-  status: 'pending' | 'done';
+  status: 'pending' | 'done' | 'unknown';
   result?: IdempotencyResult;
   ts: string;
+  pid?: number;
+  host?: string;
+  startedAt?: string;
 }
 
 type Replay = { status: 'replay'; result: IdempotencyResult; ts: string };
 export type KeyCheck = { status: 'new' } | Replay;
 
 const TTL_MS = 24 * 60 * 60 * 1000;
+/** A pending claim older than this is treated as abandoned (its owner may be on another host, or its pid reused). */
+const PENDING_STALE_MS = 60 * 60 * 1000;
 
 const ledgerPath = () => path.join(configDir(), 'idempotency.json');
 
@@ -78,6 +90,18 @@ export function checkKey(key: string, command: string, fp: string): KeyCheck {
       { code: 'idempotency_conflict', exitCode: ExitCode.USAGE, fix: 'Use a new --idempotency-key for a different request.' },
     );
   }
+  if (entry.status === 'unknown' || (entry.status === 'pending' && abandoned(entry))) {
+    const why = entry.status === 'unknown'
+      ? 'failed in a way that may still have reached Microsoft 365'
+      : 'was interrupted before it finished';
+    throw new CliError(
+      `A request with idempotency key "${key}" (${entry.command}, started ${entry.startedAt ?? entry.ts}) ${why}; it may or may not have taken effect.`,
+      {
+        code: 'idempotency_outcome_unknown', exitCode: ExitCode.GENERIC,
+        fix: `Check whether it took effect (for mail: Sent Items and Drafts). If it did not, run \`ms365 idempotency release ${key}\` and retry; \`ms365 idempotency list\` shows the ledger.`,
+      },
+    );
+  }
   if (entry.status === 'pending') {
     throw new CliError(
       `A request with idempotency key "${key}" started at ${entry.ts} and has not finished.`,
@@ -90,6 +114,19 @@ export function checkKey(key: string, command: string, fp: string): KeyCheck {
   return { status: 'replay', result: entry.result ?? {}, ts: entry.ts };
 }
 
+/** The claim's owner is gone: a dead pid on this host, or a claim older than PENDING_STALE_MS (R-6). */
+function abandoned(entry: Entry): boolean {
+  const started = Date.parse(entry.startedAt ?? entry.ts);
+  if (!(Date.now() - started < PENDING_STALE_MS)) return true;
+  if (entry.host !== os.hostname() || !entry.pid) return false;
+  try {
+    process.kill(entry.pid, 0);
+    return false;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ESRCH';
+  }
+}
+
 function putEntry(entry: Entry): void {
   writeLedger([...readLedger().filter(e => e.key !== entry.key), entry]);
 }
@@ -98,17 +135,37 @@ export function recordKey(key: string, command: string, fp: string, result: Idem
   withLedgerLock(() => putEntry({ key, command, fingerprint: fp, status: 'done', result, ts: new Date().toISOString() }));
 }
 
+/** The live ledger entries (expired ones dropped), for `ms365 idempotency list`. */
+export function listEntries(): Entry[] {
+  return readLedger();
+}
+
+/** Remove one key from the ledger; false when it is not there. Never called automatically (F17). */
+export function releaseKey(key: string): boolean {
+  return withLedgerLock(() => {
+    const entries = readLedger();
+    const rest = entries.filter(e => e.key !== key);
+    if (rest.length === entries.length) return false;
+    writeLedger(rest);
+    return true;
+  });
+}
+
 /**
  * Check the key and claim it with a 'pending' entry in one locked step, run `fn`, then store its result.
- * A concurrent caller with the same key sees 'pending' and fails with idempotency_in_progress; if `fn` throws,
- * the claim is dropped so the key can be retried.
+ * A concurrent caller with the same key sees 'pending' and fails with idempotency_in_progress, or with
+ * idempotency_outcome_unknown once the owner is gone. If `fn` throws, the claim is dropped so the key can be
+ * retried, unless the error says the request may have been processed: then the entry stays as 'unknown' (R-7).
  */
 export async function withIdempotency(
   key: string, command: string, fp: string, fn: () => Promise<IdempotencyResult>,
 ): Promise<Replay | { status: 'done'; result: IdempotencyResult }> {
   const check = withLedgerLock(() => {
     const c = checkKey(key, command, fp);
-    if (c.status === 'new') putEntry({ key, command, fingerprint: fp, status: 'pending', ts: new Date().toISOString() });
+    if (c.status === 'new') {
+      const ts = new Date().toISOString();
+      putEntry({ key, command, fingerprint: fp, status: 'pending', ts, pid: process.pid, host: os.hostname(), startedAt: ts });
+    }
     return c;
   });
   if (check.status === 'replay') return check;
@@ -116,9 +173,37 @@ export async function withIdempotency(
   try {
     result = await fn();
   } catch (err) {
-    withLedgerLock(() => writeLedger(readLedger().filter(e => e.key !== key)));
+    withLedgerLock(() => {
+      const entries = readLedger();
+      const claim = entries.find(e => e.key === key);
+      const rest = entries.filter(e => e.key !== key);
+      writeLedger(err instanceof CliError && err.maybeProcessed && claim ? [...rest, { ...claim, status: 'unknown' }] : rest);
+    });
     throw err;
   }
   recordKey(key, command, fp, result);
   return { status: 'done', result };
+}
+
+export const IDEMPOTENCY_HELP = 'Retry-safe: if this key was used for the same request in the last 24 h, do not send again';
+
+/**
+ * Run `send` under --idempotency-key (D23). Returns false when the key replays an earlier send: the stored result is
+ * printed and Graph is not called. Dry-run never touches the ledger.
+ */
+export async function idempotentSend(
+  client: GraphClient, key: string | undefined, command: string, request: unknown, send: () => Promise<void>,
+): Promise<boolean> {
+  if (!key || isDryRun(client)) {
+    await send();
+    return true;
+  }
+  const outcome = await withIdempotency(key, command, fingerprint(request), async () => {
+    await send();
+    return { sentAt: new Date().toISOString() };
+  });
+  if (outcome.status === 'done') return true;
+  info(`Already sent at ${outcome.ts}; not sent again.`);
+  console.log(formatOutput(outcome.result, 'json'));
+  return false;
 }
