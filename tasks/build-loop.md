@@ -53,7 +53,7 @@ Each node lists the spec items it covers. **[CP]** marks a critical-path task (s
 | T11 | 2 | calendar.ts fixes | M-9, M-18, M-23, M-26 (cal), M-29 (attendees), M-10 (cal) | src/commands/calendar.ts, test/commands/calendar.test.ts | T03, T06, T07, T08 |
 | T12 | 2 | workflow.ts fixes | M-7, M-8, M-16, M-21, M-22, M-10 (`workflow.ts:244`), C-19 (workflow) | src/commands/workflow.ts, test/commands/workflow.test.ts | T03, T06, T07 |
 | T13 | 2 | excel.ts fixes | M-4, M-5, M-24 (excel) | src/commands/excel.ts, test/commands/excel.test.ts | T03, T06, T07 |
-| T14 | 2 | teams.ts fixes | M-6 (D10), M-26 (teams) | src/commands/teams.ts, test/commands/teams.test.ts | T03, T06, T07 |
+| T14 | 2 | teams.ts fixes | M-6 (D10), M-26 (teams), M-32 | src/commands/teams.ts, test/commands/teams.test.ts | T03, T06, T07 |
 | T15 | 2 | drive.ts fixes and streamed downloads | C-10 (drive), C-19 (drive), M-20, M-29 (password), P-2 (callers) | src/commands/drive.ts, test/commands/drive.test.ts | T04, T06, T07 |
 | T16 | 2 | todo.ts and planner.ts fixes | M-10 (todo/planner), M-14, M-27, G-9 | src/commands/todo.ts, src/commands/planner.ts, test/commands/planner-todo.test.ts | T03, T06, T07 |
 | T17 | 2 | user.ts fixes | M-10 (set-ooo), M-28 (photo), M-26 (user) | src/commands/user.ts, test/commands/user.test.ts | T03, T06, T07 |

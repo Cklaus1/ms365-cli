@@ -1,5 +1,6 @@
 import { AuthManager } from './auth.js';
 import logger from './logger.js';
+import { CliError, ExitCode } from './errors.js';
 
 const MAX_RETRIES = 3;
 const MAX_PAGES = 100;
@@ -55,7 +56,7 @@ export class GraphClient {
     logger.debug(`${method} ${url}`, options.body ? { bodyLength: options.body.length } : undefined);
 
     if (this.readOnly && method !== 'GET') {
-      throw new Error(`Read-only mode: ${method} requests are blocked. Remove --read-only to proceed.`);
+      throw new CliError(`Read-only mode: ${method} requests are blocked. Remove --read-only to proceed.`, { code: 'read_only', exitCode: ExitCode.PERMISSION });
     }
 
     if (this.dryRun) {
@@ -135,12 +136,18 @@ export class GraphClient {
       if (!response.ok) {
         const errorText = await response.text();
         let errorMessage: string;
+        let graphCode: string | undefined;
+        let bodyRequestId: string | undefined;
         try {
           const errorJson = JSON.parse(errorText);
           errorMessage = errorJson.error?.message || errorText;
+          graphCode = errorJson.error?.code;
+          bodyRequestId = errorJson.error?.innerError?.['request-id'];
         } catch {
           errorMessage = errorText;
         }
+        const requestId = response.headers.get('request-id') || bodyRequestId || undefined;
+        const details = { status: response.status, graphCode, requestId };
 
         logger.error(`API error ${response.status}: ${errorMessage}`);
 
@@ -153,19 +160,11 @@ export class GraphClient {
             logger.info('Token refreshed, retrying request...');
             continue;
           } catch {
-            throw new Error(`Authentication failed. Run: ms365 auth login`);
+            throw new CliError(`Authentication failed. Run: ms365 auth login`,
+              { ...details, code: 'auth_failed', exitCode: ExitCode.AUTH, fix: 'ms365 auth login' });
           }
         }
-        if (response.status === 401) {
-          throw new Error(`Authentication failed. Run: ms365 auth login`);
-        }
-        if (response.status === 403) {
-          const hint = errorMessage.includes('scope') || errorMessage.includes('permission')
-            ? ' Try running with --org-mode.'
-            : '';
-          throw new Error(`Permission denied (403): ${errorMessage}${hint}`);
-        }
-        throw new Error(`Graph API error (${response.status}): ${errorMessage}`);
+        throw graphError(response.status, errorMessage, details);
       }
 
       // Handle binary content
@@ -241,7 +240,7 @@ export class GraphClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Graph API error (${response.status}): ${errorText}`);
+        throw graphError(response.status, errorText, { status: response.status, requestId: response.headers.get('request-id') || undefined });
       }
 
       const text = await response.text();
@@ -271,7 +270,7 @@ export class GraphClient {
     options?: { maxSimpleSize?: number },
   ): Promise<GraphResponse> {
     if (this.readOnly) {
-      throw new Error('Read-only mode: file uploads are blocked. Remove --read-only to proceed.');
+      throw new CliError('Read-only mode: file uploads are blocked. Remove --read-only to proceed.', { code: 'read_only', exitCode: ExitCode.PERMISSION });
     }
 
     const { createReadStream, statSync } = await import('fs');
@@ -451,6 +450,31 @@ export class GraphClient {
     }
     return { data: { value: allItems }, status: 200 };
   }
+}
+
+/** Map a failed Graph response to a CliError with the matching exit code. */
+export function graphError(
+  status: number,
+  message: string,
+  details: { status?: number; graphCode?: string; requestId?: string } = {},
+): CliError {
+  const d = { ...details, status };
+  if (status === 401) {
+    return new CliError(`Authentication failed. Run: ms365 auth login`,
+      { ...d, code: 'auth_failed', exitCode: ExitCode.AUTH, fix: 'ms365 auth login' });
+  }
+  if (status === 403) {
+    const hint = message.includes('scope') || message.includes('permission') ? ' Try running with --org-mode.' : '';
+    return new CliError(`Permission denied (403): ${message}${hint}`,
+      { ...d, code: 'permission_denied', exitCode: ExitCode.PERMISSION });
+  }
+  if (status === 404) {
+    return new CliError(`Graph API error (404): ${message}`, { ...d, code: 'not_found', exitCode: ExitCode.NOT_FOUND });
+  }
+  if (status === 429) {
+    return new CliError(`Graph API error (429): ${message}`, { ...d, code: 'throttled', exitCode: ExitCode.THROTTLED });
+  }
+  return new CliError(`Graph API error (${status}): ${message}`, { ...d, code: 'graph_error' });
 }
 
 function removeODataProps(obj: unknown): void {

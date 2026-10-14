@@ -1,5 +1,6 @@
 import { Option } from 'commander';
 import readline from 'readline';
+import { ConfirmationRefusedError } from './errors.js';
 
 const OUTPUT_FORMATS = ['json', 'table', 'csv', 'text', 'yaml'] as const;
 
@@ -26,19 +27,23 @@ export function info(msg: string): void {
  * Prompt user for confirmation on destructive operations.
  * Always prompts — no --yes override — so AI agents can't bypass.
  * Non-TTY stdin auto-rejects to prevent accidental deletions in scripts.
+ * Resolves true when confirmed; throws ConfirmationRefusedError (exit 7) otherwise.
  */
 export async function confirm(message: string): Promise<boolean> {
   if (!process.stdin.isTTY) {
-    console.error('Destructive operation requires interactive confirmation. Run in a terminal.');
-    return false;
+    throw new ConfirmationRefusedError('Destructive operation requires interactive confirmation. Run in a terminal.');
   }
   const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-  return new Promise((resolve) => {
-    rl.question(`${message} [y/N] `, (answer) => {
+  const answer = await new Promise<string>((resolve) => {
+    rl.question(`${message} [y/N] `, (a) => {
       rl.close();
-      resolve(answer.trim().toLowerCase() === 'y');
+      resolve(a);
     });
   });
+  if (answer.trim().toLowerCase() !== 'y') {
+    throw new ConfirmationRefusedError('Cancelled.');
+  }
+  return true;
 }
 
 /** Validate and return a YYYY-MM-DD date string. */

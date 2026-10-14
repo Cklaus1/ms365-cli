@@ -40,6 +40,7 @@ import { registerGenerateSkillsCommand } from './commands/generate-skills.js';
 import { registerSetupCommand } from './commands/setup.js';
 import logger from './logger.js';
 import { setQuiet } from './utils.js';
+import { reportError, setErrorFormat, ExitCode } from './errors.js';
 
 const program = new Command();
 
@@ -51,7 +52,15 @@ program
   .option('--read-only', 'Restrict to read-only operations')
   .option('--dry-run', 'Preview the API request without executing it')
   .option('--api-version <version>', 'Graph API version (default: v1.0)', 'v1.0')
-  .option('-q, --quiet', 'Suppress non-data output (confirmations, progress)');
+  .option('-q, --quiet', 'Suppress non-data output (confirmations, progress)')
+  .option('--error-format <format>', 'Error output on stderr: text or json (default: text)');
+
+// Usage errors (unknown option, missing argument) exit 2; help/version exit 0.
+// Must be set before subcommands are registered so they inherit it.
+program.exitOverride((err) => {
+  const ok = err.code === 'commander.helpDisplayed' || err.code === 'commander.version' || err.code === 'commander.help' || err.exitCode === 0;
+  process.exit(ok ? ExitCode.OK : ExitCode.USAGE);
+});
 
 // Determine flags from env or argv
 const orgMode =
@@ -76,6 +85,13 @@ let apiVersion = process.env.MS365_CLI_API_VERSION || 'v1.0';
 const apiIdx = process.argv.indexOf('--api-version');
 if (apiIdx !== -1 && process.argv[apiIdx + 1]) {
   apiVersion = process.argv[apiIdx + 1];
+}
+
+const errFmtIdx = process.argv.findIndex(a => a === '--error-format' || a.startsWith('--error-format='));
+if (errFmtIdx !== -1) {
+  const arg = process.argv[errFmtIdx];
+  const val = arg.includes('=') ? arg.split('=')[1] : process.argv[errFmtIdx + 1];
+  if (val === 'json' || val === 'text') setErrorFormat(val);
 }
 
 const scopes = buildScopes(orgMode);
@@ -139,7 +155,6 @@ program.hook('preAction', async (thisCommand) => {
 });
 
 program.parseAsync(process.argv).catch((err) => {
-  logger.error(err.message);
-  console.error('Error:', err.message);
-  process.exit(1);
+  logger.error(err instanceof Error ? err.message : String(err));
+  process.exit(reportError(err));
 });

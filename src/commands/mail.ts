@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, streamPages, type OutputFormat } from '../formatter.js';
-import { handleErrors } from '../errors.js';
+import { handleErrors, CliError } from '../errors.js';
 import { parseDate, truncate, parseRecipients, formatSize, outputOption, confirm, info } from '../utils.js';
 
 // Well-known folder names that Graph API supports directly
@@ -878,7 +878,8 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       }
       console.log(`Marked ${succeeded} message(s) as read.`);
       if (failed.length > 0) {
-        console.error(`Failed ${failed.length}: ${failed.map(f => f.id.substring(0, 12) + '...').join(', ')}`);
+        throw new CliError(`Failed ${failed.length} of ${ids.length}: ${failed.map(f => f.id.substring(0, 12) + '...').join(', ')}`,
+          { code: 'partial_failure' });
       }
     }));
 
@@ -905,7 +906,8 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       }
       console.log(`Moved ${succeeded} message(s).`);
       if (failed.length > 0) {
-        console.error(`Failed ${failed.length}: ${failed.map(f => f.id.substring(0, 12) + '...').join(', ')}`);
+        throw new CliError(`Failed ${failed.length} of ${ids.length}: ${failed.map(f => f.id.substring(0, 12) + '...').join(', ')}`,
+          { code: 'partial_failure' });
       }
     }));
 
