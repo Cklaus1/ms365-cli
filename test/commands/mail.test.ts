@@ -82,12 +82,14 @@ describe('mail create-rule (M-11, D11)', () => {
     expect(r.calls[0].body).toMatchObject({ conditions: {}, actions: { markAsRead: true }, isEnabled: true });
   });
 
-  it('--disabled creates the rule disabled; --enabled is accepted', async () => {
+  it('--disabled creates the rule disabled; --enabled no longer exists (D29)', async () => {
     const r1 = await run(['create-rule', '--name', 'x', '--from', 'a@b.com', '--mark-read', '--disabled', '-o', 'json']);
     expect(r1.calls[0].body).toMatchObject({ isEnabled: false, conditions: { senderContains: ['a@b.com'] } });
     const r2 = await run(['create-rule', '--name', 'x', '--from', 'a@b.com', '--mark-read', '--enabled', '-o', 'json']);
-    expect(r2.exitCode).toBe(0);
-    expect(r2.calls[0].body).toMatchObject({ isEnabled: true });
+    expect(r2.exitCode).toBe(2);
+    expect(r2.calls).toHaveLength(0);
+    const r3 = await run(['create-rule', '--name', 'x', '--from', 'a@b.com', '--mark-read', '-o', 'json']);
+    expect(r3.calls[0].body).toMatchObject({ isEnabled: true });
   });
 });
 

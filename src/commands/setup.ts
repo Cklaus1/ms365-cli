@@ -80,7 +80,7 @@ export function registerSetupCommand(program: Command, getAuth: () => AuthManage
 
       // Step 1: Check if already logged in. AuthManager needs a client ID, so only check when one is configured.
       info('Step 1/5: Checking existing authentication...');
-      if (process.env.MS365_CLI_CLIENT_ID || process.env.MS365_MCP_CLIENT_ID) {
+      if (process.env.MS365_CLI_CLIENT_ID) {
         const authManager = getAuth();
         await authManager.initialize();
         const currentStatus = await authManager.verifyLogin();

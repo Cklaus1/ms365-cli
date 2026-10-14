@@ -52,7 +52,6 @@ ms365 --org-mode teams list -o table
 - [Dry Run](#dry-run)
 - [Error Handling](#error-handling)
 - [Environment Variables](#environment-variables)
-- [MCP Server Compatibility](#mcp-server-compatibility)
 - [Architecture](#architecture)
 - [Development](#development)
 - [License](#license)
@@ -75,7 +74,7 @@ ms365 --org-mode teams list -o table
 - **Auto-pagination** — `--all` with `--page-limit` and `--page-delay` controls
 - **Dry-run mode** — preview API requests without executing
 - **Retry with backoff** — automatic retry on 429 rate limits and 5xx server errors
-- **`.env` file support** — auto-loads from current directory, compatible with MCP server env vars
+- **`.env` file support** — auto-loads from current directory
 - **Organization mode** — opt-in access to Teams, SharePoint, shared mailboxes, Groups
 - **Graph API version** — switch between `v1.0` and `beta` with `--api-version`
 - **Structured logging** — JSON log files with daily rotation
@@ -696,21 +695,6 @@ The CLI auto-loads `.env` from the current working directory.
 
 ---
 
-## MCP Server Compatibility
-
-If you're also using the [ms-365-mcp-server](https://github.com/softeria/ms-365-mcp-server), the CLI accepts its env var names as fallbacks:
-
-| MCP Server Variable       | CLI Equivalent          |
-|---------------------------|-------------------------|
-| `MS365_MCP_CLIENT_ID`    | `MS365_CLI_CLIENT_ID`  |
-| `MS365_MCP_TENANT_ID`    | `MS365_CLI_TENANT_ID`  |
-| `MS365_MCP_OAUTH_TOKEN`  | `MS365_CLI_TOKEN`      |
-| `MS365_MCP_ORG_MODE`     | `MS365_CLI_ORG_MODE`   |
-
-You can share the same `.env` file between both projects.
-
----
-
 ## Architecture
 
 ```
@@ -757,7 +741,7 @@ ms365-cli/
 - **Standalone** — no MCP server, no MCP SDK. Talks directly to Microsoft Graph API via `fetch`.
 - **Commander.js** — CLI framework with subcommands, options, and help generation.
 - **MSAL** — Microsoft's official auth library for device code flow and silent token refresh.
-- **dotenv** — auto-loads `.env` from working directory, compatible with MCP server env vars.
+- **dotenv** — auto-loads `.env` from working directory.
 - **Streaming upload** — files <= 4MB use simple PUT; larger files use chunked upload sessions (10MB chunks).
 - **MIME auto-detection** — 70+ file extensions mapped; override with `--content-type`.
 - **Structured logging** — JSON-line log files with daily rotation via `MS365_CLI_LOG_FILE`.

@@ -11,7 +11,7 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ms365-idx-'));
 function cli(args: string[], extraEnv: Record<string, string> = {}) {
   return spawnSync(tsx, [path.join(root, 'src/index.ts'), ...args], {
     cwd: home, encoding: 'utf8', timeout: 30_000, input: '',
-    env: { ...process.env, HOME: home, MS365_CLI_TOKEN: '', MS365_MCP_OAUTH_TOKEN: '',
+    env: { ...process.env, HOME: home, MS365_CLI_TOKEN: '',
       MS365_CLI_CLIENT_ID: '00000000-0000-0000-0000-000000000000', MS365_CLI_API_VERSION: '', ...extraEnv },
   });
 }
@@ -49,7 +49,7 @@ describe('global flags (C-15)', () => {
 });
 
 describe('offline commands (C-16, M-25)', () => {
-  const noClientId = { MS365_CLI_CLIENT_ID: '', MS365_MCP_CLIENT_ID: '' };
+  const noClientId = { MS365_CLI_CLIENT_ID: '' };
   it('schema --list works without a client ID', () => {
     const r = cli(['schema', '--list'], noClientId);
     expect(r.status, r.stderr).toBe(0);

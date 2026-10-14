@@ -75,7 +75,7 @@ function globalFlags() {
     throw new CliError(`Invalid API version "${apiVersion}". Use v1.0 or beta.`, { code: 'usage', exitCode: ExitCode.USAGE });
   }
   return {
-    orgMode: !!o.orgMode || envTrue('MS365_CLI_ORG_MODE', 'MS365_MCP_ORG_MODE'),
+    orgMode: !!o.orgMode || envTrue('MS365_CLI_ORG_MODE'),
     dryRun: !!o.dryRun,
     readOnly: !!o.readOnly || envTrue('MS365_CLI_READ_ONLY'),
     apiVersion,

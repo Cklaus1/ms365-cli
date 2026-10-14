@@ -27,7 +27,7 @@ has_cmd() { $CLI --help 2>/dev/null | grep -qE "^  $1( |\b)"; }
 check "version" 0 $CLI --version && { grep -qx "0.1.0" "$TMP/out" && ok "version" || bad "version output"; }
 
 # 2. schema --list works offline (no auth)
-check "schema --list" 0 env MS365_CLI_CLIENT_ID= MS365_MCP_CLIENT_ID= $CLI schema --list && ok "schema --list"
+check "schema --list" 0 env MS365_CLI_CLIENT_ID=  $CLI schema --list && ok "schema --list"
 
 # 3. dry-run send exits 0 and prints the request
 check "dry-run mail send" 0 $CLI --dry-run mail send --to a@b.com --subject s --body b && {
@@ -42,7 +42,7 @@ check "dry-run drive cp 12MB" 0 $CLI --dry-run drive cp "$TMP/big.bin" /smoke/bi
 
 # 5. auth failure maps to exit code 3 with an actionable hint (no valid login available offline)
 HOME_SAVE="$HOME"; export HOME="$TMP/home"; mkdir -p "$HOME"
-check "auth failure exit 3" 3 env MS365_CLI_TOKEN= MS365_MCP_OAUTH_TOKEN= MS365_CLI_CLIENT_ID=00000000-0000-0000-0000-000000000000 $CLI --read-only user me && {
+check "auth failure exit 3" 3 env MS365_CLI_TOKEN=  MS365_CLI_CLIENT_ID=00000000-0000-0000-0000-000000000000 $CLI --read-only user me && {
   grep -qi "auth login" "$TMP/err" && ok "auth failure exit 3" || bad "auth failure hint"; }
 
 # 6. JSON error format

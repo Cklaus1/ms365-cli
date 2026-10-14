@@ -158,17 +158,8 @@ describe('drive share password (M-29)', () => {
     }
   });
 
-  it('--password still works but warns about shell history', async () => {
-    const r = await runCommand(registerDriveCommands, ['drive', 'share', 'D', 'I', '--password', 'pw'], {
-      routes: [['POST', '/drives/', () => ({ link: { webUrl: 'https://x' } })]],
-    });
-    expect(r.exitCode).toBe(0);
-    expect((r.calls[0].body as Record<string, unknown>).password).toBe('pw');
-    expect(r.stderr).toMatch(/shell history/);
-  });
-
-  it('rejects --password together with --password-stdin', async () => {
-    const r = await runCommand(registerDriveCommands, ['drive', 'share', 'D', 'I', '--password', 'pw', '--password-stdin']);
+  it('--password no longer exists: secrets never come from argv (D29)', async () => {
+    const r = await runCommand(registerDriveCommands, ['drive', 'share', 'D', 'I', '--password', 'pw']);
     expect(r.exitCode).toBe(2);
     expect(r.calls).toHaveLength(0);
   });

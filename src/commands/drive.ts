@@ -197,23 +197,16 @@ export function registerDriveCommands(program: Command, getClient: () => GraphCl
     .description('Create a sharing link for a file or folder')
     .option('--type <type>', 'Link type: view, edit, embed', 'view')
     .option('--scope <scope>', 'Link scope: anonymous, organization, users', 'organization')
-    .option('--password <password>', 'Password-protect the link (visible in shell history; prefer --password-stdin)')
-    .option('--password-stdin', 'Read the link password from stdin')
+    .option('--password-stdin', 'Password-protect the link; the password is read from stdin (never from argv)')
     .option('--expiry <datetime>', 'Expiration datetime (ISO 8601)')
     .addOption(outputOption())
     .action(handleErrors(async (driveId: string, itemId: string, opts) => {
-      if (opts.password && opts.passwordStdin) {
-        throw new CliError('Use either --password or --password-stdin, not both.', { code: 'usage', exitCode: ExitCode.USAGE });
-      }
       const client = getClient();
       const body: Record<string, unknown> = {
         type: opts.type,
         scope: opts.scope,
       };
-      if (opts.password) {
-        info('Warning: --password is visible in shell history and process lists; prefer --password-stdin.');
-        body.password = opts.password;
-      } else if (opts.passwordStdin) {
+      if (opts.passwordStdin) {
         body.password = await readStdin();
       }
       if (opts.expiry) body.expirationDateTime = opts.expiry;

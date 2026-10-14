@@ -124,7 +124,7 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
     .action(handleErrors(async (opts) => {
       const client = getClient();
       // setPresence requires application ID — use the configured client ID
-      const clientId = process.env.MS365_CLI_CLIENT_ID || process.env.MS365_MCP_CLIENT_ID;
+      const clientId = process.env.MS365_CLI_CLIENT_ID;
       if (!clientId) throw new Error('Client ID not configured. Set MS365_CLI_CLIENT_ID or run: ms365 auth setup');
       await client.request('/me/presence/setPresence', {
         method: 'POST',
@@ -143,7 +143,7 @@ export function registerUserCommands(program: Command, getClient: () => GraphCli
     .description('Clear custom presence and revert to automatic')
     .action(handleErrors(async () => {
       const client = getClient();
-      const clientId = process.env.MS365_CLI_CLIENT_ID || process.env.MS365_MCP_CLIENT_ID;
+      const clientId = process.env.MS365_CLI_CLIENT_ID;
       if (!clientId) throw new Error('Client ID not configured. Set MS365_CLI_CLIENT_ID or run: ms365 auth setup');
       await client.request('/me/presence/clearPresence', {
         method: 'POST',

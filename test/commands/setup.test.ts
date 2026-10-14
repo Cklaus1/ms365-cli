@@ -12,7 +12,7 @@ import { AuthManager, buildScopes } from '../../src/auth.js';
 
 let tmp: string;
 const savedEnv: Record<string, string | undefined> = {};
-const ENV_KEYS = ['MS365_CLI_CONFIG_DIR', 'MS365_CLI_CLIENT_ID', 'MS365_MCP_CLIENT_ID'];
+const ENV_KEYS = ['MS365_CLI_CONFIG_DIR', 'MS365_CLI_CLIENT_ID'];
 
 beforeEach(() => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ms365-setup-'));

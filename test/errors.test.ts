@@ -108,7 +108,7 @@ describe('exit-code matrix (spawned CLI)', () => {
   const tsx = path.join(root, 'node_modules', '.bin', 'tsx');
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ms365-exit-'));
   const env = {
-    ...process.env, HOME: home, MS365_CLI_TOKEN: '', MS365_MCP_OAUTH_TOKEN: '',
+    ...process.env, HOME: home, MS365_CLI_TOKEN: '',
     MS365_CLI_CLIENT_ID: '00000000-0000-0000-0000-000000000000',
   };
   const cli = (...args: string[]) => spawnSync(tsx, [path.join(root, 'src/index.ts'), ...args],

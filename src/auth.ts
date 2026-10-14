@@ -194,10 +194,8 @@ export class AuthManager {
   /** @param scopes scopes requested (and consented) at login */
   constructor(scopes: string[], options: AuthManagerOptions = {}) {
     this.scopes = scopes;
-    // Accept both MS365_CLI_* and MS365_MCP_* env var names (MCP server compat)
     const clientId = options.clientId
-      || process.env.MS365_CLI_CLIENT_ID
-      || process.env.MS365_MCP_CLIENT_ID;
+      || process.env.MS365_CLI_CLIENT_ID;
     if (!clientId) {
       throw new CliError(
         'No client ID configured. Set MS365_CLI_CLIENT_ID in your .env file or run: ms365 auth setup',
@@ -206,7 +204,6 @@ export class AuthManager {
     }
     const tenantId = options.tenantId
       || process.env.MS365_CLI_TENANT_ID
-      || process.env.MS365_MCP_TENANT_ID
       || 'common';
     const config: Configuration = {
       auth: {
@@ -241,8 +238,8 @@ export class AuthManager {
   }
 
   async getToken(forceRefresh = false): Promise<string> {
-    // Check env var token first (accept both CLI and MCP server names)
-    const envToken = process.env.MS365_CLI_TOKEN || process.env.MS365_MCP_OAUTH_TOKEN;
+    // A token supplied via env (e.g. from another tool) bypasses the cache
+    const envToken = process.env.MS365_CLI_TOKEN;
     if (envToken) return envToken;
 
     if (!forceRefresh && this.accessToken && this.tokenExpiry && this.tokenExpiry - EXPIRY_SKEW_MS > Date.now()) {

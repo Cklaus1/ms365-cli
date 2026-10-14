@@ -870,7 +870,6 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .option('--stop-processing', 'Stop processing subsequent rules')
     .option('--all-messages', 'Apply the rule to every incoming message (required when no condition is given)')
     .option('--disabled', 'Create the rule disabled')
-    .option('--enabled', 'Accepted for compatibility; rules are enabled unless --disabled')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const conditions: Record<string, unknown> = {};

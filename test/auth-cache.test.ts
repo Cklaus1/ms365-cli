@@ -38,7 +38,6 @@ beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ms365-auth-'));
   vi.stubEnv('MS365_CLI_CONFIG_DIR', dir);
   vi.stubEnv('MS365_CLI_TOKEN', '');
-  vi.stubEnv('MS365_MCP_OAUTH_TOKEN', '');
   vi.stubEnv('MS365_CLI_CLIENT_ID', CID);
 });
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
@@ -185,7 +184,6 @@ describe('AuthManager behavior', () => {
 
   it('missing client ID → exit 3 with a setup hint', () => {
     vi.stubEnv('MS365_CLI_CLIENT_ID', '');
-    vi.stubEnv('MS365_MCP_CLIENT_ID', '');
     try { new AuthManager([]); expect.fail(); } catch (e) {
       expect((e as CliError).exitCode).toBe(ExitCode.AUTH);
       expect((e as CliError).fix).toBe('ms365 auth setup');
