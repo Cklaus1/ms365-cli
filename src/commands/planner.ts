@@ -1,8 +1,8 @@
 import { Command } from 'commander';
 import { GraphClient, type GraphRequestOptions } from '../graph-client.js';
-import { formatOutput, type OutputFormat } from '../formatter.js';
+import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
-import { outputOption, confirm, info, parseTime } from '../utils.js';
+import { outputOption, addListOptions, confirm, success, parseTime } from '../utils.js';
 import { resolve, looksLikeId } from '../resolve.js';
 
 const PREMIUM_HINT = "If this is a Premium plan (Project for the web), Graph's Planner API can't reach it.";
@@ -31,10 +31,10 @@ function parseCategories(input: string): Record<string, string | null> {
   return parsed as Record<string, string | null>;
 }
 
-/** Planner request; a 403/404 on a plan or task may mean a Premium plan, so say so. */
-async function plannerRequest(client: GraphClient, endpoint: string, options?: GraphRequestOptions) {
+/** Run fn for a Planner call on endpoint; a 403/404 on a plan or task may mean a Premium plan, so say so. */
+async function withPremiumHint<T>(endpoint: string, fn: () => Promise<T>): Promise<T> {
   try {
-    return await client.request(endpoint, options);
+    return await fn();
   } catch (err) {
     if (err instanceof CliError && (err.status === 403 || err.status === 404) && /^\/planner\/(plans|tasks)\b/.test(endpoint)) {
       throw new CliError(err.message, {
@@ -44,6 +44,10 @@ async function plannerRequest(client: GraphClient, endpoint: string, options?: G
     }
     throw err;
   }
+}
+
+function plannerRequest(client: GraphClient, endpoint: string, options?: GraphRequestOptions) {
+  return withPremiumHint(endpoint, () => client.request(endpoint, options));
 }
 
 /** Fetch a Planner resource's ETag (body @odata.etag, else the ETag header) for If-Match. */
@@ -70,14 +74,12 @@ function plannerDue(input: string, tz?: string): string {
 export function registerPlannerCommands(program: Command, getClient: () => GraphClient): void {
   const planner = program.command('planner').description('Microsoft Planner tasks');
 
-  planner
+  addListOptions(planner
     .command('plans')
-    .description('List my planner plans')
+    .description('List my planner plans'))
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
-      const client = getClient();
-      const response = await client.request('/me/planner/plans');
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(getClient(), '/me/planner/plans', {}, opts);
     }));
 
   planner
@@ -104,26 +106,24 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  planner
+  addListOptions(planner
     .command('my-tasks')
-    .description('List my planner tasks')
+    .description('List my planner tasks'))
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
-      const client = getClient();
-      const response = await client.request('/me/planner/tasks');
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(getClient(), '/me/planner/tasks', {}, opts);
     }));
 
-  planner
+  addListOptions(planner
     .command('tasks')
     .argument('<planId>', 'Plan ID or name')
-    .description('List tasks in a plan')
+    .description('List tasks in a plan'))
     .addOption(outputOption())
     .action(handleErrors(async (planArg: string, opts) => {
       const client = getClient();
       const planId = await resolve(client, 'plan', planArg);
-      const response = await plannerRequest(client, `/planner/plans/${encodeURIComponent(planId)}/tasks`);
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      const endpoint = `/planner/plans/${encodeURIComponent(planId)}/tasks`;
+      await withPremiumHint(endpoint, () => printList(client, endpoint, {}, opts));
     }));
 
   planner
@@ -146,16 +146,16 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  planner
+  addListOptions(planner
     .command('buckets')
     .argument('<planId>', 'Plan ID or name')
-    .description('List plan buckets')
+    .description('List plan buckets'))
     .addOption(outputOption())
     .action(handleErrors(async (planArg: string, opts) => {
       const client = getClient();
       const planId = await resolve(client, 'plan', planArg);
-      const response = await plannerRequest(client, `/planner/plans/${encodeURIComponent(planId)}/buckets`);
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      const endpoint = `/planner/plans/${encodeURIComponent(planId)}/buckets`;
+      await withPremiumHint(endpoint, () => printList(client, endpoint, {}, opts));
     }));
 
   planner
@@ -171,17 +171,16 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  planner
+  addListOptions(planner
     .command('bucket-tasks')
     .argument('<bucketId>', 'Bucket ID or name')
     .option('--plan <planId>', 'Plan ID or name (to resolve a bucket by name)')
-    .description('List tasks in a bucket')
+    .description('List tasks in a bucket'))
     .addOption(outputOption())
     .action(handleErrors(async (bucketArg: string, opts) => {
       const client = getClient();
       const bucketId = await resolveBucket(client, bucketArg, opts.plan);
-      const response = await client.request(`/planner/buckets/${encodeURIComponent(bucketId)}/tasks`);
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      await printList(client, `/planner/buckets/${encodeURIComponent(bucketId)}/tasks`, {}, opts);
     }));
 
   planner
@@ -291,7 +290,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
         method: 'DELETE',
         headers: { 'If-Match': etag },
       });
-      info('Task deleted.');
+      success('Task deleted.');
     }));
 
   planner
@@ -308,7 +307,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
         method: 'DELETE',
         headers: { 'If-Match': etag },
       });
-      info('Plan deleted.');
+      success('Plan deleted.');
     }));
 
   planner
@@ -326,7 +325,7 @@ export function registerPlannerCommands(program: Command, getClient: () => Graph
         method: 'DELETE',
         headers: { 'If-Match': etag },
       });
-      info('Bucket deleted.');
+      success('Bucket deleted.');
     }));
 
   planner
