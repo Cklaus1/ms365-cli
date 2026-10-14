@@ -283,7 +283,7 @@ describe('ms365 resolve', () => {
     expect(miss.exitCode).toBe(5);
     const dry = await runCommand(registerResolveCommands, ['resolve', 'mail-folder', 'Receipts', '-o', 'json'], { dryRun: true });
     expect(dry.exitCode).toBe(0);
-    expect(dry.stdout).toContain('[dry-run] GET https://graph.microsoft.com/v1.0/me/mailFolders?');
+    expect(dry.stderr).toContain('[dry-run] GET https://graph.microsoft.com/v1.0/me/mailFolders?');
     expect(dry.stdout).toContain('"id": "Receipts"');
   });
 
@@ -352,7 +352,7 @@ describe('commands accept names', () => {
   it('dry-run previews the resolution GET and falls back to the input', async () => {
     const r = await runCommand(registerTodoCommands, ['todo', 'tasks', 'Groceries'], { dryRun: true });
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain('[dry-run] GET https://graph.microsoft.com/v1.0/me/todo/lists\n');
-    expect(r.stdout).toContain('/me/todo/lists/Groceries/tasks');
+    expect(r.stderr).toContain('[dry-run] GET https://graph.microsoft.com/v1.0/me/todo/lists\n');
+    expect(r.stderr).toContain('/me/todo/lists/Groceries/tasks');
   });
 });

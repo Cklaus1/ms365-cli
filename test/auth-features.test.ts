@@ -273,10 +273,12 @@ describe('T40: global --account / --profile wiring in index.ts', () => {
 
   it('--profile (and MS365_CLI_PROFILE) supplies the client ID', () => {
     saveProfile('work', { clientId: CID });
-    expect(cli(['--dry-run', 'user', 'me']).status).toBe(ExitCode.AUTH); // no client ID without the profile
-    const r = cli(['--profile', 'work', '--dry-run', 'user', 'me']);
-    expect(r.status, r.stderr).toBe(0);
-    expect(cli(['--dry-run', 'user', 'me'], { MS365_CLI_PROFILE: 'work' }).status).toBe(0);
+    // Live runs (dry-run needs no client ID, DR-16): without the profile there is none; with it, only the login is missing.
+    expect(cli(['--error-format', 'json', 'user', 'me']).stderr).toContain('"code":"no_client_id"');
+    const r = cli(['--profile', 'work', '--error-format', 'json', 'user', 'me']);
+    expect(r.status).toBe(ExitCode.AUTH);
+    expect(r.stderr).toContain('"code":"auth_required"');
+    expect(cli(['--error-format', 'json', 'user', 'me'], { MS365_CLI_PROFILE: 'work' }).stderr).toContain('"code":"auth_required"');
   }, 60_000);
 
   it('an unknown --account (or MS365_CLI_ACCOUNT) exits 3 pointing at `ms365 auth accounts`', () => {

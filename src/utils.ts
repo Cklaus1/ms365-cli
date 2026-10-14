@@ -25,6 +25,28 @@ export function info(msg: string): void {
   if (!quiet) console.error(msg);
 }
 
+/** Global dry-run flag (--dry-run), set by index.ts and the test harness; GraphClient keeps its own copy. */
+let dryRun = false;
+export function setDryRun(val: boolean): void { dryRun = val; }
+export function isDryRun(): boolean { return dryRun; }
+
+/** One dry-run trace line on stderr. Not dropped by --quiet: the trace is what a dry run is for (F1). */
+export function dryRunTrace(line: string): void {
+  console.error(`[dry-run] ${line}`);
+}
+
+let previewed = 0;
+/** Count one previewed (not sent) request toward the dry-run trailer. */
+export function notePreview(): void { previewed++; }
+/** Requests previewed since the last reset (handleErrors resets it per command). */
+export function previewCount(): number { return previewed; }
+export function resetPreviewCount(): void { previewed = 0; }
+
+/** A post-write confirmation ("Email sent."): like info(), but silent under --dry-run, where nothing happened (F2). */
+export function success(msg: string): void {
+  if (!dryRun) info(msg);
+}
+
 /** One line reader shared by every question of an interactive flow (confirm, the setup wizard). */
 export interface Prompter {
   /** Ask a question; resolves with the raw answer line, rejects via onClose once input has ended. */
@@ -79,9 +101,15 @@ export function createPrompter(opts: {
  * Prompt user for confirmation on destructive operations.
  * Always prompts — no --yes override — so AI agents can't bypass.
  * Non-TTY stdin auto-rejects to prevent accidental deletions in scripts.
+ * Under --dry-run nothing is sent, so it resolves without asking and traces the question (F4; local-only
+ * commands guard themselves with isDryRun(), DR-22).
  * Resolves true when confirmed; throws ConfirmationRefusedError (exit 7) otherwise, including on EOF.
  */
 export async function confirm(message: string): Promise<boolean> {
+  if (dryRun) {
+    dryRunTrace(`would ask: ${message}`);
+    return true;
+  }
   if (!process.stdin.isTTY) {
     throw new ConfirmationRefusedError('Destructive operation requires interactive confirmation. Run in a terminal.');
   }

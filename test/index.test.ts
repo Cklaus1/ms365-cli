@@ -41,10 +41,19 @@ describe('global flags (C-15)', () => {
     expect(r.status).toBe(3);
   }, 30_000);
 
+  it('--dry-run needs no client ID and writes nothing to the config dir (DR-16, F23)', () => {
+    const cfg = fs.mkdtempSync(path.join(os.tmpdir(), 'ms365-idx-cfg-'));
+    const r = cli(['--dry-run', 'mail', 'send', '--to', 'a@b.com', '--subject', 's', '--body', 'b'],
+      { MS365_CLI_CLIENT_ID: '', MS365_CLI_CONFIG_DIR: cfg });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).toContain('[dry-run] POST https://graph.microsoft.com/v1.0/me/sendMail');
+    expect(fs.readdirSync(cfg)).toEqual([]);
+  }, 30_000);
+
   it('global flags work after the subcommand too', () => {
     const r = cli(['user', 'me', '--dry-run']);
     expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout).toContain('[dry-run] GET');
+    expect(r.stderr).toContain('[dry-run] GET');
   }, 30_000);
 });
 

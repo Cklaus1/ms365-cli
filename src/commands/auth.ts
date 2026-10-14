@@ -3,7 +3,7 @@ import { exec } from 'child_process';
 import { AuthManager, tokenInfo } from '../auth.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
-import { confirm, info, outputOption } from '../utils.js';
+import { confirm, dryRunTrace, info, isDryRun, outputOption } from '../utils.js';
 import { deleteProfile, listProfiles, profileExists, readProfile, saveProfile, validateProfileName, type Profile } from '../profiles.js';
 import { openBrowserCommand } from './setup.js';
 
@@ -21,6 +21,7 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
     .description('Login (device code flow by default)')
     .option('--browser', 'Sign in with the system browser instead (needs an http://localhost redirect URI on the app registration)')
     .action(handleErrors(async (opts) => {
+      if (isDryRun()) return dryRunTrace('would sign in');
       const authManager = getAuth();
       await authManager.initialize();
       try {
@@ -40,6 +41,7 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
     .command('logout')
     .description('Log out and clear saved credentials')
     .action(handleErrors(async () => {
+      if (isDryRun()) return dryRunTrace('would log out and clear the token cache and selected account');
       const authManager = getAuth();
       await authManager.initialize();
       await authManager.logout();
@@ -95,6 +97,7 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
     .command('select <accountId>')
     .description('Select an account by ID')
     .action(handleErrors(async (accountId: string) => {
+      if (isDryRun()) return dryRunTrace(`would select account ${accountId}`);
       const authManager = getAuth();
       await authManager.initialize();
       const ok = await authManager.selectAccount(accountId);
@@ -109,6 +112,7 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
     .command('remove <accountId>')
     .description('Remove a cached account')
     .action(handleErrors(async (accountId: string) => {
+      if (isDryRun()) return dryRunTrace(`would remove account ${accountId}`);
       const authManager = getAuth();
       await authManager.initialize();
       const ok = await authManager.removeAccount(accountId);
@@ -157,6 +161,7 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
       if (opts.scopes !== undefined) next.scopes = String(opts.scopes).split(',').map(s => s.trim()).filter(Boolean);
       if (opts.orgMode !== undefined) next.orgMode = opts.orgMode;
       if (opts.account !== undefined) next.account = opts.account;
+      if (isDryRun()) return dryRunTrace(`would save profile ${name}: ${JSON.stringify(next)}`);
       saveProfile(name, next);
       info(`Profile "${name}" saved.`);
     }));
@@ -168,6 +173,8 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
       if (!profileExists(name)) {
         throw new CliError(`Profile "${name}" not found.`, { code: 'not_found', exitCode: ExitCode.NOT_FOUND, fix: 'ms365 auth profile list' });
       }
+      // Local-only: confirm() does not ask under --dry-run, so this guard is what keeps the file (DR-22).
+      if (isDryRun()) return dryRunTrace(`would delete profile ${name}`);
       if (!await confirm(`Delete profile ${name}?`)) return;
       deleteProfile(name);
       info(`Profile "${name}" deleted.`);

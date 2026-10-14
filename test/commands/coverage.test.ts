@@ -176,7 +176,7 @@ describe('chat create (PM-9)', () => {
   it('dry-run previews without a resolved /me id', async () => {
     const r = await runCommand(registerTeamsCommands, ['chat', 'create', '--members', 'a@x.com'], { dryRun: true });
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain('[dry-run] POST https://graph.microsoft.com/v1.0/chats');
+    expect(r.stderr).toContain('[dry-run] POST https://graph.microsoft.com/v1.0/chats');
   });
 });
 
@@ -325,6 +325,6 @@ describe('search query across entity types (PM-9)', () => {
   it('dry-run previews every request', async () => {
     const r = await runCommand(registerSearchCommands, ['search', 'query', 'x', '--entity', 'message,site'], { dryRun: true });
     expect(r.exitCode).toBe(0);
-    expect(r.stdout.match(/\[dry-run\] POST/g)).toHaveLength(2);
+    expect(r.stderr.match(/\[dry-run\] POST/g)).toHaveLength(2);
   });
 });

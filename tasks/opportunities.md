@@ -24,3 +24,8 @@ Things discovered mid-build that have no assigned task. Each entry gives a propo
 - **[P3] `mail shared-send` has no `--idempotency-key`.** A crash mid-send leaves a pending claim that blocks the key for 24 h; the error explains this. (T38)
 - **[P3] `validateEmail` throws a plain Error**, so calendar attendees and similar callers exit 1 instead of 2. (T43)
 - **[P3] Completion gaps.** `--version` is offered below the top level, `--x=value` forms aren't completed, and the PowerShell completer covers only `ms365`. Column choices for chats, teams, contacts and planner are unverified against real data. (T44)
+
+## From the follow-up specs run
+
+- **[P2] `auth scopes`/`auth status` under `--dry-run` still build an AuthManager** and may refresh the token cache (a local side effect, DR-22 class). (core-1)
+- **[P3] MCP dry-run results return only the stdout placeholder**; the stderr trace isn't included in the tool result. (core-1, for the B10 MCP track)

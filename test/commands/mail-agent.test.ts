@@ -265,8 +265,8 @@ describe('mail get: --body, --unique, --max-chars, untrusted marking (§6)', () 
   it('does not look up /me under --dry-run', async () => {
     const r = await run(['get', 'M1', '--body', 'text'], { dryRun: true });
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).not.toContain('/me?');
-    expect(r.stdout).toContain('[dry-run] GET https://graph.microsoft.com/v1.0/me/messages/M1');
+    expect(r.stderr).not.toContain('/me?');
+    expect(r.stderr).toContain('[dry-run] GET https://graph.microsoft.com/v1.0/me/messages/M1');
   });
 });
 

@@ -119,7 +119,7 @@ describe('GraphClient', () => {
 
     it('logs headers in dry-run when present', async () => {
       const client = new GraphClient(mockAuth, true);
-      const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
       await client.request('/me', {
         headers: { 'Prefer': 'outlook.body-content-type="text"' },
       });
@@ -145,15 +145,14 @@ describe('GraphClient', () => {
       expect(typeof gen[Symbol.asyncIterator]).toBe('function');
     });
 
-    it('yields dry-run data for single page', async () => {
+    it('yields one empty page under dry-run (DR-7: no placeholder row)', async () => {
       const client = new GraphClient(mockAuth, true);
-      const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
       const pages: unknown[][] = [];
       for await (const page of client.requestPagesStreaming('/me/messages')) {
         pages.push(page);
       }
-      expect(pages.length).toBe(1);
-      expect(pages[0].length).toBe(1); // single dry-run response wrapped
+      expect(pages).toEqual([[]]);
       spy.mockRestore();
     });
   });

@@ -8,7 +8,7 @@ import {
   setErrorFormat, handleErrors, setExitHandler, resetExitHandler,
 } from '../src/errors.js';
 import { graphError } from '../src/graph-client.js';
-import { confirm } from '../src/utils.js';
+import { confirm, setDryRun, setQuiet, notePreview } from '../src/utils.js';
 
 afterEach(() => {
   resetExitHandler();
@@ -97,6 +97,31 @@ describe('handleErrors', () => {
   });
   it('exits 7 when confirmation is refused', async () => {
     expect(await run(async () => { throw new ConfirmationRefusedError(); })).toBe(7);
+  });
+
+  // DR-1 / F2: one trailer on the success path of a dry run; N counts this command's previews only.
+  describe('dry-run trailer', () => {
+    afterEach(() => { setDryRun(false); setQuiet(false); });
+    const stderrOf = async (fn: () => Promise<void>) => {
+      const lines: string[] = [];
+      setExitHandler(() => {});
+      vi.spyOn(console, 'error').mockImplementation((s: string) => { lines.push(s); });
+      await handleErrors(fn)();
+      return lines;
+    };
+    it('prints "[dry-run] N request(s) previewed; nothing was sent." once', async () => {
+      setDryRun(true);
+      notePreview(); // left over from an earlier command: reset at the start of each action
+      expect(await stderrOf(async () => { notePreview(); notePreview(); })).toEqual(['[dry-run] 2 request(s) previewed; nothing was sent.']);
+    });
+    it('is absent without --dry-run, under --quiet, and on failure', async () => {
+      expect(await stderrOf(async () => { notePreview(); })).toEqual([]);
+      setDryRun(true);
+      vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      expect(await stderrOf(async () => { throw new CliError('bad', { exitCode: ExitCode.USAGE }); })).toEqual([]);
+      setQuiet(true);
+      expect(await stderrOf(async () => { notePreview(); })).toEqual([]);
+    });
   });
 });
 

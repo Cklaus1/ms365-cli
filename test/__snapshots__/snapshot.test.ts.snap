@@ -2058,8 +2058,8 @@ exports[`dry-run endpoint snapshot (every command) > watch 1`] = `
 exports[`dry-run endpoint snapshot (every command) > workflow digest 1`] = `
 {
   "argv": "workflow digest",
-  "error": "Error: Cannot read properties of undefined (reading 'dateTime')",
-  "exitCode": 1,
+  "error": "",
+  "exitCode": 0,
   "requests": [
     "[dry-run] GET https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-12T07%3A00%3A00.000Z&endDateTime=2026-10-19T07%3A00%3A00.000Z&$select=subject%2Cstart%2Cend%2CisAllDay&$orderby=start%2FdateTime&$top=100",
     "[dry-run] GET https://graph.microsoft.com/v1.0/me/mailFolders/inbox?$select=unreadItemCount",

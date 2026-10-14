@@ -53,7 +53,7 @@ describe('GraphClient.batch (P-5, G-10, D19)', () => {
   it('read-only blocks batches with writes; dry-run sends nothing', async () => {
     await expect(new GraphClient(auth as never, false, 'v1.0', true).batch([{ method: 'PATCH', url: '/x', body: {} }])).rejects.toThrow(/Read-only/);
     const f = vi.fn(); globalThis.fetch = f as never;
-    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
     const r = await new GraphClient(auth as never, true).batch([{ method: 'GET', url: '/a' }]);
     expect(f).not.toHaveBeenCalled();
     expect(r[0].status).toBe(0);

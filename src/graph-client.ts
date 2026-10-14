@@ -2,7 +2,7 @@ import { AuthManager } from './auth.js';
 import logger from './logger.js';
 import { CliError, ExitCode } from './errors.js';
 import { recordAudit } from './audit.js';
-import { info } from './utils.js';
+import { dryRunTrace as trace, info, notePreview } from './utils.js';
 
 const MAX_RETRIES = 3;
 const MAX_PAGES = 100;
@@ -64,6 +64,42 @@ const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE', '
 /** CliError codes raised before anything was sent to Graph (not audited). */
 const NOT_SENT_CODES = new Set<string | undefined>(['read_only', 'untrusted_url', 'auth_required']);
 
+// --- dry-run preview (DR-T1): trace on stderr (not --quiet-able, F1), redacted bodies (F3), counted for the trailer ---
+const CREDENTIAL_KEY = /^(password|.*secret|.*token|authorization|cookie)$/i;
+
+/**
+ * A copy of `value` safe to print: credential-like keys become "<redacted>" and each `contentBytes`
+ * becomes "<base64, N bytes>". Message bodies stay visible; showing them is the point of a preview.
+ */
+export function redactForPreview(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactForPreview);
+  if (!value || typeof value !== 'object') return value;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (CREDENTIAL_KEY.test(k)) out[k] = '<redacted>';
+    else if (k === 'contentBytes' && typeof v === 'string') out[k] = `<base64, ${Buffer.byteLength(v, 'base64')} bytes>`;
+    else out[k] = redactForPreview(v);
+  }
+  return out;
+}
+
+/** A request body as previewed: JSON is parsed and redacted, other text is kept, binary shows its size. */
+function previewBody(body: string | Uint8Array): unknown {
+  if (typeof body !== 'string') return `<${body.length} bytes>`;
+  try {
+    return redactForPreview(JSON.parse(body));
+  } catch {
+    return body;
+  }
+}
+
+/** Trace a request line (counted) plus its body. */
+function traceRequest(method: string, url: string, body?: unknown): void {
+  notePreview();
+  trace(`${method} ${url}`);
+  if (body !== undefined) trace(`Body: ${typeof body === 'string' ? body : JSON.stringify(body)}`);
+}
+
 /** Hosts that may receive our bearer token when following redirects. */
 export function isTrustedHost(url: string): boolean {
   try {
@@ -82,24 +118,47 @@ function isPreSendError(err: unknown): boolean {
   return code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'EAI_AGAIN';
 }
 
+export interface GraphClientOptions {
+  /** The client ID the CLI resolved (profile, then MS365_CLI_CLIENT_ID); known without building an AuthManager. */
+  clientId?: string;
+}
+
 export class GraphClient {
-  private auth: AuthManager;
+  /** An AuthManager, or a thunk that builds one on the first real request — dry-run never calls it (DR-16). */
+  private authSource: AuthManager | (() => AuthManager);
+  private resolvedClientId?: string;
   private dryRun: boolean;
   private readOnly: boolean;
   private apiVersion: string;
   private baseUrl: string;
 
-  constructor(auth: AuthManager, dryRun = false, apiVersion = 'v1.0', readOnly = false) {
-    this.auth = auth;
+  constructor(auth: AuthManager | (() => AuthManager), dryRun = false, apiVersion = 'v1.0', readOnly = false, options: GraphClientOptions = {}) {
+    this.authSource = auth;
+    this.resolvedClientId = options.clientId;
     this.dryRun = dryRun;
     this.readOnly = readOnly;
     this.apiVersion = apiVersion;
     this.baseUrl = `https://graph.microsoft.com/${this.apiVersion}`;
   }
 
+  private get auth(): AuthManager {
+    if (typeof this.authSource === 'function') this.authSource = this.authSource();
+    return this.authSource;
+  }
+
+  /** The configured client ID, or undefined when none is set (callers previewing print `<client-id>`). */
+  clientId(): string | undefined {
+    return this.resolvedClientId;
+  }
+
   /** True when requests are previewed, not sent (--dry-run). */
   isDryRun(): boolean {
     return this.dryRun;
+  }
+
+  /** True when `res` is a dry-run placeholder, not a Graph answer. */
+  isPreview(res: { status: number }): boolean {
+    return this.dryRun && res.status === 0;
   }
 
   buildUrl(endpoint: string, queryParams?: Record<string, string>): string {
@@ -168,16 +227,12 @@ export class GraphClient {
     }
 
     if (this.dryRun) {
-      console.log(`[dry-run] ${method} ${url}`);
-      if (typeof options.body === 'string') {
-        console.log(`[dry-run] Body: ${options.body}`);
-      } else if (options.body) {
-        console.log(`[dry-run] Body: <${options.body.length} bytes>`);
-      }
+      const body = options.body ? previewBody(options.body) : undefined;
+      traceRequest(method, url, body);
       if (options.headers && Object.keys(options.headers).length > 0) {
-        console.log(`[dry-run] Headers: ${JSON.stringify(options.headers)}`);
+        trace(`Headers: ${JSON.stringify(redactForPreview(options.headers))}`);
       }
-      return { data: { dryRun: true, method, url }, status: 0 };
+      return { data: { dryRun: true, method, url, ...(body !== undefined && { body }) }, status: 0 };
     }
 
     const token = await this.auth.getToken();
@@ -358,12 +413,12 @@ export class GraphClient {
 
     if (this.dryRun) {
       if (isLarge) {
-        console.log(`[dry-run] POST ${this.baseUrl}${sessionEndpoint}`);
-        console.log(`[dry-run] Then PUT ${Math.ceil(fileSize / chunkSize)} chunk(s) to the session uploadUrl`);
+        traceRequest('POST', `${this.baseUrl}${sessionEndpoint}`);
+        trace(`Then PUT ${Math.ceil(fileSize / chunkSize)} chunk(s) to the session uploadUrl`);
       } else {
-        console.log(`[dry-run] PUT ${this.baseUrl}${endpoint}`);
+        traceRequest('PUT', `${this.baseUrl}${endpoint}`);
       }
-      console.log(`[dry-run] File: ${filePath} (${fileSize} bytes, ${contentType})`);
+      trace(`File: ${filePath} (${fileSize} bytes, ${contentType})`);
       return { data: { dryRun: true, method: isLarge ? 'POST' : 'PUT', fileSize, contentType }, status: 0 };
     }
 
@@ -405,10 +460,10 @@ export class GraphClient {
     const chunkSize = options.chunkSize ?? 10 * 1024 * 1024;
     const url = this.buildUrl(sessionEndpoint);
     if (this.dryRun) {
-      console.log(`[dry-run] POST ${url}`);
-      console.log(`[dry-run] Body: ${JSON.stringify(sessionBody)}`);
-      console.log(`[dry-run] Then PUT ${Math.ceil(size / chunkSize)} chunk(s) to the session uploadUrl`);
-      return { data: { dryRun: true, method: 'POST', url }, status: 0 };
+      const body = redactForPreview(sessionBody);
+      traceRequest('POST', url, body);
+      trace(`Then PUT ${Math.ceil(size / chunkSize)} chunk(s) to the session uploadUrl`);
+      return { data: { dryRun: true, method: 'POST', url, body }, status: 0 };
     }
     return this.audited('PUT', options.auditAs ?? sessionEndpoint, () => this.uploadInSession(sessionEndpoint, sessionBody, filePath, size, chunkSize));
   }
@@ -520,10 +575,9 @@ export class GraphClient {
     }
     if (this.dryRun) {
       for (const r of requests) {
-        console.log(`[dry-run] ${r.method.toUpperCase()} ${this.baseUrl}${r.url}`);
-        if (r.body !== undefined) console.log(`[dry-run] Body: ${JSON.stringify(r.body)}`);
+        traceRequest(r.method.toUpperCase(), `${this.baseUrl}${r.url}`, r.body === undefined ? undefined : redactForPreview(r.body));
       }
-      console.log(`[dry-run] (sent as ${Math.ceil(requests.length / BATCH_SIZE)} POST ${this.baseUrl}/$batch request(s))`);
+      trace(`(sent as ${Math.ceil(requests.length / BATCH_SIZE)} POST ${this.baseUrl}/$batch request(s))`);
       return requests.map(() => ({ status: 0, body: { dryRun: true } }));
     }
 
@@ -596,6 +650,10 @@ export class GraphClient {
     const delayMs = pageDelayMs || 0;
 
     const first = await this.request(endpoint, options);
+    if (this.isPreview(first)) {
+      yield [];
+      return;
+    }
     const data = first.data as Record<string, unknown>;
 
     if (!data.value || !Array.isArray(data.value)) {

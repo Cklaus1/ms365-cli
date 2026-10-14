@@ -160,6 +160,6 @@ describe('cal create with --idempotency-key', () => {
     const r = await runCommand(registerCalendarCommands, args, { dryRun: true });
     expect(r.exitCode).toBe(0);
     expect(fs.existsSync(ledger)).toBe(false);
-    expect(r.stdout).toContain('"transactionId":"evt-1"');
+    expect(r.stderr).toContain('"transactionId":"evt-1"');
   });
 });

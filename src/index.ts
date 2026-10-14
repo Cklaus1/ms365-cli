@@ -51,7 +51,7 @@ import { commandMeta } from './catalog.js';
 import { assertConsented } from './preflight.js';
 import { readProfile, type Profile } from './profiles.js';
 import logger from './logger.js';
-import { setQuiet } from './utils.js';
+import { setDryRun, setQuiet } from './utils.js';
 import { setFields, setCursor } from './formatter.js';
 import { reportError, setErrorFormat, ExitCode, CliError } from './errors.js';
 
@@ -123,8 +123,10 @@ function getAuth(): AuthManager {
 
 function getClient(): GraphClient {
   if (!graphClient) {
-    const { dryRun, apiVersion, readOnly } = globalFlags();
-    graphClient = new GraphClient(getAuth(), dryRun, apiVersion, readOnly);
+    const { dryRun, apiVersion, readOnly, profile } = globalFlags();
+    // A thunk: under --dry-run no AuthManager is built, so previews need no client ID (DR-16, F23).
+    graphClient = new GraphClient(getAuth, dryRun, apiVersion, readOnly,
+      { clientId: profile.clientId || process.env.MS365_CLI_CLIENT_ID || undefined });
   }
   return graphClient;
 }
@@ -170,6 +172,8 @@ program.hook('preAction', async (_program, actionCommand) => {
   const o = program.opts();
   if (o.errorFormat) setErrorFormat(o.errorFormat);
   if (o.quiet) setQuiet(true);
+  // Before the offline-command return: local commands (auth logout, profile delete) honour --dry-run too (DR-22).
+  if (o.dryRun) setDryRun(true);
   if (o.fields) setFields(String(o.fields).split(',').map((f: string) => f.trim()).filter(Boolean));
   if (o.cursor) setCursor(o.cursor);
   setActor(o.actor || process.env.MS365_CLI_ACTOR);

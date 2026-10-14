@@ -2,6 +2,7 @@ import { vi } from 'vitest';
 import { Command } from 'commander';
 import { GraphClient } from '../../src/graph-client.js';
 import { setExitHandler, resetExitHandler } from '../../src/errors.js';
+import { setDryRun } from '../../src/utils.js';
 
 export interface RecordedCall {
   method: string;
@@ -33,6 +34,8 @@ export interface RunOptions {
   /** Answer given to confirm() prompts when tty is true. */
   answer?: string;
   env?: Record<string, string>;
+  /** The client ID the CLI resolved (GraphClient.clientId()); default none. */
+  clientId?: string;
 }
 
 type Register = (program: Command, getClient: () => GraphClient) => void;
@@ -105,8 +108,9 @@ export async function runCommand(register: Register, argv: string[], opts: RunOp
   }
 
   setExitHandler((c) => { exitCode = c; });
+  setDryRun(!!opts.dryRun);
   const auth = { getToken: async () => 'test-token' };
-  const client = new GraphClient(auth as never, !!opts.dryRun, opts.apiVersion ?? 'v1.0', !!opts.readOnly);
+  const client = new GraphClient(() => auth as never, !!opts.dryRun, opts.apiVersion ?? 'v1.0', !!opts.readOnly, { clientId: opts.clientId });
   const program = new Command().name('ms365').exitOverride();
   program.configureOutput({ writeOut: (s) => { stdout += s; }, writeErr: (s) => { stderr += s; } });
   register(program, () => client);
@@ -119,6 +123,7 @@ export async function runCommand(register: Register, argv: string[], opts: RunOp
     else throw err;
   } finally {
     resetExitHandler();
+    setDryRun(false);
     spies.forEach(s => s.mockRestore());
     readlineMock?.mockRestore();
     Object.defineProperty(process.stdin, 'isTTY', { value: ttyBackup, configurable: true });

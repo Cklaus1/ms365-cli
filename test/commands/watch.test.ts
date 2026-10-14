@@ -201,7 +201,7 @@ describe('watch: dry-run', () => {
     const r = await runCommand(registerWatchCommands, ['watch', 'mail'], { env, dryRun: true });
     expect(r.exitCode).toBe(0);
     expect(r.calls).toHaveLength(0);
-    expect(r.stdout).toContain(`[dry-run] GET ${MAIL_CURSOR.deltaLink}`);
+    expect(r.stderr).toContain(`[dry-run] GET ${MAIL_CURSOR.deltaLink}`);
     expect(readCursor('mail')).toEqual(MAIL_CURSOR);
 
     const fresh = await runCommand(registerWatchCommands, ['watch', 'contacts'], { env, dryRun: true });

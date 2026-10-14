@@ -31,13 +31,16 @@ check "schema --list" 0 env MS365_CLI_CLIENT_ID=  $CLI schema --list && ok "sche
 
 # 3. dry-run send exits 0 and prints the request
 check "dry-run mail send" 0 $CLI --dry-run mail send --to a@b.com --subject s --body b && {
-  grep -q "\[dry-run\] POST https://graph.microsoft.com/v1.0/me/sendMail" "$TMP/out" && ok "dry-run mail send" || bad "dry-run mail send output"; }
+  # F1: the dry-run trace goes to stderr; stdout carries only the command's output
+  if grep -q "\[dry-run\]" "$TMP/out"; then bad "dry-run trace leaked to stdout";
+  elif grep -q "\[dry-run\] POST https://graph.microsoft.com/v1.0/me/sendMail" "$TMP/err"; then ok "dry-run mail send";
+  else bad "dry-run mail send trace"; fi; }
 
 # 4. dry-run large upload targets the correct upload-session URL
 head -c 12582912 /dev/zero > "$TMP/big.bin"
 check "dry-run drive cp 12MB" 0 $CLI --dry-run drive cp "$TMP/big.bin" /smoke/big.bin && {
-  if grep -q "content/createUploadSession" "$TMP/out"; then bad "upload session URL (has /content/)";
-  elif grep -q ":/createUploadSession" "$TMP/out"; then ok "dry-run drive cp 12MB";
+  if grep -q "content/createUploadSession" "$TMP/err"; then bad "upload session URL (has /content/)";
+  elif grep -q ":/createUploadSession" "$TMP/err"; then ok "dry-run drive cp 12MB";
   else bad "upload session URL not shown"; fi; }
 
 # 5. auth failure maps to exit code 3 with an actionable hint (no valid login available offline)

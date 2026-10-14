@@ -615,18 +615,27 @@ Default page limit: **100 pages**. Default delay: **0ms**.
 
 ## Dry Run
 
-Preview API requests without executing:
+Preview API requests without executing. The `[dry-run]` trace goes to **stderr** (shown below as comments), so
+stdout keeps the command's `-o` output — a `{"dryRun":true,"method","url","body"}` placeholder — and stays parseable:
 
 ```bash
 ms365 --dry-run mail list --top 5 --filter "isRead eq false"
 # [dry-run] GET https://graph.microsoft.com/v1.0/me/messages?$top=5&$filter=isRead%20eq%20false
+# [dry-run] 1 request(s) previewed; nothing was sent.
 
 ms365 --dry-run mail send --to "a@b.com" --subject "Test" --body "Hello"
 # [dry-run] POST https://graph.microsoft.com/v1.0/me/sendMail
 # [dry-run] Body: {"message":{"subject":"Test",...}}
+# [dry-run] 1 request(s) previewed; nothing was sent.
 ```
 
-Dry-run skips authentication, so it works even when not logged in.
+- The trace is the point of a dry run, so `--quiet` keeps it; it drops only the closing summary line.
+- Credential-like body and header values (`password`, `*secret`, `*token`, `Authorization`, `Cookie`) print as
+  `"<redacted>"`, and attachment `contentBytes` as `"<base64, N bytes>"`.
+- Dry-run skips authentication entirely: it works without a client ID and when not logged in.
+- Delete confirmations are not asked; a `[dry-run] would ask: …` line shows the prompt instead.
+- Local-only actions (`auth logout`, `auth login`, `auth select`, `auth remove`, `auth profile set|delete`) print what
+  they would do and leave your files untouched.
 
 ---
 

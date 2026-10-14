@@ -1,4 +1,5 @@
 import logger from './logger.js';
+import { dryRunTrace, isDryRun, previewCount, quiet, resetPreviewCount } from './utils.js';
 
 /** Process exit codes — a stable contract for scripts and AI agents. */
 export enum ExitCode {
@@ -110,10 +111,13 @@ export function handleErrors(fn: (...args: any[]) => Promise<void>): (...args: a
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return async (...args: any[]) => {
     let code: number = ExitCode.OK;
+    resetPreviewCount();
     try {
       await fn(...args);
       const preset = Number(process.exitCode ?? 0);
       code = Number.isFinite(preset) ? preset : ExitCode.GENERIC;
+      // One trailer replaces every success() line a dry run suppressed (F2); --quiet drops it, not the trace.
+      if (code === ExitCode.OK && isDryRun() && !quiet) dryRunTrace(`${previewCount()} request(s) previewed; nothing was sent.`);
     } catch (err) {
       code = reportError(err);
     } finally {

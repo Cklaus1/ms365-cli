@@ -6,9 +6,9 @@ Derived from commits. Waves are defined in tasks/build-loop.md.
 ## W1
 - [x] XT1
 - [x] VT1
-- [ ] RT-1
-- [ ] RT-3
-- [ ] RT-4
+- [x] RT-1
+- [x] RT-3
+- [x] RT-4
 - [x] QP-7
 - [x] RT-10
 - [x] XT8
@@ -22,7 +22,7 @@ Derived from commits. Waves are defined in tasks/build-loop.md.
 - [ ] RT-5
 - [ ] QP-2
 - [ ] QP-9
-- [ ] VT6
+- [x] VT6
 
 ## W3
 - [ ] RT-2

@@ -65,7 +65,7 @@ describe('uploadFile', () => {
   it('dry-run of a large file shows the session URL', async () => {
     const file = writeFile(5 * 1024 * 1024);
     const out: string[] = [];
-    vi.spyOn(console, 'log').mockImplementation((s: string) => { out.push(s); });
+    vi.spyOn(console, 'error').mockImplementation((s: string) => { out.push(s); });
     const client = new GraphClient(auth as never, true);
     await client.uploadFile('/me/drive/root:/x/big.bin:/content', file, 'application/octet-stream');
     expect(out[0]).toBe('[dry-run] POST https://graph.microsoft.com/v1.0/me/drive/root:/x/big.bin:/createUploadSession');
@@ -310,7 +310,7 @@ describe('uploadSession (shared session uploader)', () => {
     await expect(new GraphClient(auth as never, false, 'v1.0', true).uploadSession(sessionEndpoint, sessionBody, file, 2049))
       .rejects.toMatchObject({ code: 'read_only' });
     const out: string[] = [];
-    vi.spyOn(console, 'log').mockImplementation((s: string) => { out.push(s); });
+    vi.spyOn(console, 'error').mockImplementation((s: string) => { out.push(s); });
     const r = await new GraphClient(auth as never, true).uploadSession(sessionEndpoint, sessionBody, file, 2049, { chunkSize: 1024 });
     expect(out).toEqual([
       `[dry-run] POST https://graph.microsoft.com/v1.0${sessionEndpoint}`,

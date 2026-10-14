@@ -63,14 +63,14 @@ describe('planner ETag auto-fetch (M-14)', () => {
     const r = await runCommand(registerPlannerCommands, ['planner', 'update-task', 'T1', '--title', 'y', '-o', 'json'], { dryRun: true });
     expect(r.exitCode).toBe(0);
     expect(r.calls).toHaveLength(0);
-    expect(r.stdout).toContain('[dry-run] PATCH https://graph.microsoft.com/v1.0/planner/tasks/T1');
-    expect(r.stdout).toContain('"If-Match":"W/\\"dry-run\\""');
+    expect(r.stderr).toContain('[dry-run] PATCH https://graph.microsoft.com/v1.0/planner/tasks/T1');
+    expect(r.stderr).toContain('"If-Match":"W/\\"dry-run\\""');
   });
 
   it('--dry-run delete-task previews the DELETE', async () => {
     const r = await runCommand(registerPlannerCommands, ['planner', 'delete-task', 'T1'], { dryRun: true, tty: true, answer: 'y' });
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain('[dry-run] DELETE https://graph.microsoft.com/v1.0/planner/tasks/T1');
+    expect(r.stderr).toContain('[dry-run] DELETE https://graph.microsoft.com/v1.0/planner/tasks/T1');
   });
 
   it('missing ETag fails with a clear message', async () => {

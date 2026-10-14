@@ -93,7 +93,7 @@ describe('dry-run endpoint snapshot (every command)', () => {
         const args = cmd.registeredArguments.filter(a => a.required).map(a => sampleArg(a.name()));
         const opts = cmd.options.filter(o => o.mandatory).flatMap(sampleOption);
         const r = await runCommand(register, [...chain, ...args, ...opts], { dryRun: true, tty: true, answer: 'y' });
-        const requests = r.stdout.split('\n').filter(l => l.startsWith('[dry-run] ') && !l.startsWith('[dry-run] Body') && !l.startsWith('[dry-run] Headers') && !l.startsWith('[dry-run] File'));
+        const requests = (r.stdout + r.stderr).split('\n').filter(l => l.startsWith('[dry-run] ') && !/^\[dry-run\] (would ask|\d+ request)/.test(l) && !l.startsWith('[dry-run] Body') && !l.startsWith('[dry-run] Headers') && !l.startsWith('[dry-run] File'));
         const firstErr = r.stderr.split('\n').find(l => l.startsWith('Error:')) ?? '';
         expect({ argv: [...chain, ...args, ...opts].join(' ').replaceAll(tmp, '<tmp>'), exitCode: r.exitCode, requests: requests.map(l => l.replaceAll(tmp, '<tmp>')), error: firstErr.replaceAll(tmp, '<tmp>') }).toMatchSnapshot();
       });
