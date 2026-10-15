@@ -33,3 +33,4 @@ Things discovered mid-build that have no assigned task. Each entry gives a propo
 - **[P3] `digest` dry-run trace under-counts the per-list GETs.** (B7)
 - **[P3] `user set-presence --duration` takes ISO 8601 (`PT30M`)** while the other duration options take `30m`. Unify on one form. (FIN)
 - **[P3] The snapshot records only the first error line** to stay reviewable. A full-stderr variant could catch more regressions. (FIN)
+- **[P3] `auth grant-scopes` under an admin profile** needs `MS365_CLI_CLIENT_ID` from env, because the profile's clientId is ignored. (IDT-4)

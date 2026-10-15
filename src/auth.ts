@@ -4,6 +4,7 @@ import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
 import { CliError, ExitCode } from './errors.js';
+import { cachedStore, createFileStore, TOKEN_CACHE_KEY, type CachedCredentialStore, type CredentialStore } from './credential-store.js';
 
 /** Silent token requests use .default: the token carries whatever the user consented to at login. */
 export const GRAPH_DEFAULT_SCOPE = 'https://graph.microsoft.com/.default';
@@ -14,7 +15,6 @@ const EXPIRY_SKEW_MS = 5 * 60 * 1000;
 export function configDir(): string {
   return process.env.MS365_CLI_CONFIG_DIR || path.join(os.homedir(), '.config', 'ms365-cli');
 }
-const tokenCachePath = () => path.join(configDir(), 'token-cache.json');
 const selectedAccountPath = () => path.join(configDir(), 'selected-account.json');
 const deviceCodePath = () => path.join(configDir(), 'device-code.txt');
 
@@ -161,14 +161,26 @@ function readFileIfExists(p: string): string | undefined {
   }
 }
 
+/** Today's credential store: the 0600 `configDir()/token-cache.json` (ID-2 `file` backend). */
+export function fileCredentialStore(): CredentialStore {
+  return createFileStore({ dir: configDir, writeFileAtomic, withFileLock });
+}
+
 /**
- * MSAL cache plugin backed by a single 0600 file (no OS keyring; see spec D28 / N6). MSAL calls afterCacheAccess after every token
- * operation and sets cacheHasChanged when a token was fetched from the network, so silent
- * refreshes (and rotated refresh tokens) are persisted without extra code paths.
+ * MSAL cache plugin backed by a CredentialStore (default: the single 0600 file; no OS keyring yet, see spec D28 / N6).
+ * The store is read once per plugin (one per process) and cached in memory, changed only by this plugin's own writes
+ * (ID-12). MSAL calls afterCacheAccess after every token operation and sets cacheHasChanged when a token was fetched
+ * from the network, so silent refreshes (and rotated refresh tokens) are persisted without extra code paths.
  */
 export class FileTokenCachePlugin implements ICachePlugin {
+  readonly store: CachedCredentialStore;
+
+  constructor(store: CredentialStore = fileCredentialStore()) {
+    this.store = cachedStore(store);
+  }
+
   async beforeCacheAccess(ctx: TokenCacheContext): Promise<void> {
-    const data = readFileIfExists(tokenCachePath());
+    const data = this.store.get(TOKEN_CACHE_KEY);
     if (data) {
       try {
         ctx.tokenCache.deserialize(data);
@@ -180,7 +192,7 @@ export class FileTokenCachePlugin implements ICachePlugin {
 
   async afterCacheAccess(ctx: TokenCacheContext): Promise<void> {
     if (ctx.cacheHasChanged) {
-      writeFileAtomic(tokenCachePath(), ctx.tokenCache.serialize());
+      this.store.set(TOKEN_CACHE_KEY, ctx.tokenCache.serialize());
     }
   }
 }
@@ -304,6 +316,8 @@ export interface LoginOptions {
 export class AuthManager {
   private msalConfig: Configuration;
   private appP?: Promise<PublicClientApplication>;
+  /** One plugin (and so one read-cached store) per manager, i.e. per process (ID-12). */
+  private readonly cachePlugin = new FileTokenCachePlugin();
   private scopes: string[];
   private accessToken: string | null = null;
   private tokenExpiry: number | null = null;
@@ -333,7 +347,7 @@ export class AuthManager {
         clientId,
         authority: `https://login.microsoftonline.com/${tenantId}`,
       },
-      cache: { cachePlugin: new FileTokenCachePlugin() },
+      cache: { cachePlugin: this.cachePlugin },
     };
   }
 
@@ -557,6 +571,7 @@ export class AuthManager {
     this.accessToken = null;
     this.tokenExpiry = null;
     this.selectedAccountId = null;
+    this.cachePlugin.store.delete(TOKEN_CACHE_KEY);
 
     const dir = configDir();
     const names = fs.existsSync(dir) ? fs.readdirSync(dir) : [];
