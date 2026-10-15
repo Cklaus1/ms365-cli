@@ -632,6 +632,16 @@ export interface AuthManagerOptions {
 
 export type TokenSource = 'msal' | 'az';
 
+/**
+ * A silent token request MSAL cannot satisfy without the user: `InteractionRequiredAuthError` (interaction_required,
+ * login_required, no_tokens_found, refresh_token_expired, …) or a server `invalid_grant` (revoked/expired refresh token).
+ */
+function needsInteraction(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as { name?: unknown; errorCode?: unknown };
+  return e.name === 'InteractionRequiredAuthError' || e.errorCode === 'invalid_grant' || e.errorCode === 'interaction_required';
+}
+
 export interface LoginOptions {
   /** Sign in with the system browser (auth code + PKCE, loopback redirect) instead of device code. */
   openBrowser?: (url: string) => Promise<void>;
@@ -748,11 +758,24 @@ export class AuthManager {
       throw new CliError('Not logged in. Run: ms365 auth login', { code: 'auth_required', exitCode: ExitCode.AUTH, fix: 'ms365 auth login' });
     }
 
-    const response = await (await this.app()).acquireTokenSilent({
-      account,
+    const silent = async (acct: AccountInfo) => (await this.app()).acquireTokenSilent({
+      account: acct,
       scopes: [GRAPH_DEFAULT_SCOPE],
       forceRefresh,
     });
+    let response;
+    try {
+      response = await silent(account);
+    } catch (err) {
+      if (!needsInteraction(err)) throw err;
+      // ID-12 / IDT-5: this process read the store once; another process may since have refreshed or signed in
+      // again. Re-read it (and the selection) and retry silently once before the normal re-login error.
+      this.cachePlugin.invalidate();
+      await this.loadSelectedAccount();
+      const again = await this.getCurrentAccount();
+      if (!again) throw err;
+      response = await silent(again);
+    }
 
     this.accessToken = response.accessToken;
     this.tokenExpiry = response.expiresOn ? new Date(response.expiresOn).getTime() : null;
