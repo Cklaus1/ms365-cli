@@ -80,6 +80,18 @@ Every identity remains the signed-in person acting for themselves. No friction i
 | IDT-6 | Docs (README auth section + threat model, skills), snapshot regeneration, smoke checks for fallback and no-hang | AC 2–6, 9 | all |
 | IDT-7 | [ADDED] Manual verification on real macOS and Windows (AC 1, 7, 8); flip OQ-1 to (a) only on pass | AC 1, 7, 8 | IDT-3 |
 
+
+## Decisions (Step 2)
+
+| # | Decision | Why |
+|---|---|---|
+| E1 | OQ-1 → **(b)**: `auto` resolves to the **file** store on every platform for now; `keychain` is opt-in via `ms365 auth storage use keychain`. Flip the default to (a) only after IDT-7 passes. | No machine available to this run can exercise the macOS or Windows backends. |
+| E2 | OQ-2 → **(a)**: Windows uses a DPAPI (`ProtectedData`, CurrentUser) encrypted blob file through PowerShell; no `cmdkey`. | `cmdkey` puts the secret on argv, has a 2.5 KB limit and can't read back. |
+| E3 | OQ-3 → **(a)**: on Windows, if PowerShell start-up exceeds 400 ms, `auto` resolves to `file`. | Avoids adding friction to every command; decided by the AC 7 measurement. |
+| E4 | Build order IDT-4 → IDT-1 → IDT-2 → IDT-3 → IDT-5 → IDT-6, serial. | IDT-1/2/4/5 all touch `src/auth.ts`, so they can't run in parallel. |
+
+**needs-human:** IDT-7 (AC 1, 7, 8: real macOS and Windows verification). Excluded from this run.
+
 ## Review notes (Step 1)
 
 - **Mechanism corrections.** macOS: `-w <value>` on argv is visible in `ps`; use `security -i` with the command on stdin (security(1) confirms `-i` reads commands from stdin; `-w` without a value prompts on the TTY). Linux: `secret-tool store` reads stdin until EOF (secret-tool(1)). Windows: `ProtectedData.Protect(…, CurrentUser)` is Windows-only and per-user (MS docs); `ConvertFrom-SecureString` without `-Key` is also DPAPI; neither needs the secret on argv when the plaintext goes through stdin. `cmdkey` dropped.
