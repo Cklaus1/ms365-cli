@@ -38,3 +38,5 @@ Things discovered mid-build that have no assigned task. Each entry gives a propo
 - **[P4] Tests write 0644 `token-cache.json` fixtures**, so the suite prints the ID-19 chmod notice to stderr. Write fixtures 0600. (IDT-2)
 - **[P3] A crashed writer leaves `token-cache.json.lock`;** stale-lock breaking waits 30 s but the lock wait is 10 s, so a command right after a crash exits `lock_timeout`. Check the lock's PID for liveness before waiting out the age. (IDT-3)
 - **[P4] `invalid_grant` message lacks the AADSTS detail** (MSAL's errorMessage only links to aka.ms); surface `subError`/`errorMessage` from the server response. Pre-existing. (IDT-5)
+- **[P3] Admin-profile az hint shows az's own tenant GUID** instead of the profile's tenant (seen with `--tenant contoso.onmicrosoft.com`). (IDT-6)
+- **[P4] `MS365_CLI_STORAGE` missing from the generated ms365-shared skill env list** (src/docs-gen.ts:275). (IDT-6)

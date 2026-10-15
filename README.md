@@ -61,7 +61,8 @@ ms365 --org-mode teams list -o table
 - **Organization mode** — opt-in access to Teams, SharePoint, shared mailboxes, Groups
 - **Graph API version** — switch between `v1.0` and `beta` with `--api-version`
 - **Structured logging** — JSON log files with daily rotation
-- **Token storage** — a single owner-only (0600) file, `~/.config/ms365-cli/token-cache.json`, written atomically under a lock
+- **Credential storage** — an owner-only (0600) file by default, written atomically under a lock; OS keychain storage is opt-in (`ms365 auth storage use keychain`)
+- **User and admin profiles** — admin profiles borrow their token from the Azure CLI and store nothing
 - **Zero MCP dependency** — standalone CLI, talks directly to Microsoft Graph API
 
 ---
@@ -139,9 +140,52 @@ ms365 auth login
 
 Prints a URL and code. Open the URL in your browser, enter the code, and sign in. Tokens are cached automatically.
 
-### Token storage
+### Credential storage
 
-Tokens are stored in `~/.config/ms365-cli/token-cache.json` (mode 0600, directory 0700), written atomically under a lock so parallel commands are safe. Override the directory with `MS365_CLI_CONFIG_DIR`. Refreshed tokens are persisted automatically; `ms365 auth logout` deletes the file.
+Refresh tokens live in `~/.config/ms365-cli/` (override the directory with `MS365_CLI_CONFIG_DIR`). The storage setting is per config directory, not per profile, and is one of:
+
+| Setting | Where credentials go |
+|---|---|
+| `file` | `token-cache.json` (mode 0600, directory 0700), written atomically under a lock so parallel commands are safe. |
+| `keychain` | The OS keychain: macOS Keychain (`security`), Linux Secret Service (`secret-tool`) or Windows DPAPI (PowerShell). One item per account; `token-cache.json` keeps only the account index and app metadata, no secrets. |
+| `auto` (default) | Picks a store on first use and keeps it. **For now `auto` always picks `file`, on every platform**: the keychain backends have not yet been checked on real macOS and Windows machines, so keychain storage is opt-in until they have. |
+
+```bash
+ms365 auth storage show            # setting, what it resolved to, keychain availability (live probe), file paths and modes
+ms365 auth storage show --no-probe # skip the probe
+ms365 auth storage use keychain    # opt in: moves every cached account into the keychain, no re-login
+ms365 auth storage use file        # move them back to the 0600 file
+ms365 auth storage use auto        # back to the default (re-resolves)
+```
+
+- The choice is recorded in `configDir()/storage.json`. `MS365_CLI_STORAGE=auto|keychain|file` overrides it (for CI and tests); while it is set, `auth storage use` refuses to switch to a different store, because the change would not take effect.
+- `auth storage use` moves every account in both directions under the cache lock, and reads each item back before it deletes the source.
+- Under `keychain`, a keychain that cannot be used (tool missing, locked, no answer within 5 s) is exit 3 `keychain_unavailable` with the fix `ms365 auth storage use file`. It never hangs: each keychain call is a child process that is killed (SIGKILL) at its timeout, and secrets go over stdin, never on the command line.
+- **Linux** needs a D-Bus session (`DBUS_SESSION_BUS_ADDRESS` set) and `secret-tool` on `PATH`. WSL and headless servers usually have neither, so use `file` there. Today `auto` picks the file without probing and prints nothing. Once `auto` is allowed to choose the keychain, it will probe once on the first write (taking at most 1.5 s). If the probe fails, `auto` falls back to the file, prints one notice per config directory, and records in `storage.json` that the notice was shown.
+- **macOS:** if the login keychain is locked (for example over SSH), run `security unlock-keychain`.
+- `ms365 auth logout` deletes the keychain items, the `credentials/` directory (Windows) and the cache file. `ms365 auth remove <id>` deletes that account's item.
+- `token-cache.json` and `storage.json` are reset to 0600 (with one notice) if they are found group- or world-readable.
+
+**What the keychain protects against.** The keychain protects credentials *at rest*: backups, Time Machine and other snapshots, synced or copied home directories, a stolen disk, a keychain that is locked while you are logged out, and accidents like `cat ~/.config/ms365-cli/token-cache.json`. It does **not** protect against code running as you. On every platform, any process running as the same OS user can run `security find-generic-password -w`, `secret-tool lookup` or DPAPI `Unprotect` and read the items without a prompt. On macOS, items created by `/usr/bin/security` list it in their access list, so reads through `security` do not prompt. Malware running as your user is out of scope, as it is for every CLI that keeps a session.
+
+### Profiles: user and admin
+
+Profiles (`configDir()/profiles/<name>.json`, applied with `--profile <name>` or `MS365_CLI_PROFILE`) have a type:
+
+```bash
+# user (default): today's behaviour — ms365's own device-code sign-in, tokens in the credential store
+ms365 auth profile set work --client-id <id> --tenant-id <tenant> --org-mode
+
+# admin: borrows a Graph token from the Azure CLI; ms365 stores nothing
+ms365 auth profile set tenant-admin --type admin --tenant contoso.onmicrosoft.com
+az login --tenant contoso.onmicrosoft.com
+ms365 --profile tenant-admin groups list
+```
+
+- **`user`** profiles take `--client-id`, `--tenant-id`, `--scopes`, `--org-mode` and `--account` as before.
+- **`admin`** profiles need `--tenant`: a real tenant ID or domain, not `common`, `organizations` or `consumers`, because `az` borrows tokens per tenant. They reject `--account` and `--scopes` (`invalid_profile`), and `auth profile show` warns that `clientId` and `orgMode` are ignored. Each command gets a token from `az account get-access-token` and keeps it in memory only, until 5 minutes before it expires. It is **never written to any store**. Long-running processes (`mcp serve`, `watch --follow`) ask `az` again when it expires. Each process pays for one `az` start (about 1–2 s).
+- The identity behind an admin profile is the user signed in to `az`, acting through the Azure CLI's own app. The token's scopes are therefore whatever that app has been granted in the tenant (typically directory, group and user read/write, but not mail, calendar, reports or audit-log query). Pre-flight checks each command against those scopes. Commands they cover (such as `groups`, `user`, `resolve` and `auth grant-scopes`) run. Any other command exits 4 `missing_scope` with a message that names the admin profile and tells you to use a user profile (`ms365 --org-mode auth login`) for that command.
+- **Failures under an admin profile:** without `az`, or with `az` not signed in to the tenant, commands exit 3 with the hint `az login --tenant <tenant>`. `auth login`, `logout`, `accounts`, `select` and `remove` exit 2 `usage`, because admin profiles sign in with `az login` and ms365 caches nothing for them. `auth status` and `auth scopes` show the `az` identity and its scopes.
 
 ### Multiple accounts
 
@@ -204,9 +248,9 @@ The reference below is generated from the live command tree (`ms365 describe --j
 <!-- BEGIN GENERATED COMMANDS -->
 <!-- Generated by `npm run docs` from `ms365 describe --json`; do not edit by hand. -->
 
-221 commands. Notes list the Graph scopes each command needs; **destructive** commands delete data, and most ask for confirmation, which needs a terminal. Options shared by list commands (`-o`, `--all`, `--page-limit`, `--page-delay`) are left out of the tables; run `ms365 <command> --help` or `ms365 describe <command> --json` for the full list.
+223 commands. Notes list the Graph scopes each command needs; **destructive** commands delete data, and most ask for confirmation, which needs a terminal. Options shared by list commands (`-o`, `--all`, `--page-limit`, `--page-delay`) are left out of the tables; run `ms365 <command> --help` or `ms365 describe <command> --json` for the full list.
 
-[audit](#audit) (2) · [auth](#auth) (14) · [calendar](#calendar) (16) · [chat](#chat) (6) · [chief](#chief) (1) · [completion](#completion) (1) · [contacts](#contacts) (9) · [describe](#describe) (1) · [drive](#drive) (17) · [excel](#excel) (8) · [generate-skills](#generate-skills) (1) · [groups](#groups) (7) · [idempotency](#idempotency) (2) · [mail](#mail) (36) · [mcp](#mcp) (1) · [meetings](#meetings) (7) · [notes](#notes) (5) · [onenote](#onenote) (5) · [planner](#planner) (21) · [reports](#reports) (4) · [resolve](#resolve) (1) · [schema](#schema) (1) · [search](#search) (2) · [sharepoint](#sharepoint) (12) · [teams](#teams) (8) · [todo](#todo) (12) · [user](#user) (14) · [watch](#watch) (1) · [workflow](#workflow) (6)
+[audit](#audit) (2) · [auth](#auth) (16) · [calendar](#calendar) (16) · [chat](#chat) (6) · [chief](#chief) (1) · [completion](#completion) (1) · [contacts](#contacts) (9) · [describe](#describe) (1) · [drive](#drive) (17) · [excel](#excel) (8) · [generate-skills](#generate-skills) (1) · [groups](#groups) (7) · [idempotency](#idempotency) (2) · [mail](#mail) (36) · [mcp](#mcp) (1) · [meetings](#meetings) (7) · [notes](#notes) (5) · [onenote](#onenote) (5) · [planner](#planner) (21) · [reports](#reports) (4) · [resolve](#resolve) (1) · [schema](#schema) (1) · [search](#search) (2) · [sharepoint](#sharepoint) (12) · [teams](#teams) (8) · [todo](#todo) (12) · [user](#user) (14) · [watch](#watch) (1) · [workflow](#workflow) (6)
 
 ### All global flags
 
@@ -242,7 +286,7 @@ The reference below is generated from the live command tree (`ms365 describe --j
 | `auth logout` | Log out and clear saved credentials |  |  | **destructive** · offline |
 | `auth profile delete` | Delete a saved profile | `<name>` |  | **destructive** · offline |
 | `auth profile list` | List saved profiles |  |  | offline |
-| `auth profile set` | Create a profile, or update the given fields of an existing one | `<name>` | `--client-id <id>` `--tenant-id <id>` `--scopes <list>` `--org-mode` `--no-org-mode` `--account <upn\|homeAccountId>` | offline |
+| `auth profile set` | Create a profile, or update the given fields of an existing one | `<name>` | `--type <type>` `--client-id <id>` `--tenant-id <id>` `--tenant <id>` `--scopes <list>` `--org-mode` `--no-org-mode` `--account <upn\|homeAccountId>` | offline |
 | `auth profile show` | Show a saved profile | `<name>` |  | offline |
 | `auth refresh` | Fetch a fresh access token now (e.g. after an admin grants new permissions) and show which scopes changed |  |  | offline |
 | `auth remove` | Remove a cached account | `<accountId>` |  | **destructive** · offline |
@@ -250,6 +294,8 @@ The reference below is generated from the live command tree (`ms365 describe --j
 | `auth select` | Select an account by ID | `<accountId>` |  | offline |
 | `auth setup` | Interactive setup wizard for Azure AD app registration |  |  | not idempotent · User.Read |
 | `auth status` | Verify current login status |  |  | User.Read |
+| `auth storage show` | Show the storage setting, what it resolved to, keychain availability (live probe) and the credential files |  | `--no-probe` | offline |
+| `auth storage use` | Switch credential storage and move every cached account to it (no re-login): auto, keychain or file | `<mode>` |  | offline |
 
 ### calendar
 
@@ -685,6 +731,9 @@ ms365 --dry-run mail send --to "a@b.com" --subject "Test" --body "Hello"
 | `MS365_CLI_API_VERSION`  | Graph API version (`v1.0` or `beta`)                 | No       |
 | `MS365_CLI_LOG_LEVEL`    | Log level: `debug`, `info`, `warn`, `error`, `none`  | No       |
 | `MS365_CLI_LOG_FILE`     | JSON log file path (enables daily rotation)          | No       |
+| `MS365_CLI_PROFILE`      | Saved profile to apply (same as `--profile`)         | No       |
+| `MS365_CLI_CONFIG_DIR`   | Config and credential directory (default `~/.config/ms365-cli`) | No |
+| `MS365_CLI_STORAGE`      | Credential storage override: `auto`, `keychain` or `file` (wins over `storage.json`) | No |
 
 The CLI auto-loads `.env` from the current working directory.
 
