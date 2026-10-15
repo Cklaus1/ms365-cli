@@ -83,6 +83,7 @@ const COMMANDS: Record<string, Entry> = {
   'auth logout': 'delete',
   'auth status': ['read', ['User.Read']],
   'auth scopes': 'read',
+  'auth refresh': 'update',
   'auth accounts': 'read',
   'auth select': 'update',
   'auth remove': 'delete',

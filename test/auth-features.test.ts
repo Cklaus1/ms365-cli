@@ -357,3 +357,69 @@ describe('T40: global --account / --profile wiring in index.ts', () => {
     expect(r.stderr).toContain('nobody@contoso.com');
   }, 30_000);
 });
+
+describe('login error hints and auth refresh', () => {
+  it.each([
+    ['AADSTS90094: The grant requires admin permission.', 'admin_consent_required', 'Admin consent requests'],
+    ['AADSTS65001: The user or administrator has not consented to use the application', 'admin_consent_required', 'Grant admin consent'],
+    ['AADSTS65004: User declined to consent to access the app.', 'consent_declined', 'accept the permissions'],
+    ['post_request_failed: expired_token', 'login_expired', 'Admin consent requests'],
+    ['device_code_expired: See https://aka.ms/msal.js.errors#device_code_expired', 'login_expired', 'within 15 minutes'],
+    ['network down', 'login_failed', ''],
+  ])('explainLoginError(%s) → %s', async (raw, code, fixPart) => {
+    const { explainLoginError } = await import('../src/auth.js');
+    const e = explainLoginError(new Error(raw), true);
+    expect(e.code).toBe(code);
+    expect(e.exitCode).toBe(3);
+    if (fixPart) expect(e.fix).toContain(fixPart);
+    if (code !== 'login_failed') expect(e.fix).toContain('ms365 --org-mode auth login');
+  });
+
+  it('personal-mode retry hint omits --org-mode', async () => {
+    const { explainLoginError } = await import('../src/auth.js');
+    expect(explainLoginError(new Error('expired_token'), false).fix).toContain('run ms365 auth login');
+  });
+
+  const jwtWith = (scp: string) =>
+    ['{"alg":"none"}', JSON.stringify({ scp, upn: 'u@contoso.com', exp: Math.floor(Date.now() / 1000) + 3600 })]
+      .map(p => Buffer.from(p).toString('base64url')).join('.') + '.sig';
+
+  it('auth refresh force-refreshes and reports added/removed scopes', async () => {
+    const { runCommand } = await import('./helpers/cli.js');
+    const { registerAuthCommands } = await import('../src/commands/auth.js');
+    const calls: boolean[] = [];
+    const fake = {
+      initialize: async () => {},
+      getToken: async (force = false) => { calls.push(force); return force ? jwtWith('User.Read Group.Read.All Place.Read.All') : jwtWith('User.Read Chat.Read'); },
+    };
+    const r = await runCommand((p) => registerAuthCommands(p, () => fake as never), ['auth', 'refresh', '-o', 'json']);
+    expect(r.exitCode).toBe(0);
+    expect(calls).toEqual([false, true]);
+    const out = JSON.parse(r.stdout);
+    expect(out.added).toEqual(['Group.Read.All', 'Place.Read.All']);
+    expect(out.removed).toEqual(['Chat.Read']);
+    expect(out.scopes).toBe(3);
+  });
+
+  it('auth refresh with MS365_CLI_TOKEN set is a usage error', async () => {
+    const { runCommand } = await import('./helpers/cli.js');
+    const { registerAuthCommands } = await import('../src/commands/auth.js');
+    const r = await runCommand((p) => registerAuthCommands(p, () => { throw new Error('should not build'); }), ['auth', 'refresh'],
+      { env: { MS365_CLI_TOKEN: 'x' } });
+    expect(r.exitCode).toBe(2);
+  });
+
+  it('auth login maps an expired device code to the actionable hint', async () => {
+    const { runCommand } = await import('./helpers/cli.js');
+    const { registerAuthCommands } = await import('../src/commands/auth.js');
+    const fake = {
+      initialize: async () => {},
+      requestsOrgScopes: () => true,
+      login: async () => { throw new Error('post_request_failed: expired_token'); },
+    };
+    const r = await runCommand((p) => registerAuthCommands(p, () => fake as never), ['auth', 'login']);
+    expect(r.exitCode).toBe(3);
+    expect(r.stderr).toContain('Request approval');
+    expect(r.stderr).toContain('ms365 --org-mode auth login');
+  });
+});

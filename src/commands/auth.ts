@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { exec } from 'child_process';
-import { AuthManager, tokenInfo } from '../auth.js';
+import { AuthManager, explainLoginError, tokenInfo } from '../auth.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { confirm, dryRunTrace, info, isDryRun, outputOption } from '../utils.js';
@@ -27,7 +27,7 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
       try {
         await authManager.login(opts.browser ? { openBrowser: openSystemBrowser } : {});
       } catch (err) {
-        throw new CliError(`Login failed: ${(err as Error).message}`, { code: 'login_failed', exitCode: ExitCode.AUTH });
+        throw explainLoginError(err, authManager.requestsOrgScopes());
       }
       const result = await authManager.verifyLogin();
       if (result.success && result.user) {
@@ -73,6 +73,28 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
       const authManager = getAuth();
       await authManager.initialize();
       console.log(formatOutput(tokenInfo(await authManager.getToken()), opts.output as OutputFormat));
+    }));
+
+  auth
+    .command('refresh')
+    .description('Fetch a fresh access token now (e.g. after an admin grants new permissions) and show which scopes changed')
+    .addOption(outputOption())
+    .action(handleErrors(async (opts) => {
+      if (isDryRun()) return dryRunTrace('would refresh the access token (token cache not read)');
+      if (process.env.MS365_CLI_TOKEN) {
+        throw new CliError('MS365_CLI_TOKEN is set, so there is no cached login to refresh.',
+          { code: 'usage', exitCode: ExitCode.USAGE, fix: 'unset MS365_CLI_TOKEN, or supply a new token' });
+      }
+      const authManager = getAuth();
+      await authManager.initialize();
+      let before: string[] = [];
+      try { before = tokenInfo(await authManager.getToken()).scopes; } catch { /* no usable cached token */ }
+      const after = tokenInfo(await authManager.getToken(true));
+      const added = after.scopes.filter(s => !before.includes(s));
+      const removed = before.filter(s => !after.scopes.includes(s));
+      console.log(formatOutput({
+        user: after.user, expiresOn: after.expiresOn, scopes: after.scopes.length, added, removed,
+      }, opts.output as OutputFormat));
     }));
 
   auth

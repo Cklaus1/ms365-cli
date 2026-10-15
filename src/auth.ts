@@ -225,6 +225,41 @@ export function tokenInfo(token: string, now = new Date()): TokenInfo {
   return info;
 }
 
+/**
+ * Turn a sign-in failure into an actionable CliError. Covers the cases that otherwise surface
+ * as raw MSAL/AADSTS text: admin approval required or requested, consent declined, and an
+ * expired device code. `orgMode` decides whether the suggested retry includes --org-mode.
+ */
+export function explainLoginError(err: unknown, orgMode = false): CliError {
+  const raw = err instanceof Error ? err.message : String(err);
+  const retry = orgMode ? 'ms365 --org-mode auth login' : 'ms365 auth login';
+  if (/AADSTS90094|AADSTS90095|AADSTS65001|admin.?(approval|consent)|consent_required|approval/i.test(raw)) {
+    return new CliError(
+      `Sign-in needs an admin to approve some of the requested permissions (${raw}). ` +
+      'A pending approval request does not complete this login.',
+      {
+        code: 'admin_consent_required', exitCode: ExitCode.AUTH,
+        fix: 'an admin approves it in Entra (Enterprise applications → Admin consent requests, or the app\'s API permissions → Grant admin consent); then run: ' + retry,
+      },
+    );
+  }
+  if (/AADSTS65004|declined|access_denied/i.test(raw)) {
+    return new CliError(`Sign-in was declined (${raw}).`,
+      { code: 'consent_declined', exitCode: ExitCode.AUTH, fix: `run ${retry} again and accept the permissions` });
+  }
+  if (/device_code_expired|expired_token|code_expired|AADSTS70020/i.test(raw)) {
+    return new CliError(
+      `The sign-in code expired before the login was completed (${raw}). ` +
+      'If you clicked "Request approval", this login cannot finish: the approval is recorded for later, not for this code.',
+      {
+        code: 'login_expired', exitCode: ExitCode.AUTH,
+        fix: `if approval was requested, an admin approves it in Entra (Enterprise applications → Admin consent requests); then run ${retry} and finish signing in within 15 minutes`,
+      },
+    );
+  }
+  return new CliError(`Login failed: ${raw}`, { code: 'login_failed', exitCode: ExitCode.AUTH });
+}
+
 const LOGIN_PAGE = (message: string) =>
   `<!doctype html><html><head><meta charset="utf-8"><title>ms365</title></head><body><p>${message}</p></body></html>`;
 const LOGIN_SUCCESS_HTML = LOGIN_PAGE('Signed in to ms365. You can close this window and return to the terminal.');
@@ -371,6 +406,11 @@ export class AuthManager {
   /** The --account / MS365_CLI_ACCOUNT / profile account for this process, if any. */
   getAccountOverride(): string | null {
     return this.accountOverride;
+  }
+
+  /** True when this manager requests the org-mode scopes at login. */
+  requestsOrgScopes(): boolean {
+    return ORG_SCOPES.some(s => this.scopes.includes(s));
   }
 
   /** Granted (consented) scopes of the current access token, from its `scp` claim. */
