@@ -5,10 +5,15 @@ import os from 'os';
 import crypto from 'crypto';
 import { CliError, ExitCode } from './errors.js';
 import {
-  cachedStore, createFileStore, ensurePrivateMode, SplitTokenCache, TOKEN_CACHE_KEY,
-  type CachedCredentialStore, type CredentialStore,
+  cacheAccounts, cachedStore, createFileStore, ensurePrivateMode, itemKey, migrateFileToItems, migrateItemsToFile,
+  MigrationVerifyError, SplitTokenCache, TOKEN_CACHE_KEY,
+  type CachedCredentialStore, type CredentialStore, type MigrationDeps, type MigrationResult,
 } from './credential-store.js';
-import { resolveStorage, type ResolveOptions } from './keychain.js';
+import {
+  AUTO_PREFERS_KEYCHAIN, BACKEND_LABEL, configuredStorage, keychainTimeoutMs, keychainUnavailable, platformKeychain,
+  probeKeychain, PROBE_TIMEOUT_MS, readStorageConfig, resolveStorage, safeBackend, storageConfigPath, writeStorageConfig,
+  type KeychainStore, type ResolveOptions, type StorageConfig, type StorageSetting,
+} from './keychain.js';
 
 /** Silent token requests use .default: the token carries whatever the user consented to at login. */
 export const GRAPH_DEFAULT_SCOPE = 'https://graph.microsoft.com/.default';
@@ -199,6 +204,254 @@ export function storageResolver(overrides: Partial<ResolveOptions> = {}): ItemSt
     const r = resolveStorage({ configDir: configDir(), phase, writeFileAtomic, ...overrides });
     return r.kind === 'keychain' ? r.store ?? null : null;
   };
+}
+
+// ── Switching storage and reporting it (ID-5, ID-15) ───────────────
+
+const indexFilePath = () => path.join(configDir(), `${TOKEN_CACHE_KEY}.json`);
+
+/** storage.json without what `auto` resolved (logout, explicit switches). Keeps `storage` and `noticeShown`. */
+function withoutResolution(cfg: StorageConfig): StorageConfig {
+  const { resolved: _r, backend: _b, probedAt: _p, reason: _x, ...rest } = cfg;
+  return rest;
+}
+
+export interface StorageOptions {
+  env?: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
+  /** Default AUTO_PREFERS_KEYCHAIN (E1: false). */
+  autoPrefersKeychain?: boolean;
+  /** Plan only (`--dry-run`): never probe, since the probe writes an item. */
+  planOnly?: boolean;
+}
+
+export interface StoragePlan {
+  target: StorageSetting;
+  /** Where the credentials are now, and where they go. */
+  from: 'file' | 'keychain';
+  to: 'file' | 'keychain';
+  /** Accounts in the index (token-cache.json). */
+  accounts: number;
+  /** The keychain item store involved (from or to), when either side is the keychain. */
+  store?: KeychainStore;
+  /** The storage.json to write once the destination is verified. */
+  next: StorageConfig;
+}
+
+/** Work out what `auth storage use <target>` would do, touching nothing (dry-run safe: no tool is spawned). */
+export function planStorageSwitch(target: StorageSetting, opts: StorageOptions = {}): StoragePlan {
+  const env = opts.env ?? process.env;
+  const dir = configDir();
+  const configured = configuredStorage(dir, env);
+  if (configured.source === 'env' && configured.setting !== target) {
+    throw new CliError(`MS365_CLI_STORAGE=${configured.setting} is set and overrides storage.json, so switching to "${target}" would not take effect.`,
+      { code: 'usage', exitCode: ExitCode.USAGE, fix: `unset MS365_CLI_STORAGE (or set it to ${target}) and retry` });
+  }
+  const cfg = readStorageConfig(dir);
+  // Where the credentials are now. An unusable keychain is still "keychain": its items cannot be read back.
+  let from: 'file' | 'keychain';
+  let fromStore: KeychainStore | undefined;
+  try {
+    const r = resolveStorage({ configDir: dir, phase: 'read', env, platform: opts.platform, writeFileAtomic, autoPrefersKeychain: opts.autoPrefersKeychain });
+    from = r.kind;
+    fromStore = r.store;
+  } catch (err) {
+    if (!(err instanceof CliError && err.code === 'keychain_unavailable')) throw err;
+    from = 'keychain';
+  }
+
+  let to: 'file' | 'keychain';
+  let toStore: KeychainStore | undefined;
+  let next: StorageConfig = { ...withoutResolution(cfg), storage: target };
+  if (target === 'file') {
+    to = 'file';
+  } else if (target === 'keychain') {
+    const kc = platformKeychain({ configDir: dir, env, platform: opts.platform, writeFileAtomic });
+    if (typeof kc === 'string') throw keychainUnavailable(kc, safeBackend(env, opts.platform));
+    to = 'keychain';
+    toStore = kc;
+  } else {
+    // auto: E1 makes it the file store (nothing recorded); with the probe enabled it re-probes now (ID-4).
+    to = 'file';
+    if ((opts.autoPrefersKeychain ?? AUTO_PREFERS_KEYCHAIN) && opts.planOnly) {
+      next = { ...next, reason: 'not probed (--dry-run)' };
+    } else if (opts.autoPrefersKeychain ?? AUTO_PREFERS_KEYCHAIN) {
+      const kc = platformKeychain({ configDir: dir, env, platform: opts.platform, writeFileAtomic, timeoutMs: Math.min(PROBE_TIMEOUT_MS, keychainTimeoutMs(env)) });
+      const probed = typeof kc === 'string' ? { ok: false, reason: kc } : probeKeychain(kc);
+      const full = probed.ok ? platformKeychain({ configDir: dir, env, platform: opts.platform, writeFileAtomic }) : probed.reason;
+      next = { ...next, resolved: 'file', probedAt: new Date().toISOString(), reason: probed.reason };
+      if (typeof full !== 'string') {
+        to = 'keychain';
+        toStore = full;
+        next = { ...next, resolved: 'keychain', backend: full.backend };
+      }
+    }
+  }
+  return { target, from, to, accounts: cacheAccounts(readFileIfExists(indexFilePath())).ids.length, store: toStore ?? fromStore, next };
+}
+
+export interface StorageSwitchResult extends MigrationResult {
+  target: StorageSetting;
+  from: 'file' | 'keychain';
+  to: 'file' | 'keychain';
+  backend: string;
+}
+
+/**
+ * `auth storage use <target>` (ID-5): move every cached account between the 0600 file and the keychain with no
+ * re-login, holding the token-cache lock throughout; the source is removed only after the destination reads back
+ * what was written, and an interrupted run leaves a usable store (see migrateFileToItems / migrateItemsToFile).
+ */
+export function switchStorage(target: StorageSetting, opts: StorageOptions = {}): StorageSwitchResult {
+  const plan = planStorageSwitch(target, opts);
+  const env = opts.env ?? process.env;
+  const dir = configDir();
+  const before = readStorageConfig(dir);
+  const label = plan.to === 'keychain' ? BACKEND_LABEL[plan.store!.backend] : 'file';
+  const done = (r: MigrationResult): StorageSwitchResult => ({ ...r, target, from: plan.from, to: plan.to, backend: label });
+  const commit = () => writeStorageConfig(dir, plan.next, writeFileAtomic);
+  const rollback = () => {
+    if (fs.existsSync(storageConfigPath(dir)) || Object.keys(before).length > 0) writeStorageConfig(dir, before, writeFileAtomic);
+  };
+
+  if (plan.from === 'file' && plan.to === 'file') {
+    commit();
+    const ids = cacheAccounts(readFileIfExists(indexFilePath())).ids;
+    return done({ accounts: ids, dropped: [] });
+  }
+  if (plan.from === 'keychain' && !plan.store) {
+    // The keychain holding the credentials cannot be used, so they cannot be moved.
+    const kc = platformKeychain({ configDir: dir, env, platform: opts.platform, writeFileAtomic });
+    throw new CliError(`Cannot read the keychain that holds the credentials (${typeof kc === 'string' ? kc : 'unavailable'}), so they cannot be moved to the ${plan.to === 'file' ? 'file' : 'new store'}.`, {
+      code: 'keychain_unavailable', exitCode: ExitCode.AUTH,
+      fix: 'make the keychain available (on macOS: security unlock-keychain) and retry, or sign in again after: ms365 auth logout',
+    });
+  }
+  const deps: MigrationDeps = {
+    index: {
+      read: () => readFileIfExists(indexFilePath()),
+      write: data => { ensureConfigDir(); replaceFileAtomic(indexFilePath(), data); },
+    },
+    items: plan.store!,
+    lock: fn => { ensureConfigDir(); return withFileLock(indexFilePath(), fn); },
+    commit,
+    rollback,
+  };
+  try {
+    // keychain → keychain re-runs the import, which also completes an interrupted move into the keychain.
+    return done(plan.to === 'keychain' ? migrateFileToItems(deps) : migrateItemsToFile(deps));
+  } catch (err) {
+    if (err instanceof MigrationVerifyError) {
+      throw new CliError(`Storage not switched: ${err.message}. Nothing was removed; the credentials stay where they were.`,
+        { code: 'migration_failed', exitCode: ExitCode.GENERIC, fix: 'retry; if it keeps failing: ms365 auth storage show' });
+    }
+    throw err;
+  }
+}
+
+export interface StorageStatus {
+  configured: StorageSetting;
+  /** Where `configured` came from: MS365_CLI_STORAGE, storage.json, or the default. */
+  source: 'env' | 'file' | 'default';
+  /** Where credentials are read from now (null: the configured keychain cannot be used). */
+  resolved: 'keychain' | 'file' | null;
+  backend: string;
+  /** Live probe of this platform's keychain (null with --no-probe, --dry-run or --read-only). */
+  available: boolean | null;
+  probeMs: number | null;
+  reason: string | null;
+  /** Accounts in the index, and how many have credentials in the store in effect (an item, or file entries). */
+  accounts: { count: number; withItem: number | null };
+  files: Array<{ name: string; path: string; exists: boolean; mode: string | null }>;
+  noticeShown: boolean;
+}
+
+function fileMode(p: string): { exists: boolean; mode: string | null } {
+  try {
+    const st = fs.statSync(p);
+    return { exists: true, mode: process.platform === 'win32' ? 'inherited' : (st.mode & 0o777).toString(8).padStart(4, '0') };
+  } catch {
+    return { exists: false, mode: null };
+  }
+}
+
+/** `auth storage show` (ID-15). Never throws for keychain trouble: the probe result is data. */
+export function storageStatus(opts: StorageOptions & { probe?: boolean; noProbeReason?: string } = {}): StorageStatus {
+  const env = opts.env ?? process.env;
+  const dir = configDir();
+  const { setting, source } = configuredStorage(dir, env);
+  const cfg = readStorageConfig(dir);
+  let resolved: StorageStatus['resolved'];
+  let store: KeychainStore | undefined;
+  let reason: string | null = null;
+  try {
+    const r = resolveStorage({ configDir: dir, phase: 'read', env, platform: opts.platform, writeFileAtomic, autoPrefersKeychain: opts.autoPrefersKeychain });
+    resolved = r.kind;
+    store = r.store;
+    reason = r.reason ?? null;
+  } catch (err) {
+    if (!(err instanceof CliError && err.code === 'keychain_unavailable')) throw err;
+    resolved = null;
+    reason = err.message;
+  }
+  const backendOf = (b: string | undefined) => (b ? BACKEND_LABEL[b as keyof typeof BACKEND_LABEL] ?? b : 'keychain');
+  const backend = resolved === 'file' ? 'file' : backendOf(store?.backend ?? safeBackend(env, opts.platform));
+
+  let available: boolean | null = null;
+  let probeMs: number | null = null;
+  if (opts.probe !== false) {
+    const started = Date.now();
+    const kc = platformKeychain({ configDir: dir, env, platform: opts.platform, writeFileAtomic, timeoutMs: Math.min(PROBE_TIMEOUT_MS, keychainTimeoutMs(env)) });
+    const p = typeof kc === 'string' ? { ok: false, reason: kc } : probeKeychain(kc);
+    available = p.ok;
+    probeMs = Date.now() - started;
+    reason ??= p.reason;
+    if (!p.ok && resolved !== 'keychain') reason = `${reason === p.reason ? '' : `${reason}; `}keychain: ${p.reason}`;
+  } else if (opts.noProbeReason) {
+    reason ??= opts.noProbeReason;
+  }
+
+  const { ids, withCredentials } = cacheAccounts(readFileIfExists(indexFilePath()));
+  let withItem: number | null = withCredentials.length;
+  if (store) {
+    try {
+      const keys = new Set(store.list());
+      withItem = ids.filter(h => keys.has(itemKey(h))).length;
+    } catch { withItem = null; }
+  } else if (resolved === null) {
+    withItem = null;
+  }
+
+  const files = [
+    ['token-cache.json', indexFilePath()],
+    ['storage.json', storageConfigPath(dir)],
+    ['credentials/', path.join(dir, 'credentials')],
+  ].map(([name, p]) => ({ name, path: p, ...fileMode(p) }));
+  return {
+    configured: setting, source, resolved, backend, available, probeMs, reason,
+    accounts: { count: ids.length, withItem }, files, noticeShown: !!cfg.noticeShown,
+  };
+}
+
+/**
+ * ID-13: delete every keychain item of this config directory's service (enumerated with `list()`, not from the
+ * index), the DPAPI `credentials/` directory, and storage.json's resolution (keeps `storage` and `noticeShown`).
+ * The keychain is only consulted when it is the store in effect, so file-mode logouts never spawn a keychain tool.
+ */
+function removeStoredCredentials(): void {
+  const dir = configDir();
+  let firstErr: unknown;
+  try {
+    const r = resolveStorage({ configDir: dir, phase: 'read', writeFileAtomic });
+    if (r.store) for (const key of r.store.list()) r.store.delete(key);
+  } catch (err) { firstErr = err; }
+  try { fs.rmSync(path.join(dir, 'credentials'), { recursive: true, force: true }); } catch (err) { firstErr ??= err; }
+  if (fs.existsSync(storageConfigPath(dir))) {
+    const cfg = readStorageConfig(dir);
+    const next = withoutResolution(cfg);
+    if (Object.keys(next).length !== Object.keys(cfg).length) writeStorageConfig(dir, next, writeFileAtomic);
+  }
+  if (firstErr) throw firstErr;
 }
 
 /**
@@ -635,14 +888,19 @@ export class AuthManager {
   /** Remove every account and all cache, selection, device-code, temp and lock files. */
   async logout(): Promise<void> {
     this.assertMsalSource();
-    const cache = (await this.app()).getTokenCache();
-    for (const account of await cache.getAllAccounts()) {
-      await cache.removeAccount(account);
-    }
+    // Every local file and keychain item goes even if MSAL cannot read the cache (e.g. the keychain is locked).
+    let firstErr: unknown;
+    try {
+      const cache = (await this.app()).getTokenCache();
+      for (const account of await cache.getAllAccounts()) {
+        await cache.removeAccount(account);
+      }
+    } catch (err) { firstErr = err; }
     this.accessToken = null;
     this.tokenExpiry = null;
     this.selectedAccountId = null;
     this.cachePlugin.store.delete(TOKEN_CACHE_KEY);
+    try { removeStoredCredentials(); } catch (err) { firstErr ??= err; }
 
     const dir = configDir();
     const names = fs.existsSync(dir) ? fs.readdirSync(dir) : [];
@@ -651,6 +909,7 @@ export class AuthManager {
         try { fs.unlinkSync(path.join(dir, name)); } catch { /* already gone */ }
       }
     }
+    if (firstErr) throw firstErr;
   }
 
   async listAccounts(): Promise<AccountInfo[]> {

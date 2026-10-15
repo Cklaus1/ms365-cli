@@ -417,3 +417,133 @@ export class SplitTokenCache {
 function fingerprint(item: MsalCacheJson, accounts: Entries): string {
   return stableStringify({ item, accounts });
 }
+
+// ── Migration between the file layout and per-account items (ID-5) ──
+
+export interface MigrationDeps {
+  /** The index file (`token-cache.json`): raw reads and **unlocked** atomic writes (the caller's `lock` is held). */
+  index: { read(): string | undefined; write(data: string): void };
+  /** The per-account item store (the keychain backend). */
+  items: CredentialStore;
+  /** The cross-process lock held for the whole migration (the same one SplitTokenCache.save takes). */
+  lock<T>(fn: () => T): T;
+  /** Make the destination the configured store (storage.json); `rollback` undoes it. */
+  commit(): void;
+  rollback(): void;
+}
+
+export interface MigrationResult {
+  /** homeAccountIds now held by the destination. */
+  accounts: string[];
+  /** Accounts left out because no credentials for them were found (they could not sign in silently anyway). */
+  dropped: string[];
+}
+
+/** Thrown when a destination does not read back what was written; the source is left untouched. */
+export class MigrationVerifyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'MigrationVerifyError';
+  }
+}
+
+/**
+ * Move a file cache's credentials into per-account items (`auth storage use keychain`). Under the lock:
+ * 1. commit the setting first — from here on a reader takes credentials from an item, or else from the index file
+ *    (SplitTokenCache's legacy path), so a crash at any later point leaves every account usable;
+ * 2. write one item per account and read each back, comparing it to the source (stable JSON);
+ * 3. only then rewrite the index file without its credential sections.
+ * A failure in 2 deletes the items written, rolls the setting back and leaves the file as it was.
+ * Re-running it after an interruption completes the move (idempotent).
+ */
+export function migrateFileToItems(deps: MigrationDeps): MigrationResult {
+  return deps.lock(() => {
+    const disk = parseMsalCache(deps.index.read());
+    deps.commit();
+    if (!disk) return { accounts: [], dropped: [] };
+    const { index, items: legacy } = splitMsalCache(disk);
+    const written: string[] = [];
+    try {
+      for (const [hid, item] of legacy) {
+        deps.items.set(itemKey(hid), stableStringify(item));
+        written.push(hid);
+      }
+      for (const [hid, item] of legacy) {
+        let back: string | undefined;
+        try { back = deps.items.get(itemKey(hid)); } catch (err) {
+          if (!(err instanceof CorruptItemError)) throw err;
+        }
+        const parsed = back === undefined ? null : parseItem(back, hid);
+        if (!parsed || stableStringify(parsed) !== stableStringify(item)) {
+          throw new MigrationVerifyError(`the keychain item for account ${hid} did not read back as written`);
+        }
+      }
+    } catch (err) {
+      for (const hid of written) { try { deps.items.delete(itemKey(hid)); } catch { /* best effort */ } }
+      deps.rollback();
+      throw err;
+    }
+    if (legacy.size > 0) deps.index.write(stableStringify(index));
+    const ids = accountIds(disk);
+    const have = new Set([...legacy.keys()]);
+    // Accounts already moved by an earlier (interrupted) run keep their items.
+    for (const hid of ids) {
+      if (have.has(hid)) continue;
+      try { if (deps.items.get(itemKey(hid)) !== undefined) have.add(hid); } catch { /* corrupt: treated as missing */ }
+    }
+    return { accounts: ids.filter(h => have.has(h)), dropped: ids.filter(h => !have.has(h)) };
+  });
+}
+
+/**
+ * Move per-account items back into the single 0600 file (`auth storage use file`). Under the lock:
+ * 1. reassemble index + items (an item still missing falls back to credentials left in the index file);
+ * 2. write the full cache to the index file and read it back, comparing (stable JSON);
+ * 3. delete every item of this service (`list()`, not the index — orphans go too);
+ * 4. commit the setting last — until then readers in keychain mode find the credentials in the file (legacy path).
+ * A crash at any point leaves every account usable; re-running completes the move.
+ */
+export function migrateItemsToFile(deps: MigrationDeps): MigrationResult {
+  return deps.lock(() => {
+    const disk = parseMsalCache(deps.index.read());
+    if (!disk) {
+      for (const key of deps.items.list()) deps.items.delete(key);
+      deps.commit();
+      return { accounts: [], dropped: [] };
+    }
+    const { index, items: legacy } = splitMsalCache(disk);
+    const parts: MsalCacheJson[] = [];
+    const accounts: string[] = [];
+    const dropped: string[] = [];
+    for (const hid of accountIds(disk)) {
+      let data: string | undefined;
+      try { data = deps.items.get(itemKey(hid)); } catch (err) {
+        if (!(err instanceof CorruptItemError)) throw err;
+      }
+      const item = (data === undefined ? null : parseItem(data, hid)) ?? legacy.get(hid);
+      if (item) { parts.push(item); accounts.push(hid); } else dropped.push(hid);
+    }
+    const keptIndex: MsalCacheJson = { ...index, Account: Object.fromEntries(
+      Object.entries(index.Account ?? {}).filter(([, e]) => !dropped.includes(e.home_account_id as string))) };
+    const full = stableStringify(reassembleMsalCache(keptIndex, parts));
+    deps.index.write(full);
+    const back = parseMsalCache(deps.index.read());
+    if (!back || stableStringify(back) !== full) {
+      // The items are untouched and still authoritative; put the index back as it was.
+      deps.index.write(stableStringify(disk));
+      throw new MigrationVerifyError('token-cache.json did not read back as written');
+    }
+    for (const key of deps.items.list()) deps.items.delete(key);
+    deps.commit();
+    return { accounts, dropped };
+  });
+}
+
+/** homeAccountIds in a cache's `Account` section, and how many of them have credentials in it (ID-15). */
+export function cacheAccounts(data: string | undefined): { ids: string[]; withCredentials: string[] } {
+  const cache = parseMsalCache(data);
+  if (!cache) return { ids: [], withCredentials: [] };
+  const { items } = splitMsalCache(cache);
+  const ids = accountIds(cache);
+  return { ids, withCredentials: ids.filter(h => items.has(h)) };
+}

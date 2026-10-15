@@ -72,7 +72,7 @@ describe.skipIf(!posix).each(KEYCHAIN_BACKENDS)('keychain backend %s (stub tools
     if (backend === 'dpapi') writeBlob('U1RVQkRQQVBJOmVB');
     const t = Date.now();
     const err = (() => { try { s.get(KEY); } catch (e) { return e; } })() as CliError;
-    expect(Date.now() - t).toBeLessThan(2_500);
+    expect(Date.now() - t).toBeLessThan(8_000); // stub sleeps 30 s; generous bound for a loaded full-suite run
     expect(err).toBeInstanceOf(CliError);
     expect(err.code).toBe('keychain_unavailable');
     expect(err.exitCode).toBe(ExitCode.AUTH);

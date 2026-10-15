@@ -91,6 +91,8 @@ const COMMANDS: Record<string, Entry> = {
   'auth select': 'update',
   'auth remove': 'delete',
   'auth setup': ['action', ['User.Read']],
+  'auth storage show': 'read',
+  'auth storage use': 'update',
   'auth profile list': 'read',
   'auth profile show': 'read',
   'auth profile set': 'update',

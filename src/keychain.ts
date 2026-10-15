@@ -411,12 +411,7 @@ export function resolveStorage(opts: ResolveOptions): StorageResolution {
   const { setting } = configuredStorage(opts.configDir, env);
   if (setting === 'file') return { kind: 'file' };
 
-  const keychain = (timeoutMs?: number): KeychainStore | string => {
-    const backend = platformBackend(env, opts.platform);
-    if (!backend) return `no supported keychain on ${opts.platform ?? process.platform}`;
-    const store = createKeychainStore({ backend, configDir: opts.configDir, env, timeoutMs, writeFileAtomic: opts.writeFileAtomic });
-    return store.unavailableReason() ?? store;
-  };
+  const keychain = (timeoutMs?: number) => platformKeychain({ ...opts, env, timeoutMs });
 
   if (setting === 'keychain') {
     const kc = keychain();
@@ -456,12 +451,33 @@ export function resolveStorage(opts: ResolveOptions): StorageResolution {
   return typeof store === 'object' ? { kind: 'keychain', store, reason: probed.reason } : { kind: 'file', reason: probed.reason };
 }
 
-function safeBackend(env: NodeJS.ProcessEnv, platform?: NodeJS.Platform): KeychainBackend | undefined {
+/**
+ * This platform's keychain store, or why there is none (no backend for the platform, tool missing, no D-Bus).
+ * Never spawns anything: availability is decided from PATH and the environment.
+ */
+export function platformKeychain(opts: {
+  configDir: string; env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform; timeoutMs?: number;
+  writeFileAtomic: (target: string, data: string) => void;
+}): KeychainStore | string {
+  const env = opts.env ?? process.env;
+  const backend = platformBackend(env, opts.platform);
+  if (!backend) return `no supported keychain on ${opts.platform ?? process.platform}`;
+  const store = createKeychainStore({ backend, configDir: opts.configDir, env, timeoutMs: opts.timeoutMs, writeFileAtomic: opts.writeFileAtomic });
+  return store.unavailableReason() ?? store;
+}
+
+/** Backend names as `auth storage show` reports them (ID-15). */
+export const BACKEND_LABEL: Record<KeychainBackend, string> = { macos: 'macos-keychain', libsecret: 'libsecret', dpapi: 'dpapi' };
+
+export function safeBackend(env: NodeJS.ProcessEnv, platform?: NodeJS.Platform): KeychainBackend | undefined {
   try { return platformBackend(env, platform) ?? undefined; } catch { return undefined; }
 }
 
-/** Write–read–delete of a probe item, each call bounded by PROBE_TIMEOUT_MS; DPAPI also checks PowerShell's start time (E3). */
-function probeKeychain(kc: KeychainStore): { ok: boolean; reason: string } {
+/**
+ * Write–read–delete of a probe item (call it on a store built with the PROBE_TIMEOUT_MS budget); DPAPI also checks
+ * PowerShell's start time (E3). Used by the `auto` resolution and by `auth storage show` (ID-15).
+ */
+export function probeKeychain(kc: KeychainStore): { ok: boolean; reason: string } {
   const started = Date.now();
   try {
     if (kc.backend === 'dpapi') {

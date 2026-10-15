@@ -1,6 +1,7 @@
-import { Command, Option } from 'commander';
+import { Argument, Command, Option } from 'commander';
 import { exec } from 'child_process';
-import { adminProfileUsageError, AuthManager, explainLoginError, tokenInfo } from '../auth.js';
+import { adminProfileUsageError, AuthManager, explainLoginError, planStorageSwitch, storageStatus, switchStorage, tokenInfo } from '../auth.js';
+import type { StorageSetting } from '../keychain.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { confirm, dryRunTrace, info, isDryRun, outputOption } from '../utils.js';
@@ -238,6 +239,46 @@ Nothing is ever removed from the app registration or the existing consent grant.
       } else {
         throw new CliError('Account not found.', { code: 'not_found', exitCode: ExitCode.NOT_FOUND });
       }
+    }));
+
+  const storage = auth.command('storage').description('Where ms365 keeps refresh tokens: the OS keychain or the 0600 token-cache.json');
+  const readOnlyMode = (cmd: Command) => !!cmd.optsWithGlobals().readOnly
+    || process.env.MS365_CLI_READ_ONLY === 'true' || process.env.MS365_CLI_READ_ONLY === '1';
+
+  storage
+    .command('show')
+    .description('Show the storage setting, what it resolved to, keychain availability (live probe) and the credential files')
+    .option('--no-probe', 'Skip the live keychain probe (write, read back and delete a probe item; at most 1.5 s)')
+    .addOption(outputOption())
+    .action(handleErrors(async (opts, cmd: Command) => {
+      // The probe writes (and deletes) a keychain item, so --dry-run and --read-only skip it.
+      const skip = isDryRun() ? 'not probed (--dry-run)' : readOnlyMode(cmd) ? 'not probed (--read-only)' : undefined;
+      const status = storageStatus({ probe: opts.probe !== false && !skip, noProbeReason: skip });
+      console.log(formatOutput(status, opts.output as OutputFormat));
+    }));
+
+  storage
+    .command('use')
+    .description('Switch credential storage and move every cached account to it (no re-login): auto, keychain or file')
+    .addArgument(new Argument('<mode>', 'auto (file until keychain storage is verified on this platform), keychain or file').choices(['auto', 'keychain', 'file']))
+    .addHelpText('after', `
+Holds the token-cache lock for the whole move; the old copy is deleted only after the new one reads back
+exactly. MS365_CLI_STORAGE, when set, overrides storage.json (use it for CI); switching against it is refused.`)
+    .action(handleErrors(async (mode: StorageSetting, _opts, cmd: Command) => {
+      if (isDryRun()) {
+        const plan = planStorageSwitch(mode, { planOnly: true });
+        return dryRunTrace(plan.from === plan.to && plan.to === 'file'
+          ? `would set storage to ${mode} (credentials stay in the file; ${plan.accounts} account(s))`
+          : `would set storage to ${mode} and move ${plan.accounts} account(s) from the ${plan.from} to the ${plan.to}`);
+      }
+      if (readOnlyMode(cmd)) {
+        throw new CliError('Read-only mode: switching credential storage is blocked. Remove --read-only to proceed.', { code: 'read_only', exitCode: ExitCode.PERMISSION });
+      }
+      const r = switchStorage(mode);
+      const where = r.to === 'keychain' ? `the OS keychain (${r.backend})` : 'the 0600 file';
+      const moved = r.from === r.to ? `${r.accounts.length} account(s) kept` : `${r.accounts.length} account(s) moved from the ${r.from}, no sign-in needed`;
+      info(`Credential storage: ${mode} → ${where}; ${moved}.`);
+      for (const hid of r.dropped) info(`Warning: account ${hid} had no stored credentials and was left out; sign in again: ms365 auth login`);
     }));
 
   const profile = auth.command('profile').description('Named sign-in settings (type, client ID, tenant, scopes, org mode, account) applied with --profile');

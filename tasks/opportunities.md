@@ -36,3 +36,4 @@ Things discovered mid-build that have no assigned task. Each entry gives a propo
 - **[P3] `auth grant-scopes` under an admin profile** needs `MS365_CLI_CLIENT_ID` from env, because the profile's clientId is ignored. (IDT-4)
 - **[P3] File-mode cache is still one `token-cache.json`, last writer wins** across processes; only keychain mode is split per account with read-modify-write. A merge in file mode would conflict with IDT-1's read-once tests. (IDT-2)
 - **[P4] Tests write 0644 `token-cache.json` fixtures**, so the suite prints the ID-19 chmod notice to stderr. Write fixtures 0600. (IDT-2)
+- **[P3] A crashed writer leaves `token-cache.json.lock`;** stale-lock breaking waits 30 s but the lock wait is 10 s, so a command right after a crash exits `lock_timeout`. Check the lock's PID for liveness before waiting out the age. (IDT-3)
