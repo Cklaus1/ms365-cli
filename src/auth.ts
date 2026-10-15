@@ -4,7 +4,11 @@ import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
 import { CliError, ExitCode } from './errors.js';
-import { cachedStore, createFileStore, TOKEN_CACHE_KEY, type CachedCredentialStore, type CredentialStore } from './credential-store.js';
+import {
+  cachedStore, createFileStore, ensurePrivateMode, SplitTokenCache, TOKEN_CACHE_KEY,
+  type CachedCredentialStore, type CredentialStore,
+} from './credential-store.js';
+import { resolveStorage, type ResolveOptions } from './keychain.js';
 
 /** Silent token requests use .default: the token carries whatever the user consented to at login. */
 export const GRAPH_DEFAULT_SCOPE = 'https://graph.microsoft.com/.default';
@@ -137,19 +141,22 @@ export function withFileLock<T>(target: string, fn: () => T): T {
   }
 }
 
+/** Replace `target` atomically (unique 0600 temp file + rename). The caller holds the lock. */
+function replaceFileAtomic(target: string, data: string): void {
+  const tmp = `${target}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+  try {
+    fs.writeFileSync(tmp, data, { mode: 0o600 });
+    fs.renameSync(tmp, target);
+  } catch (err) {
+    try { fs.unlinkSync(tmp); } catch { /* not created */ }
+    throw err;
+  }
+}
+
 /** Atomically replace `target` (unique temp file + rename) under a cross-process lock. */
 export function writeFileAtomic(target: string, data: string): void {
   ensureConfigDir();
-  withFileLock(target, () => {
-    const tmp = `${target}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
-    try {
-      fs.writeFileSync(tmp, data, { mode: 0o600 });
-      fs.renameSync(tmp, target);
-    } catch (err) {
-      try { fs.unlinkSync(tmp); } catch { /* not created */ }
-      throw err;
-    }
-  });
+  withFileLock(target, () => replaceFileAtomic(target, data));
 }
 
 function readFileIfExists(p: string): string | undefined {
@@ -166,21 +173,77 @@ export function fileCredentialStore(): CredentialStore {
   return createFileStore({ dir: configDir, writeFileAtomic, withFileLock });
 }
 
+/** The split cache over `items`, with `configDir()/token-cache.json` as its index (ID-6). */
+export function splitTokenCache(items: CredentialStore): SplitTokenCache {
+  const indexFile = () => path.join(configDir(), `${TOKEN_CACHE_KEY}.json`);
+  return new SplitTokenCache({
+    index: {
+      read: () => { ensurePrivateMode(indexFile()); return readFileIfExists(indexFile()); },
+      write: data => { ensureConfigDir(); replaceFileAtomic(indexFile(), data); },
+      remove: () => { try { fs.unlinkSync(indexFile()); } catch { /* none */ } },
+    },
+    items,
+    lock: fn => { ensureConfigDir(); return withFileLock(indexFile(), fn); },
+  });
+}
+
 /**
- * MSAL cache plugin backed by a CredentialStore (default: the single 0600 file; no OS keyring yet, see spec D28 / N6).
- * The store is read once per plugin (one per process) and cached in memory, changed only by this plugin's own writes
- * (ID-12). MSAL calls afterCacheAccess after every token operation and sets cacheHasChanged when a token was fetched
- * from the network, so silent refreshes (and rotated refresh tokens) are persisted without extra code paths.
+ * Where the cache's credentials go for a given phase: null = the whole cache in `store` (the 0600 file), else the
+ * per-account item store (a keychain backend). Called lazily, so `--help`/dry-run never resolve storage.
+ */
+export type ItemStoreResolver = (phase: 'read' | 'write') => CredentialStore | null;
+
+/** The production resolver (ID-4): MS365_CLI_STORAGE / storage.json / auto (E1: auto = file). */
+export function storageResolver(overrides: Partial<ResolveOptions> = {}): ItemStoreResolver {
+  return phase => {
+    const r = resolveStorage({ configDir: configDir(), phase, writeFileAtomic, ...overrides });
+    return r.kind === 'keychain' ? r.store ?? null : null;
+  };
+}
+
+/**
+ * MSAL cache plugin backed by a CredentialStore. In file mode (the default; E1) the whole cache is one 0600
+ * `token-cache.json`, as before. In keychain mode the credentials are split into one item per account and the file
+ * keeps only the secret-free `Account`/`AppMetadata` index (ID-6), reassembled before MSAL's single `deserialize()`.
+ * Either way the stores are read once per plugin (one per process) and changed only by this plugin's writes
+ * (ID-12). MSAL calls afterCacheAccess after every token operation and sets cacheHasChanged when a token was
+ * fetched from the network, so silent refreshes (and rotated refresh tokens) are persisted without extra code paths.
  */
 export class FileTokenCachePlugin implements ICachePlugin {
+  /** The token-cache store: the whole cache in file mode. */
   readonly store: CachedCredentialStore;
+  private readonly resolver: ItemStoreResolver;
+  /** Set once keychain mode is in effect. */
+  private split: SplitTokenCache | null = null;
+  private readResolved = false;
 
-  constructor(store: CredentialStore = fileCredentialStore()) {
+  /**
+   * @param store the file store (default `configDir()/token-cache.json`)
+   * @param items the per-account item store, or a resolver deciding it lazily (default: file mode only)
+   */
+  constructor(store: CredentialStore = fileCredentialStore(), items?: CredentialStore | ItemStoreResolver) {
     this.store = cachedStore(store);
+    this.resolver = typeof items === 'function' ? items : () => items ?? null;
+  }
+
+  /** Which layout is in effect (`split` once credentials live in per-account items). */
+  mode(): 'file' | 'split' {
+    return this.split ? 'split' : 'file';
+  }
+
+  /** Drop what was read so the next access reads the stores again (IDT-5). */
+  invalidate(): void {
+    this.store.invalidate();
+    this.split?.invalidate();
   }
 
   async beforeCacheAccess(ctx: TokenCacheContext): Promise<void> {
-    const data = this.store.get(TOKEN_CACHE_KEY);
+    if (!this.readResolved) {
+      const items = this.resolver('read');
+      if (items) this.split = splitTokenCache(items);
+      this.readResolved = true;
+    }
+    const data = this.split ? this.split.load() : this.store.get(TOKEN_CACHE_KEY);
     if (data) {
       try {
         ctx.tokenCache.deserialize(data);
@@ -191,9 +254,17 @@ export class FileTokenCachePlugin implements ICachePlugin {
   }
 
   async afterCacheAccess(ctx: TokenCacheContext): Promise<void> {
-    if (ctx.cacheHasChanged) {
-      this.store.set(TOKEN_CACHE_KEY, ctx.tokenCache.serialize());
+    if (!ctx.cacheHasChanged) return;
+    if (!this.split) {
+      // `auto` resolves on the first write (ID-4); with E1 it stays file.
+      const items = this.resolver('write');
+      if (items) {
+        this.split = splitTokenCache(items);
+        this.split.adopt(this.readResolved ? this.store.get(TOKEN_CACHE_KEY) : undefined);
+      }
     }
+    if (this.split) this.split.save(ctx.tokenCache.serialize());
+    else this.store.set(TOKEN_CACHE_KEY, ctx.tokenCache.serialize());
   }
 }
 
@@ -317,7 +388,7 @@ export class AuthManager {
   private msalConfig: Configuration;
   private appP?: Promise<PublicClientApplication>;
   /** One plugin (and so one read-cached store) per manager, i.e. per process (ID-12). */
-  private readonly cachePlugin = new FileTokenCachePlugin();
+  private readonly cachePlugin = new FileTokenCachePlugin(fileCredentialStore(), storageResolver());
   private scopes: string[];
   private accessToken: string | null = null;
   private tokenExpiry: number | null = null;

@@ -24,7 +24,22 @@ export interface CredentialStore {
 /** The key of the MSAL token cache. */
 export const TOKEN_CACHE_KEY = 'token-cache';
 
-const KEY_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+)*$/;
+/**
+ * ID-19: a credential-bearing file that is group/world-accessible is set back to 0600, with one stderr line.
+ * POSIX only (on Windows the mode bits are synthetic and the file inherits the profile's ACL). Missing file: no-op.
+ */
+export function ensurePrivateMode(file: string, warn: (line: string) => void = l => { process.stderr.write(l + '\n'); }): void {
+  if (process.platform === 'win32') return;
+  let mode: number;
+  try { mode = fs.statSync(file).mode; } catch { return; }
+  if ((mode & 0o077) === 0) return;
+  try {
+    fs.chmodSync(file, 0o600);
+    warn(`ms365: ${file} was accessible to other users (mode ${(mode & 0o777).toString(8).padStart(4, '0')}); changed it to 0600`);
+  } catch { /* not ours to change; reading still works */ }
+}
+
+export const KEY_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+)*$/;
 
 function assertKey(key: string, prefix: string): void {
   if (!KEY_RE.test(key) || (key !== prefix && !key.startsWith(`${prefix}.`))) {
@@ -57,6 +72,7 @@ export function createFileStore(deps: FileStoreDeps): CredentialStore {
     kind: 'file',
     get(key) {
       const target = file(key);
+      ensurePrivateMode(target);
       try {
         return fs.readFileSync(target, 'utf8') || undefined;
       } catch {
@@ -131,4 +147,273 @@ export function cachedStore(inner: CredentialStore): CachedCredentialStore {
       else cache.delete(key);
     },
   };
+}
+
+// ── Per-account split of the MSAL cache (ID-6, ID-18) ───────────────
+
+/**
+ * Thrown by a backend's `get` when the item exists but cannot be decoded (e.g. a DPAPI blob that no longer
+ * decrypts). The split cache deletes such an item and treats it as missing (ID-18).
+ */
+export class CorruptItemError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CorruptItemError';
+  }
+}
+
+type Entries = Record<string, Record<string, unknown>>;
+/** A parsed MSAL cache: `{Account, IdToken, AccessToken, RefreshToken, AppMetadata, …}`, each a map of entries. */
+export type MsalCacheJson = Record<string, Entries>;
+
+/** Sections kept in the index (`token-cache.json`): no secrets. Everything else is split by `home_account_id`. */
+const INDEX_SECTIONS = new Set(['Account', 'AppMetadata']);
+
+/** JSON with object keys sorted, so equal caches give equal strings (MSAL's key order is not promised). */
+export function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    return `{${Object.keys(obj).sort().filter(k => obj[k] !== undefined)
+      .map(k => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/** Parse a serialized MSAL cache; anything that isn't `{section: {key: entry}}` yields null. */
+export function parseMsalCache(data: string | undefined): MsalCacheJson | null {
+  if (!data) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(data); } catch { return null; }
+  if (!isObj(parsed)) return null;
+  for (const section of Object.values(parsed)) {
+    if (!isObj(section) || !Object.values(section).every(isObj)) return null;
+  }
+  return parsed as MsalCacheJson;
+}
+
+export interface SplitCache {
+  /** `Account` and `AppMetadata` (plus any secret-free entry without `home_account_id`). */
+  index: MsalCacheJson;
+  /** homeAccountId → that account's credential sections (`IdToken`, `AccessToken`, `RefreshToken`, …). */
+  items: Map<string, MsalCacheJson>;
+}
+
+/**
+ * Partition a cache by `home_account_id` (ID-6). Lossless for MSAL's shape: every Account/IdToken/AccessToken/
+ * RefreshToken entry carries `home_account_id`; AppMetadata carries none and stays in the index.
+ */
+export function splitMsalCache(cache: MsalCacheJson): SplitCache {
+  const index: MsalCacheJson = { Account: {}, AppMetadata: {} };
+  const items = new Map<string, MsalCacheJson>();
+  for (const [section, entries] of Object.entries(cache)) {
+    if (INDEX_SECTIONS.has(section)) { index[section] = { ...entries }; continue; }
+    for (const [key, entry] of Object.entries(entries)) {
+      const hid = entry.home_account_id;
+      if (typeof hid !== 'string' || !hid) {
+        (index[section] ??= {})[key] = entry;
+        continue;
+      }
+      let item = items.get(hid);
+      if (!item) items.set(hid, item = {});
+      (item[section] ??= {})[key] = entry;
+    }
+  }
+  return { index, items };
+}
+
+/** The inverse of splitMsalCache: one object to hand to a single `deserialize()` (it replaces the whole cache). */
+export function reassembleMsalCache(index: MsalCacheJson, items: Iterable<MsalCacheJson>): MsalCacheJson {
+  const out: MsalCacheJson = { Account: {}, IdToken: {}, AccessToken: {}, RefreshToken: {}, AppMetadata: {} };
+  for (const part of [index, ...items]) {
+    for (const [section, entries] of Object.entries(part)) out[section] = { ...(out[section] ?? {}), ...entries };
+  }
+  return out;
+}
+
+/** Account-index homeAccountIds, in order of appearance. */
+function accountIds(index: MsalCacheJson): string[] {
+  const ids = new Set<string>();
+  for (const e of Object.values(index.Account ?? {})) if (typeof e.home_account_id === 'string') ids.add(e.home_account_id);
+  return [...ids];
+}
+
+function accountEntriesOf(index: MsalCacheJson, hid: string): Entries {
+  return Object.fromEntries(Object.entries(index.Account ?? {}).filter(([, e]) => e.home_account_id === hid));
+}
+
+/** A valid item: credential sections only, every entry belonging to `hid`. */
+function parseItem(data: string, hid: string): MsalCacheJson | null {
+  const item = parseMsalCache(data);
+  if (!item) return null;
+  for (const [section, entries] of Object.entries(item)) {
+    if (INDEX_SECTIONS.has(section)) return null;
+    if (!Object.values(entries).every(e => e.home_account_id === hid)) return null;
+  }
+  return item;
+}
+
+const ITEM_SAFE = /^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$/;
+
+/** The store key of an account's item: `token-cache.<homeAccountId>` (base64url-encoded if it has odd characters). */
+export function itemKey(hid: string): string {
+  return `${TOKEN_CACHE_KEY}.${ITEM_SAFE.test(hid) ? hid : `x-${Buffer.from(hid).toString('base64url')}`}`;
+}
+
+export interface SplitTokenCacheDeps {
+  /** The index file (`token-cache.json`): raw reads and **unlocked** atomic writes (the caller holds `lock`). */
+  index: { read(): string | undefined; write(data: string): void; remove(): void };
+  /** The per-account item store (a keychain backend; the file store in tests). Reads must not be cached. */
+  items: CredentialStore;
+  /** The cross-process lock that serializes every read-modify-write of the index and items. */
+  lock<T>(fn: () => T): T;
+}
+
+/**
+ * The MSAL cache stored as one item per account plus a secret-free index (ID-6). `load()` reassembles everything
+ * (dropping accounts whose item is missing or corrupt, ID-18) and is read once per instance (ID-12); `save()` is a
+ * read-modify-write under the lock that writes only accounts whose JSON changed, deletes items of accounts this
+ * process removed, and keeps accounts other processes added meanwhile.
+ */
+export class SplitTokenCache {
+  /** homeAccountId → fingerprint (item JSON + its Account entries) as last loaded or saved by this process. */
+  private baseline = new Map<string, string>();
+  /** Accounts this process has seen (in the index at load time, or saved by it). */
+  private known = new Set<string>();
+  /** Index accounts that had no usable item at load time (dropped from the reassembled cache). */
+  private missing = new Set<string>();
+  private current: string | undefined;
+  private loaded = false;
+
+  constructor(private readonly deps: SplitTokenCacheDeps) {}
+
+  /** The reassembled cache as a JSON string, or undefined when nothing is stored. */
+  load(): string | undefined {
+    if (this.loaded) return this.current;
+    this.loaded = true;
+    const index = parseMsalCache(this.deps.index.read());
+    if (!index) return this.current = undefined;
+    // Credential sections left in the index file (a pre-split file cache) count as that account's item.
+    const legacy = splitMsalCache(index);
+    const items: MsalCacheJson[] = [];
+    for (const hid of accountIds(index)) {
+      this.known.add(hid);
+      const item = this.readItem(hid) ?? legacy.items.get(hid);
+      if (!item) { this.missing.add(hid); continue; }
+      items.push(item);
+      if (legacy.items.has(hid)) continue; // not yet in the item store: the next save writes it
+      this.baseline.set(hid, fingerprint(item, accountEntriesOf(index, hid)));
+    }
+    const keptIndex: MsalCacheJson = { ...legacy.index, Account: Object.fromEntries(
+      Object.entries(index.Account ?? {}).filter(([, e]) => !this.missing.has(e.home_account_id as string))) };
+    return this.current = stableStringify(reassembleMsalCache(keptIndex, items));
+  }
+
+  /** Treat `serialized` (e.g. a file cache being moved into the item store) as loaded, with nothing yet stored. */
+  adopt(serialized: string | undefined): void {
+    this.loaded = true;
+    this.current = serialized;
+    const cache = parseMsalCache(serialized);
+    if (cache) for (const hid of accountIds(cache)) this.known.add(hid);
+  }
+
+  /** Forget what was loaded so the next `load()` reads the stores again (IDT-5). */
+  invalidate(): void {
+    this.baseline.clear();
+    this.known.clear();
+    this.missing.clear();
+    this.current = undefined;
+    this.loaded = false;
+  }
+
+  save(serialized: string): void {
+    const cache = parseMsalCache(serialized);
+    if (!cache) throw new Error('MSAL produced a token cache that is not JSON');
+    const { index: mine, items: myItems } = splitMsalCache(cache);
+    const myIds = new Set([...accountIds(mine), ...myItems.keys()]);
+
+    this.deps.lock(() => {
+      const disk = parseMsalCache(this.deps.index.read()) ?? { Account: {}, AppMetadata: {} };
+      const diskSplit = splitMsalCache(disk);
+
+      // Accounts this process removed (or found without an item): delete their item unless another process has
+      // since written one (a fresh, uncached read under the lock).
+      const dropped = new Set<string>();
+      for (const hid of this.known) {
+        if (myIds.has(hid)) continue;
+        if (this.missing.has(hid) && !this.baseline.has(hid)) {
+          if (this.readItem(hid)) continue; // re-logged in elsewhere meanwhile: keep it
+        } else {
+          this.deps.items.delete(itemKey(hid));
+        }
+        dropped.add(hid);
+      }
+
+      // Write only what changed.
+      const next = new Map<string, string>();
+      for (const hid of myIds) {
+        const item = myItems.get(hid) ?? {};
+        const fp = fingerprint(item, accountEntriesOf(mine, hid));
+        next.set(hid, fp);
+        if (this.baseline.get(hid) !== fp) this.deps.items.set(itemKey(hid), stableStringify(item));
+      }
+      // Credentials still sitting in the index file for accounts this process never handled (a pre-split file):
+      // move them into the item store instead of dropping them.
+      for (const [hid, item] of diskSplit.items) {
+        if (myIds.has(hid) || dropped.has(hid) || this.readItem(hid)) continue;
+        this.deps.items.set(itemKey(hid), stableStringify(item));
+      }
+
+      // Index: the disk's entries, minus accounts this process dropped or rewrote, plus this process's view.
+      const index: MsalCacheJson = {};
+      for (const [section, entries] of Object.entries(diskSplit.index)) index[section] = { ...entries };
+      index.Account = Object.fromEntries(Object.entries(disk.Account ?? {}).filter(([, e]) => {
+        const hid = e.home_account_id as string;
+        return !dropped.has(hid) && !(myIds.has(hid) && this.baseline.get(hid) !== next.get(hid));
+      }));
+      for (const [section, entries] of Object.entries(mine)) {
+        if (section === 'Account') {
+          for (const [k, e] of Object.entries(entries)) {
+            const hid = e.home_account_id as string;
+            if (this.baseline.get(hid) !== next.get(hid) || !Object.values(index.Account).some(x => x.home_account_id === hid)) index.Account[k] = e;
+          }
+        } else {
+          index[section] = { ...(index[section] ?? {}), ...entries };
+        }
+      }
+      this.deps.index.write(stableStringify(index));
+
+      this.baseline = next;
+      this.known = new Set(myIds);
+      this.missing.clear();
+    });
+    this.current = serialized;
+    this.loaded = true;
+  }
+
+  /** An account's item, or undefined when missing; a corrupt item is deleted and treated as missing (ID-18). */
+  private readItem(hid: string): MsalCacheJson | undefined {
+    const key = itemKey(hid);
+    let data: string | undefined;
+    try {
+      data = this.deps.items.get(key);
+    } catch (err) {
+      if (!(err instanceof CorruptItemError)) throw err;
+      this.deps.items.delete(key);
+      return undefined;
+    }
+    if (data === undefined) return undefined;
+    const item = parseItem(data, hid);
+    if (!item) {
+      this.deps.items.delete(key);
+      return undefined;
+    }
+    return item;
+  }
+}
+
+function fingerprint(item: MsalCacheJson, accounts: Entries): string {
+  return stableStringify({ item, accounts });
 }

@@ -1,8 +1,8 @@
 # todo: identity profiles build (derived from commits)
 
 - [x] IDT-4 profile types; admin via az
-- [ ] IDT-1 credential-store interface + file backend
-- [ ] IDT-2 per-account split, keychain backends, storage.json [critical path]
+- [x] IDT-1 credential-store interface + file backend
+- [x] IDT-2 per-account split, keychain backends, storage.json [critical path]
 - [ ] IDT-3 migration, auth storage command, logout cleanup
 - [ ] IDT-5 long-running re-read, az re-borrow
 - [ ] IDT-6 docs, snapshot, smoke
