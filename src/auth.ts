@@ -261,6 +261,20 @@ export function explainLoginError(err: unknown, orgMode = false): CliError {
   return new CliError(`Login failed: ${raw}`, { code: 'login_failed', exitCode: ExitCode.AUTH });
 }
 
+const noClientIdError = () => new CliError(
+  'No client ID configured. Set MS365_CLI_CLIENT_ID in your .env file or run: ms365 auth setup',
+  { code: 'no_client_id', exitCode: ExitCode.AUTH, fix: 'ms365 auth setup' },
+);
+
+/** `auth login`/`logout`/`accounts`/`select`/`remove` under an admin profile (ID-8): exit 2. */
+export function adminProfileUsageError(profileName?: string | null): CliError {
+  const which = profileName ? `"${profileName}" is an admin profile` : 'This is an admin profile';
+  return new CliError(`${which}: admin profiles sign in with az login, not ms365 (nothing is cached by ms365).`, {
+    code: 'usage', exitCode: ExitCode.USAGE,
+    fix: 'az login --tenant <tenant> for the admin profile, or drop --profile to manage ms365\'s own sign-in',
+  });
+}
+
 const LOGIN_PAGE = (message: string) =>
   `<!doctype html><html><head><meta charset="utf-8"><title>ms365</title></head><body><p>${message}</p></body></html>`;
 const LOGIN_SUCCESS_HTML = LOGIN_PAGE('Signed in to ms365. You can close this window and return to the terminal.');
@@ -271,7 +285,16 @@ export interface AuthManagerOptions {
   tenantId?: string;
   /** Use this cached account (username, case-insensitive, or homeAccountId) for this process only. */
   account?: string;
+  /**
+   * Where access tokens come from (ID-8): `msal` (default; ms365's own sign-in, refresh tokens cached) or `az`
+   * (an admin profile: borrowed from `az account get-access-token --tenant <tenantId>` on demand, held in memory only).
+   */
+  source?: TokenSource;
+  /** The --profile name in effect, for messages. */
+  profileName?: string;
 }
+
+export type TokenSource = 'msal' | 'az';
 
 export interface LoginOptions {
   /** Sign in with the system browser (auth code + PKCE, loopback redirect) instead of device code. */
@@ -287,19 +310,21 @@ export class AuthManager {
   private selectedAccountId: string | null = null;
   private tokenRefreshPromise: Promise<string> | null = null;
   private accountOverride: string | null;
+  private source: TokenSource;
+  private profileName: string | null;
 
   /** @param scopes scopes requested (and consented) at login */
   constructor(scopes: string[], options: AuthManagerOptions = {}) {
     this.scopes = scopes;
-    this.accountOverride = options.account || null;
+    this.source = options.source ?? 'msal';
+    this.profileName = options.profileName ?? null;
+    // An az-backed manager has no cached accounts to pick from.
+    this.accountOverride = this.source === 'az' ? null : options.account || null;
+    // An az-backed manager signs nothing in itself, so it needs no client ID (only grant-scopes asks for one).
     const clientId = options.clientId
-      || process.env.MS365_CLI_CLIENT_ID;
-    if (!clientId) {
-      throw new CliError(
-        'No client ID configured. Set MS365_CLI_CLIENT_ID in your .env file or run: ms365 auth setup',
-        { code: 'no_client_id', exitCode: ExitCode.AUTH, fix: 'ms365 auth setup' },
-      );
-    }
+      || process.env.MS365_CLI_CLIENT_ID
+      || '';
+    if (!clientId && this.source !== 'az') throw noClientIdError();
     const tenantId = options.tenantId
       || process.env.MS365_CLI_TENANT_ID
       || 'common';
@@ -319,7 +344,23 @@ export class AuthManager {
   }
 
   async initialize(): Promise<void> {
+    if (this.source === 'az') return;
     await this.loadSelectedAccount();
+  }
+
+  /** `msal` (ms365's own sign-in) or `az` (an admin profile's borrowed Azure CLI token). */
+  tokenSource(): TokenSource {
+    return this.source;
+  }
+
+  /** The --profile name in effect, if any. */
+  getProfileName(): string | null {
+    return this.profileName;
+  }
+
+  /** Under an admin profile there is no ms365 sign-in to manage: login/logout/accounts/select/remove are usage errors (ID-8). */
+  assertMsalSource(): void {
+    if (this.source === 'az') throw adminProfileUsageError(this.profileName);
   }
 
   private async loadSelectedAccount(): Promise<void> {
@@ -363,6 +404,7 @@ export class AuthManager {
   }
 
   private async doTokenRefresh(forceRefresh: boolean): Promise<string> {
+    if (this.source === 'az') return this.borrowAzToken();
     const account = await this.getCurrentAccount();
     if (!account) {
       throw new CliError('Not logged in. Run: ms365 auth login', { code: 'auth_required', exitCode: ExitCode.AUTH, fix: 'ms365 auth login' });
@@ -376,6 +418,35 @@ export class AuthManager {
 
     this.accessToken = response.accessToken;
     this.tokenExpiry = response.expiresOn ? new Date(response.expiresOn).getTime() : null;
+    return this.accessToken;
+  }
+
+  /**
+   * ID-8: an admin profile's token is az's signed-in user through the Azure CLI app, fetched on demand and kept in
+   * memory only (until exp − 5 min); nothing is written. az refreshes its own session, so expiry means calling az again.
+   */
+  private async borrowAzToken(): Promise<string> {
+    const tenant = this.getTenantId();
+    // Loaded lazily: keeps grant-scopes (and GraphClient) out of auth.ts's import graph.
+    const { azGraphToken } = await import('./grant-scopes.js');
+    const az = azGraphToken(tenant);
+    if (!az.ok) {
+      const who = this.profileName ? `Admin profile "${this.profileName}"` : 'This admin profile';
+      const why = az.reason === 'missing' ? 'the Azure CLI (az) is not installed'
+        : az.reason === 'not_logged_in' ? `the Azure CLI is not signed in to tenant ${tenant} (${az.detail})`
+          : `the Azure CLI could not provide a token (${az.detail})`;
+      throw new CliError(`${who} borrows its token from the Azure CLI, but ${why}.`, {
+        code: 'az_required', exitCode: ExitCode.AUTH,
+        fix: az.reason === 'missing' ? `install the Azure CLI, then: az login --tenant ${tenant}` : `az login --tenant ${tenant}`,
+      });
+    }
+    let exp: number | null = null;
+    try {
+      const e = decodeAccessToken(az.token.accessToken).exp;
+      if (typeof e === 'number') exp = e * 1000;
+    } catch { /* not a JWT: no expiry known, so it is borrowed again on the next call */ }
+    this.accessToken = az.token.accessToken;
+    this.tokenExpiry = exp;
     return this.accessToken;
   }
 
@@ -411,6 +482,7 @@ export class AuthManager {
 
   /** The app (client) ID this manager signs in with. */
   getClientId(): string {
+    if (!this.msalConfig.auth.clientId) throw noClientIdError();
     return this.msalConfig.auth.clientId;
   }
 
@@ -435,6 +507,7 @@ export class AuthManager {
   }
 
   async login(options: LoginOptions = {}): Promise<string> {
+    this.assertMsalSource();
     const response = options.openBrowser
       ? await (await this.app()).acquireTokenInteractive({
         scopes: this.scopes,
@@ -476,6 +549,7 @@ export class AuthManager {
 
   /** Remove every account and all cache, selection, device-code, temp and lock files. */
   async logout(): Promise<void> {
+    this.assertMsalSource();
     const cache = (await this.app()).getTokenCache();
     for (const account of await cache.getAllAccounts()) {
       await cache.removeAccount(account);
@@ -494,10 +568,12 @@ export class AuthManager {
   }
 
   async listAccounts(): Promise<AccountInfo[]> {
+    this.assertMsalSource();
     return (await this.app()).getTokenCache().getAllAccounts();
   }
 
   async selectAccount(accountId: string): Promise<boolean> {
+    this.assertMsalSource();
     const accounts = await this.listAccounts();
     const account = accounts.find(a => a.homeAccountId === accountId);
     if (!account) return false;
@@ -510,6 +586,7 @@ export class AuthManager {
   }
 
   async removeAccount(accountId: string): Promise<boolean> {
+    this.assertMsalSource();
     const accounts = await this.listAccounts();
     const account = accounts.find(a => a.homeAccountId === accountId);
     if (!account) return false;

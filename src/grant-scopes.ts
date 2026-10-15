@@ -21,7 +21,7 @@ export interface AzToken { accessToken: string; tenant?: string }
 /** Injected in tests. Runs `az` and returns its result. */
 export const azDeps = {
   run(args: string[]): { status: number | null; stdout: string; stderr: string; missing: boolean } {
-    const r = spawnSync('az', args, { encoding: 'utf8', timeout: 60_000 });
+    const r = spawnSync('az', args, { encoding: 'utf8', timeout: 60_000, killSignal: 'SIGKILL' });
     const missing = (r.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT';
     return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '', missing };
   },

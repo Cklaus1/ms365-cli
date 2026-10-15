@@ -52,7 +52,7 @@ import { registerNotesCommands } from './commands/notes.js';
 import { setActor, setCommandPath } from './audit.js';
 import { requiredScopes } from './catalog.js';
 import { assertConsented } from './preflight.js';
-import { readProfile, type Profile } from './profiles.js';
+import { profileType, readProfile, type Profile } from './profiles.js';
 import logger from './logger.js';
 import { setDryRun, setQuiet } from './utils.js';
 import { setFields, setCursor } from './formatter.js';
@@ -85,10 +85,18 @@ program.exitOverride((err) => {
 
 const envTrue = (...names: string[]) => names.some(n => process.env[n] === 'true' || process.env[n] === '1');
 
+const profileName = (): string | undefined => program.opts().profile || process.env.MS365_CLI_PROFILE || undefined;
+
 /** The --profile (or MS365_CLI_PROFILE) settings; empty when none is chosen. */
 function activeProfile(): Profile {
-  const name = program.opts().profile || process.env.MS365_CLI_PROFILE;
+  const name = profileName();
   return name ? readProfile(name) : {};
+}
+
+/** The name of the active profile when it is an admin profile (ID-7/ID-8), else undefined. */
+function adminProfileName(): string | undefined {
+  const name = profileName();
+  return name && profileType(readProfile(name)) === 'admin' ? name : undefined;
 }
 
 /** Global flags, resolved from parsed options (after parse) with env-var fallbacks, then the profile. */
@@ -119,7 +127,11 @@ let graphClient: GraphClient | null = null;
 function getAuth(): AuthManager {
   if (!authManager) {
     const { orgMode, account, profile } = globalFlags();
-    authManager = new AuthManager(profile.scopes ?? buildScopes(orgMode), { clientId: profile.clientId, tenantId: profile.tenantId, account });
+    const admin = adminProfileName();
+    // Admin profiles (ID-8): the token is borrowed from the Azure CLI per call; the profile's clientId/orgMode are ignored.
+    authManager = admin
+      ? new AuthManager(buildScopes(!!program.opts().orgMode || envTrue('MS365_CLI_ORG_MODE')), { source: 'az', tenantId: profile.tenantId, profileName: admin })
+      : new AuthManager(profile.scopes ?? buildScopes(orgMode), { clientId: profile.clientId, tenantId: profile.tenantId, account, profileName: profileName() });
   }
   return authManager;
 }
@@ -128,14 +140,15 @@ function getClient(): GraphClient {
   if (!graphClient) {
     const { dryRun, apiVersion, readOnly, profile } = globalFlags();
     // A thunk: under --dry-run no AuthManager is built, so previews need no client ID (DR-16, F23).
+    const clientId = adminProfileName() ? undefined : profile.clientId;
     graphClient = new GraphClient(getAuth, dryRun, apiVersion, readOnly,
-      { clientId: profile.clientId || process.env.MS365_CLI_CLIENT_ID || undefined });
+      { clientId: clientId || process.env.MS365_CLI_CLIENT_ID || undefined });
   }
   return graphClient;
 }
 
 // Register all command modules
-registerAuthCommands(program, getAuth);
+registerAuthCommands(program, getAuth, adminProfileName);
 registerMailCommands(program, getClient);
 registerCalendarCommands(program, getClient);
 registerDriveCommands(program, getClient);
@@ -206,7 +219,7 @@ program.hook('preAction', async (_program, actionCommand) => {
     } catch (err) {
       if ((err as { code?: string }).code !== 'opaque_token') throw err;
     }
-    if (granted) assertConsented(commandPath, required, granted);
+    if (granted) assertConsented(commandPath, required, granted, auth.tokenSource() === 'az' ? auth.getProfileName() ?? '' : undefined);
   }
 });
 

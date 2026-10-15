@@ -1,10 +1,10 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { exec } from 'child_process';
-import { AuthManager, explainLoginError, tokenInfo } from '../auth.js';
+import { adminProfileUsageError, AuthManager, explainLoginError, tokenInfo } from '../auth.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { confirm, dryRunTrace, info, isDryRun, outputOption } from '../utils.js';
-import { deleteProfile, listProfiles, profileExists, readProfile, saveProfile, validateProfileName, type Profile } from '../profiles.js';
+import { deleteProfile, ignoredAdminFields, listProfiles, profileExists, readProfile, saveProfile, validateProfile, validateProfileName, type Profile } from '../profiles.js';
 import { openBrowserCommand } from './setup.js';
 import { GraphClient } from '../graph-client.js';
 import { adminConsentUrl, azGraphToken, CONSENT_REDIRECT_URI, grantScopes } from '../grant-scopes.js';
@@ -15,14 +15,23 @@ async function openSystemBrowser(url: string): Promise<void> {
   exec(openBrowserCommand(url), () => { /* the URL was printed above */ });
 }
 
-export function registerAuthCommands(program: Command, getAuth: () => AuthManager): void {
+/**
+ * @param adminProfile the active profile's name when it is an admin profile (ID-8). Checked before --dry-run and
+ * before any AuthManager is built, so `auth login` etc. under an admin profile always exit 2.
+ */
+export function registerAuthCommands(program: Command, getAuth: () => AuthManager, adminProfile: () => string | undefined = () => undefined): void {
   const auth = program.command('auth').description('Authentication management');
+  const rejectAdmin = () => {
+    const name = adminProfile();
+    if (name !== undefined) throw adminProfileUsageError(name);
+  };
 
   auth
     .command('login')
     .description('Login (device code flow by default)')
     .option('--browser', 'Sign in with the system browser instead (needs an http://localhost redirect URI on the app registration)')
     .action(handleErrors(async (opts) => {
+      rejectAdmin();
       if (isDryRun()) return dryRunTrace('would sign in');
       const authManager = getAuth();
       await authManager.initialize();
@@ -43,6 +52,7 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
     .command('logout')
     .description('Log out and clear saved credentials')
     .action(handleErrors(async () => {
+      rejectAdmin();
       if (isDryRun()) return dryRunTrace('would log out and clear the token cache and selected account');
       const authManager = getAuth();
       await authManager.initialize();
@@ -58,6 +68,14 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
       if (isDryRun()) return dryRunTrace('would check the login status (token cache not read)');
       const authManager = getAuth();
       await authManager.initialize();
+      const admin = adminProfile();
+      if (admin !== undefined) {
+        // ID-8: report the borrowed identity and its scp from the token itself (az errors exit 3 az_required).
+        const t = tokenInfo(await authManager.getToken());
+        console.log(`Admin profile "${admin}": ${t.user ?? 'unknown user'} (tenant ${t.tenantId ?? authManager.getTenantId()}) via the Azure CLI`);
+        console.log(`Scopes: ${t.scopes.join(' ') || '(none)'}`);
+        return;
+      }
       const result = await authManager.verifyLogin();
       if (result.success && result.user) {
         console.log(`Logged in as ${result.user.displayName} (${result.user.email})`);
@@ -74,7 +92,11 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
       if (isDryRun()) return dryRunTrace('would show the scopes of the current access token (token cache not read)');
       const authManager = getAuth();
       await authManager.initialize();
-      console.log(formatOutput(tokenInfo(await authManager.getToken()), opts.output as OutputFormat));
+      const t = tokenInfo(await authManager.getToken());
+      // Admin profiles: say where the token came from (ID-8); user output is unchanged.
+      const admin = adminProfile();
+      const out = admin !== undefined ? { ...t, source: 'azure-cli', profile: admin } : t;
+      console.log(formatOutput(out, opts.output as OutputFormat));
     }));
 
   auth
@@ -167,6 +189,7 @@ Nothing is ever removed from the app registration or the existing consent grant.
     .command('accounts')
     .description('List all cached accounts')
     .action(handleErrors(async () => {
+      rejectAdmin();
       const authManager = getAuth();
       await authManager.initialize();
       const accounts = await authManager.listAccounts();
@@ -189,6 +212,7 @@ Nothing is ever removed from the app registration or the existing consent grant.
     .command('select <accountId>')
     .description('Select an account by ID')
     .action(handleErrors(async (accountId: string) => {
+      rejectAdmin();
       if (isDryRun()) return dryRunTrace(`would select account ${accountId}`);
       const authManager = getAuth();
       await authManager.initialize();
@@ -204,6 +228,7 @@ Nothing is ever removed from the app registration or the existing consent grant.
     .command('remove <accountId>')
     .description('Remove a cached account')
     .action(handleErrors(async (accountId: string) => {
+      rejectAdmin();
       if (isDryRun()) return dryRunTrace(`would remove account ${accountId}`);
       const authManager = getAuth();
       await authManager.initialize();
@@ -215,7 +240,7 @@ Nothing is ever removed from the app registration or the existing consent grant.
       }
     }));
 
-  const profile = auth.command('profile').description('Named sign-in settings (client ID, tenant, scopes, org mode, account) applied with --profile');
+  const profile = auth.command('profile').description('Named sign-in settings (type, client ID, tenant, scopes, org mode, account) applied with --profile');
 
   profile
     .command('list')
@@ -231,14 +256,18 @@ Nothing is ever removed from the app registration or the existing consent grant.
     .description('Show a saved profile')
     .addOption(outputOption())
     .action(handleErrors(async (name: string, opts) => {
-      console.log(formatOutput(readProfile(name), opts.output as OutputFormat));
+      const p = readProfile(name);
+      for (const k of ignoredAdminFields(p)) info(`Warning: "${k}" is ignored by admin profile "${name}" (its token comes from the Azure CLI).`);
+      console.log(formatOutput(p, opts.output as OutputFormat));
     }));
 
   profile
     .command('set <name>')
     .description('Create a profile, or update the given fields of an existing one')
+    .addOption(new Option('--type <type>', 'Identity type: user (ms365 sign-in) or admin (token borrowed from the Azure CLI, never stored)').choices(['user', 'admin']))
     .option('--client-id <id>', 'Application (client) ID')
     .option('--tenant-id <id>', 'Tenant ID or domain')
+    .option('--tenant <id>', 'Same as --tenant-id')
     .option('--scopes <list>', 'Comma-separated scopes requested at login')
     .option('--org-mode', 'Enable organization mode')
     .option('--no-org-mode', 'Disable organization mode')
@@ -248,11 +277,14 @@ Nothing is ever removed from the app registration or the existing consent grant.
       // --account and --org-mode are also global flags, which commander may claim first.
       const opts = cmd.optsWithGlobals();
       const next: Profile = profileExists(name) ? readProfile(name) : {};
+      if (opts.type !== undefined) next.type = opts.type;
       if (opts.clientId !== undefined) next.clientId = opts.clientId;
       if (opts.tenantId !== undefined) next.tenantId = opts.tenantId;
+      if (opts.tenant !== undefined) next.tenantId = opts.tenant;
       if (opts.scopes !== undefined) next.scopes = String(opts.scopes).split(',').map(s => s.trim()).filter(Boolean);
       if (opts.orgMode !== undefined) next.orgMode = opts.orgMode;
       if (opts.account !== undefined) next.account = opts.account;
+      validateProfile(name, next, ExitCode.USAGE);
       if (isDryRun()) return dryRunTrace(`would save profile ${name}: ${JSON.stringify(next)}`);
       saveProfile(name, next);
       info(`Profile "${name}" saved.`);

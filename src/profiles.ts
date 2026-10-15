@@ -5,12 +5,22 @@ import { CliError, ExitCode } from './errors.js';
 
 /** Named sign-in settings (PM-8, D21): `${configDir()}/profiles/<name>.json`, applied with --profile. */
 export interface Profile {
+  /** `user` (default; MSAL sign-in, cached by ms365) or `admin` (token borrowed from the Azure CLI, never stored; ID-7/ID-8). */
+  type?: ProfileType;
   clientId?: string;
   tenantId?: string;
   scopes?: string[];
   orgMode?: boolean;
   account?: string;
 }
+
+export type ProfileType = 'user' | 'admin';
+
+/** The profile's identity type; absent means `user`. */
+export const profileType = (p: Profile): ProfileType => p.type ?? 'user';
+
+/** Tenants that `az --tenant` cannot use: an admin profile needs a real tenant ID or domain. */
+const MULTI_TENANT = new Set(['common', 'organizations', 'consumers']);
 
 const PROFILE_NAME = /^[a-z0-9_-]+$/;
 
@@ -29,7 +39,7 @@ function profilePath(name: string): string {
 }
 
 function parseProfile(name: string, data: string): Profile {
-  const invalid = () => new CliError(`Profile "${name}" is not valid JSON of the form {clientId?, tenantId?, scopes?, orgMode?, account?}.`,
+  const invalid = () => new CliError(`Profile "${name}" is not valid JSON of the form {type?, clientId?, tenantId?, scopes?, orgMode?, account?}.`,
     { code: 'invalid_profile', fix: `ms365 auth profile set ${name}` });
   let raw: unknown;
   try {
@@ -40,6 +50,10 @@ function parseProfile(name: string, data: string): Profile {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw invalid();
   const r = raw as Record<string, unknown>;
   const profile: Profile = {};
+  if (r.type !== undefined) {
+    if (r.type !== 'user' && r.type !== 'admin') throw invalid();
+    profile.type = r.type;
+  }
   for (const key of ['clientId', 'tenantId', 'account'] as const) {
     if (r[key] === undefined) continue;
     if (typeof r[key] !== 'string') throw invalid();
@@ -53,7 +67,33 @@ function parseProfile(name: string, data: string): Profile {
     if (typeof r.orgMode !== 'boolean') throw invalid();
     profile.orgMode = r.orgMode;
   }
+  validateProfile(name, profile);
   return profile;
+}
+
+/**
+ * The type rules (ID-7): an `admin` profile needs a real tenant (`az --tenant` needs one) and takes no
+ * `account` or `scopes` (the identity and scopes are whatever az's sign-in has). Throws `invalid_profile`.
+ */
+export function validateProfile(name: string, profile: Profile, exitCode: ExitCode = ExitCode.GENERIC): void {
+  if (profileType(profile) !== 'admin') return;
+  const bad = (why: string, fix: string) => new CliError(`Admin profile "${name}" ${why}.`, { code: 'invalid_profile', exitCode, fix });
+  if (!profile.tenantId || MULTI_TENANT.has(profile.tenantId.toLowerCase())) {
+    throw bad('needs a tenant ID or domain (not common/organizations/consumers), because the Azure CLI token is borrowed per tenant',
+      `ms365 auth profile set ${name} --type admin --tenant <tenant>`);
+  }
+  for (const key of ['account', 'scopes'] as const) {
+    if (profile[key] !== undefined) {
+      throw bad(`cannot set ${key}: the identity and scopes come from the Azure CLI sign-in (az login)`,
+        `remove "${key}" from ${name}.json, or use a user profile`);
+    }
+  }
+}
+
+/** Fields an admin profile ignores (they only shape MSAL sign-in). */
+export function ignoredAdminFields(profile: Profile): string[] {
+  if (profileType(profile) !== 'admin') return [];
+  return (['clientId', 'orgMode'] as const).filter(k => profile[k] !== undefined);
 }
 
 export function readProfile(name: string): Profile {
