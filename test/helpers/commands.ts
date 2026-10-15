@@ -16,6 +16,8 @@ import { registerUserCommands } from '../../src/commands/user.js';
 import { registerWorkflowCommands } from '../../src/commands/workflow.js';
 import { registerGroupsCommands } from '../../src/commands/groups.js';
 import { registerMeetingsCommands } from '../../src/commands/meetings.js';
+import { registerReportsCommands } from '../../src/commands/reports.js';
+import { registerChiefCommands } from '../../src/commands/chief.js';
 import { registerWatchCommands } from '../../src/commands/watch.js';
 import { registerNotesCommands } from '../../src/commands/notes.js';
 import type { GraphClient } from '../../src/graph-client.js';
@@ -26,7 +28,7 @@ export const MODULES: Register[] = [
   registerMailCommands, registerCalendarCommands, registerDriveCommands, registerTodoCommands,
   registerContactsCommands, registerTeamsCommands, registerSharePointCommands, registerPlannerCommands,
   registerOneNoteCommands, registerExcelCommands, registerSearchCommands, registerUserCommands,
-  registerWorkflowCommands, registerGroupsCommands, registerMeetingsCommands, registerWatchCommands, registerNotesCommands,
+  registerWorkflowCommands, registerGroupsCommands, registerMeetingsCommands, registerWatchCommands, registerNotesCommands, registerReportsCommands, registerChiefCommands,
 ];
 
 export function leafCommands(register: Register): Array<{ chain: string[]; cmd: Command }> {

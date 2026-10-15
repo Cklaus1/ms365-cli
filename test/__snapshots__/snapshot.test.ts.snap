@@ -486,6 +486,31 @@ exports[`dry-run endpoint snapshot (every command) > chat send 1`] = `
 }
 `;
 
+exports[`dry-run endpoint snapshot (every command) > chief brief [optional flags] 1`] = `
+{
+  "argv": "chief brief --timezone America/Los_Angeles --days x --output json",
+  "error": "error: option '--days <n>' argument 'x' is invalid. must be 1-14.",
+  "exitCode": 2,
+  "requests": [],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > chief brief 1`] = `
+{
+  "argv": "chief brief",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-14T07%3A00%3A00.000Z&endDateTime=2026-10-15T07%3A00%3A00.000Z&$select=subject%2Cstart%2Cend%2CisAllDay%2Clocation%2Corganizer%2CresponseStatus%2ConlineMeeting&$orderby=start%2FdateTime&$top=50",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$filter=isRead%20eq%20false%20and%20importance%20eq%20'high'&$select=subject%2Cfrom%2CreceivedDateTime%2CbodyPreview&$top=10",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/messages?$filter=flag%2FflagStatus%20eq%20'flagged'&$select=subject%2Cfrom%2CreceivedDateTime%2CbodyPreview&$top=10",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/todo/lists?$top=10",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/chats?$expand=lastMessagePreview&$orderby=lastMessagePreview%2FcreatedDateTime%20desc&$top=8",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/mailFolders/inbox?$select=unreadItemCount",
+  ],
+}
+`;
+
 exports[`dry-run endpoint snapshot (every command) > contacts create [optional flags] 1`] = `
 {
   "argv": "contacts create --given-name x --surname x --email x --phone x --company x --job-title x --output json",
@@ -2862,6 +2887,96 @@ exports[`dry-run endpoint snapshot (every command) > planner update-task-details
   "requests": [
     "[dry-run] GET https://graph.microsoft.com/v1.0/planner/tasks/TASKID/details",
     "[dry-run] PATCH https://graph.microsoft.com/v1.0/planner/tasks/TASKID/details",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > reports active-users [optional flags] 1`] = `
+{
+  "argv": "reports active-users --period D7 --output json",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/reports/getOffice365ActiveUserCounts(period='D7')?$format=application%2Fjson",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > reports active-users 1`] = `
+{
+  "argv": "reports active-users",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/reports/getOffice365ActiveUserCounts(period='D30')?$format=application%2Fjson",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > reports by-department [optional flags] 1`] = `
+{
+  "argv": "reports by-department --workload email --period D7 --min-group-size 5 --output json",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/reports/getEmailActivityUserDetail(period='D7')?$format=application%2Fjson",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/users?$select=userPrincipalName%2Cdepartment&$top=999",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > reports by-department 1`] = `
+{
+  "argv": "reports by-department",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/reports/getEmailActivityUserDetail(period='D30')?$format=application%2Fjson",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/users?$select=userPrincipalName%2Cdepartment&$top=999",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > reports email [optional flags] 1`] = `
+{
+  "argv": "reports email --period D7 --output json",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/reports/getEmailActivityCounts(period='D7')?$format=application%2Fjson",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > reports email 1`] = `
+{
+  "argv": "reports email",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/reports/getEmailActivityCounts(period='D30')?$format=application%2Fjson",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > reports teams [optional flags] 1`] = `
+{
+  "argv": "reports teams --period D7 --output json",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/reports/getTeamsUserActivityCounts(period='D7')?$format=application%2Fjson",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > reports teams 1`] = `
+{
+  "argv": "reports teams",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/reports/getTeamsUserActivityCounts(period='D30')?$format=application%2Fjson",
   ],
 }
 `;

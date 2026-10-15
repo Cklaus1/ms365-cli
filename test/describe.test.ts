@@ -21,6 +21,8 @@ import { registerSchemaCommands } from '../src/commands/schema.js';
 import { registerGenerateSkillsCommand } from '../src/commands/generate-skills.js';
 import { registerSetupCommand } from '../src/commands/setup.js';
 import { registerMeetingsCommands } from '../src/commands/meetings.js';
+import { registerReportsCommands } from '../src/commands/reports.js';
+import { registerChiefCommands } from '../src/commands/chief.js';
 import { registerWatchCommands } from '../src/commands/watch.js';
 import { registerAuditCommands } from '../src/commands/audit.js';
 import { registerIdempotencyCommands } from '../src/commands/idempotency.js';
@@ -55,6 +57,8 @@ const MODULES: Module[] = [
   { file: 'generate-skills.ts', register: (p) => registerGenerateSkillsCommand(p) },
   { file: 'setup.ts', register: (p, _g, a) => registerSetupCommand(p, a) },
   { file: 'meetings.ts', register: (p, g) => registerMeetingsCommands(p, g) },
+  { file: 'reports.ts', register: (p, g) => registerReportsCommands(p, g) },
+  { file: 'chief.ts', register: (p, g) => registerChiefCommands(p, g) },
   { file: 'watch.ts', register: (p, g) => registerWatchCommands(p, g) },
   { file: 'audit.ts', register: (p) => registerAuditCommands(p) },
   { file: 'idempotency.ts', register: (p) => registerIdempotencyCommands(p) },

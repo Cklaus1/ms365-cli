@@ -6,6 +6,8 @@ import { formatOutput, type OutputFormat } from '../formatter.js';
 import { confirm, dryRunTrace, info, isDryRun, outputOption } from '../utils.js';
 import { deleteProfile, listProfiles, profileExists, readProfile, saveProfile, validateProfileName, type Profile } from '../profiles.js';
 import { openBrowserCommand } from './setup.js';
+import { GraphClient } from '../graph-client.js';
+import { adminConsentUrl, azGraphToken, CONSENT_REDIRECT_URI, grantScopes } from '../grant-scopes.js';
 
 /** Open the system browser at the sign-in URL; print it too, for machines where no browser opens. */
 async function openSystemBrowser(url: string): Promise<void> {
@@ -95,6 +97,70 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
       console.log(formatOutput({
         user: after.user, expiresOn: after.expiresOn, scopes: after.scopes.length, added, removed,
       }, opts.output as OutputFormat));
+    }));
+
+  auth
+    .command('grant-scopes')
+    .description('Add the scopes ms365 requests to its app registration and grant tenant-wide admin consent (uses the Azure CLI\'s admin sign-in; falls back to an admin-consent link)')
+    .option('--link', 'Only print the one-click admin-consent link (no Azure CLI needed)')
+    .addOption(outputOption())
+    .addHelpText('after', `
+Needs an admin: either the Azure CLI signed in as one (az login --tenant <tenant>), or an admin
+opening the printed link. Add --org-mode to include the org scopes (Teams, SharePoint, meetings…).
+Nothing is ever removed from the app registration or the existing consent grant.`)
+    .action(handleErrors(async (opts, cmd) => {
+      const g = cmd.optsWithGlobals();
+      const authManager = getAuth();
+      const appId = authManager.getClientId();
+      const scopes = authManager.requestedScopes();
+      const tenant = authManager.getTenantId();
+      const printLink = (why?: string) => {
+        if (why) info(why);
+        const linkTenant = tenant === 'common' ? 'organizations' : tenant;
+        console.log(adminConsentUrl(appId, linkTenant, scopes));
+        info(`An admin opens this link and clicks Accept. It needs the redirect URI ${CONSENT_REDIRECT_URI} under the app's Authentication → Mobile and desktop applications. Then run: ms365 auth refresh`);
+      };
+      if (opts.link) return printLink();
+
+      let token = 'dry-run';
+      let azTenant: string | undefined;
+      if (!isDryRun()) {
+        const az = azGraphToken(tenant);
+        if (!az.ok) {
+          return printLink(az.reason === 'missing'
+            ? 'The Azure CLI (az) is not installed, so falling back to an admin-consent link.'
+            : `The Azure CLI has no usable admin sign-in (${az.detail}). Run "az login --tenant ${tenant === 'common' ? '<tenant>' : tenant}" as an admin and retry, or use this link:`);
+        }
+        token = az.token.accessToken;
+        azTenant = az.token.tenant;
+        if (tenant !== 'common' && azTenant && azTenant !== tenant) {
+          throw new CliError(`The Azure CLI is signed in to tenant ${azTenant}, but ms365 uses ${tenant}.`,
+            { code: 'usage', exitCode: ExitCode.USAGE, fix: `az login --tenant ${tenant}` });
+        }
+      }
+      const azAuth = { getToken: async () => token } as unknown as AuthManager;
+      const client = new GraphClient(azAuth, isDryRun(), g.apiVersion || 'v1.0', !!g.readOnly);
+      let result;
+      try {
+        result = await grantScopes(client, appId, scopes);
+      } catch (err) {
+        if (err instanceof CliError && err.exitCode === ExitCode.PERMISSION) {
+          err.fix = 'sign in to the Azure CLI as an admin who can manage app registrations and grant consent (Application Administrator or Global Administrator): az login';
+        }
+        throw err;
+      }
+      if (isDryRun()) return;
+      const out: Record<string, unknown> = { ...result, tenant: azTenant ?? tenant };
+      // Pick up the new grant in the user's own token right away (auth refresh), if signed in.
+      try {
+        await authManager.initialize();
+        const before = tokenInfo(await authManager.getToken()).scopes;
+        const after = tokenInfo(await authManager.getToken(true)).scopes;
+        out.tokenScopesAdded = after.filter(s => !before.includes(s));
+      } catch {
+        info('Not signed in to ms365 yet, so the token was not refreshed. Run: ms365 auth login');
+      }
+      console.log(formatOutput(out, opts.output as OutputFormat));
     }));
 
   auth

@@ -65,6 +65,7 @@ const ORG_SCOPES = [
   'OnlineMeetings.Read',
   'OnlineMeetingTranscript.Read.All',
   'OnlineMeetingRecording.Read.All',
+  'Reports.Read.All',
 ];
 
 function ensureConfigDir(): void {
@@ -406,6 +407,21 @@ export class AuthManager {
   /** The --account / MS365_CLI_ACCOUNT / profile account for this process, if any. */
   getAccountOverride(): string | null {
     return this.accountOverride;
+  }
+
+  /** The app (client) ID this manager signs in with. */
+  getClientId(): string {
+    return this.msalConfig.auth.clientId;
+  }
+
+  /** The tenant from the authority ('common' unless one is configured). */
+  getTenantId(): string {
+    return this.msalConfig.auth.authority?.split('/').pop() || 'common';
+  }
+
+  /** The scopes requested (and consented) at login. */
+  requestedScopes(): string[] {
+    return [...this.scopes];
   }
 
   /** True when this manager requests the org-mode scopes at login. */
