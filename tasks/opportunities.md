@@ -44,3 +44,4 @@ Things discovered mid-build that have no assigned task. Each entry gives a propo
 - **[P3] `audit-trail apps` reads the tenant ID through a cast to GraphClient's private `auth`.** Add a public `tokenInfo()`/`tenantId()` to GraphClient. (AOT-5)
 - **[P4] `audit-trail apps --with-consenters`** (AO-10 optional join with directoryAudits by principalId) not built; no AC requires it. (AOT-5)
 - **[P4] Snapshot sampler gives `--app x`,** so the `audit-trail access` snapshot exits 2 before the POST. Teach the sampler GUID-shaped values for `--app`. (AOT-5)
+- **[P4] `audit-trail import` stops at the first malformed row (exit 1).** Consider `--skip-bad-rows` with a count on stderr. (AOT-6)

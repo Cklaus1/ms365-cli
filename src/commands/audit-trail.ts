@@ -1,9 +1,11 @@
+import fs from 'fs';
 import { Command, InvalidArgumentError } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { printList, formatOutput, type OutputFormat } from '../formatter.js';
 import { outputOption, addListOptions, info, odataQuote, parseTime, resolveTimeZone, truncate, validateEmail } from '../utils.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { tokenInfo } from '../auth.js';
+import { csvRecords } from '../csv.js';
 
 /**
  * Admin oversight of access itself (AO-9, AO-11..AO-16). Reads Microsoft's audit log and directory and prints
@@ -584,7 +586,12 @@ export interface AccessRow {
   target: string | null;
 }
 
-export interface AccessFilter { app?: string; by?: string }
+export interface AccessFilter {
+  app?: string;
+  by?: string;
+  /** Only access to this mailbox (owner UPN, case-insensitive); used by `import --mailbox`. */
+  mailbox?: string;
+}
 
 /**
  * Aggregates access records per (actor, mailbox, logonType). Own-mailbox events (LogonType 0, or the mailbox owner
@@ -600,6 +607,7 @@ export class AccessAggregator {
     const f = accessFacts(auditData, envelope);
     if (this.filter.app && f.appId?.toLowerCase() !== this.filter.app.toLowerCase()) return;
     if (this.filter.by && f.actor?.toLowerCase() !== this.filter.by.toLowerCase()) return;
+    if (this.filter.mailbox && f.mailboxOwner !== this.filter.mailbox.toLowerCase()) return;
     const actor = f.actor?.toLowerCase() ?? null;
     if (f.logonTypeCode === 0 || (actor !== null && f.mailboxOwner === actor)) { this.ownOmitted++; return; }
     const key = JSON.stringify([actor, f.mailboxOwner, f.logonType]);
@@ -648,6 +656,115 @@ function singleUpn(v: string): string {
   const t = v.trim();
   if (/[\s,;*?%]/.test(t) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t)) throw new InvalidArgumentError('exactly one UPN (no lists or wildcards).');
   return t;
+}
+
+// --- audit-trail import (AO-31) ---
+
+/** Purview export caps (Learn): an export with exactly this many rows was probably cut off. */
+export const EXPORT_CAPS: ReadonlyArray<{ rows: number; tier: string }> = [
+  { rows: 50_000, tier: 'Audit (Standard)' },
+  { rows: 1_000_000, tier: 'Audit (Premium)' },
+];
+/** Read size for the export file; the CSV parser only ever holds one chunk plus one partial record. */
+export const IMPORT_CHUNK_BYTES = 64 * 1024;
+
+/** `import` prints the access aggregate without the target annotation (offline: no directory lookup). */
+export const IMPORT_FIELDS = ACCESS_FIELDS.filter(f => f !== 'target');
+
+/** Header names (trimmed, lower-cased) across the export variants; unknown columns are ignored. */
+const IMPORT_COLUMNS = {
+  auditData: ['auditdata'],
+  recordId: ['recordid'],
+  creationDate: ['creationdate'],
+  userId: ['userid', 'userids'],
+  operation: ['operation', 'operations'],
+} as const;
+type ColumnIndex = Record<keyof typeof IMPORT_COLUMNS, number>; // -1 when the column is absent
+
+function columnIndex(header: string[]): ColumnIndex {
+  const names = header.map(h => h.trim().toLowerCase());
+  const out = {} as ColumnIndex;
+  for (const [key, aliases] of Object.entries(IMPORT_COLUMNS) as [keyof ColumnIndex, readonly string[]][]) {
+    out[key] = names.findIndex(n => aliases.includes(n));
+  }
+  return out;
+}
+
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/i;
+
+/** An ISO 8601 time as UTC ISO (a zone-less time is UTC: Purview writes CreationTime without one); else undefined. */
+function isoTime(v: unknown): string | undefined {
+  if (typeof v !== 'string') return undefined;
+  const t = v.trim();
+  const m = ISO_TIME.exec(t);
+  if (!m) return undefined;
+  const d = new Date(m[1] ? t : `${t}Z`);
+  return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
+}
+
+const badCsv = (message: string) => new CliError(message, { code: 'bad_csv', exitCode: ExitCode.GENERIC });
+
+export interface ImportResult {
+  /** Data rows in the file (every record after the header). */
+  rows: number;
+  /** Rows whose operation is not a mailbox-access operation (DEFAULT_OPERATIONS). */
+  otherOperations: number;
+  first: string | null;
+  last: string | null;
+  agg: AccessAggregator;
+}
+
+/**
+ * Stream a Purview audit export through the access aggregation (AO-31). Columns are found by header name; only
+ * `AuditData` is required, and `CreationDate`, `UserId|UserIds`, `Operation|Operations` win over the JSON's
+ * CreationTime/UserId/Operation when present. Each AuditData is parsed, aggregated and dropped. Errors name the
+ * row number and a GUID-shaped RecordId only, never field text.
+ */
+export async function importAuditCsv(source: AsyncIterable<Uint8Array | string>, filter: AccessFilter): Promise<ImportResult> {
+  const agg = new AccessAggregator(filter);
+  const operations = new Set<string>(DEFAULT_OPERATIONS);
+  let cols: ColumnIndex | undefined;
+  let rows = 0;
+  let otherOperations = 0;
+  let first: string | null = null;
+  let last: string | null = null;
+  for await (const rec of csvRecords(source)) {
+    if (!cols) {
+      cols = columnIndex(rec);
+      if (cols.auditData < 0) {
+        throw new CliError('The file has no AuditData column; is it a Purview audit-log export?', {
+          code: 'bad_csv', exitCode: ExitCode.USAGE,
+          fix: 'export from Purview → Audit → Export, or Search-UnifiedAuditLog | Export-Csv',
+        });
+      }
+      continue;
+    }
+    rows++;
+    const c = cols;
+    const cell = (i: number): string => (i >= 0 ? rec[i] ?? '' : '').trim();
+    const where = (): string => {
+      const id = cell(c.recordId);
+      return `row ${rows}${GUID.test(id) ? ` (RecordId ${id})` : ''}`;
+    };
+    const raw = cell(c.auditData);
+    if (!raw) throw badCsv(`${where()}: AuditData is empty.`);
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw); } catch { throw badCsv(`${where()}: AuditData is not JSON.`); } // never the parser's message: it quotes the text
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw badCsv(`${where()}: AuditData is not a JSON object.`);
+    const a = parsed as Obj;
+
+    const createdDateTime = isoTime(cell(c.creationDate)) ?? isoTime(a.CreationTime);
+    if (createdDateTime) {
+      if (!first || createdDateTime < first) first = createdDateTime;
+      if (!last || createdDateTime > last) last = createdDateTime;
+    }
+    const envelope: AuditEnvelope = { createdDateTime, operation: str(cell(c.operation)), userPrincipalName: str(cell(c.userId)) };
+    const operation = str(envelope.operation) ?? str(a.Operation);
+    if (!operation || !operations.has(operation)) { otherOperations++; continue; }
+    agg.add(a, envelope);
+  }
+  if (!cols) throw new CliError('The file is empty.', { code: 'bad_csv', exitCode: ExitCode.USAGE });
+  return { rows, otherOperations, first, last, agg };
 }
 
 // --- commands ---
@@ -782,4 +899,36 @@ export function registerAuditTrailCommands(program: Command, getClient: () => Gr
       if (rows.some(r => r.target === 'disabled-or-shared')) info(`target disabled-or-shared: ${DISABLED_OR_SHARED_GLOSS}.`);
       console.log(formatOutput({ value: rows }, opts.output as OutputFormat));
     })));
+
+  trail
+    .command('import')
+    .description('Offline analysis of a Purview audit-log export (CSV): which mailboxes an app or person opened, who opened a mailbox, or all non-owner mailbox access; aggregated per actor, mailbox and logon type, own-mailbox events omitted. No sign-in, no network.')
+    .argument('<file.csv>', 'Purview audit export (portal export or Search-UnifiedAuditLog | Export-Csv)')
+    .option('--app <appId>', 'Only access by this application (client) ID (GUID)', single(appIdArg, '--app'))
+    .option('--by <upn>', 'Only access by this person (one exact UPN)', single(singleUpn, '--by'))
+    .option('--mailbox <upn>', 'Only access to this mailbox (owner UPN), by anyone but its owner', single(singleUpn, '--mailbox'))
+    .option('--cross-mailbox', 'All non-owner mailbox access in the file')
+    .addOption(outputOption())
+    .action(handleErrors(async (file: string, opts) => {
+      const filter: AccessFilter = { app: opts.app, by: opts.by, mailbox: opts.mailbox };
+      if (!filter.app && !filter.by && !filter.mailbox && !opts.crossMailbox) {
+        throw new CliError('audit-trail import needs a view: --app <appId>, --by <upn>, --mailbox <upn> or --cross-mailbox.', { code: 'usage', exitCode: ExitCode.USAGE });
+      }
+      let stat: fs.Stats;
+      try { stat = fs.statSync(file); } catch {
+        throw new CliError(`Cannot read ${file}: no such file.`, { code: 'not_found', exitCode: ExitCode.NOT_FOUND });
+      }
+      if (!stat.isFile()) throw new CliError(`${file} is not a file.`, { code: 'usage', exitCode: ExitCode.USAGE });
+
+      const res = await importAuditCsv(fs.createReadStream(file, { highWaterMark: IMPORT_CHUNK_BYTES }), filter);
+      const cap = EXPORT_CAPS.find(x => x.rows === res.rows);
+      if (cap) {
+        info(`Warning: export probably truncated: ${cap.rows.toLocaleString('en-US')} rows is the ${cap.tier} export cap, and Purview cuts off silently. Export shorter windows and import each file.`);
+      }
+      info(`Coverage (file): ${res.rows} rows, ${res.first ?? '?'} → ${res.last ?? '?'}; operations: ${DEFAULT_OPERATIONS.join(', ')} `
+        + `(${res.otherOperations} rows of other operations ignored); ${res.agg.ownOmitted} own-mailbox events omitted. `
+        + 'Message reads (MailItemsAccessed) appear only where mailbox auditing records them; an empty result is not proof of no access.');
+      const rows = res.agg.rows().map(r => Object.fromEntries(IMPORT_FIELDS.map(f => [f, r[f]])));
+      console.log(formatOutput({ value: rows }, opts.output as OutputFormat));
+    }));
 }

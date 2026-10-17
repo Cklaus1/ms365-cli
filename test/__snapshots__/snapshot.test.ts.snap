@@ -62,6 +62,24 @@ exports[`dry-run endpoint snapshot (every command) > audit-trail changes 1`] = `
 }
 `;
 
+exports[`dry-run endpoint snapshot (every command) > audit-trail import [optional flags] 1`] = `
+{
+  "argv": "audit-trail import <tmp>/sample.txt --app x --by a@contoso.com --mailbox a@contoso.com --output json",
+  "error": "error: option '--app <appId>' argument 'x' is invalid. an application (client) ID GUID, e.g. 00000000-0000-0000-0000-000000000000.",
+  "exitCode": 2,
+  "requests": [],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > audit-trail import 1`] = `
+{
+  "argv": "audit-trail import <tmp>/sample.txt",
+  "error": "Error: audit-trail import needs a view: --app <appId>, --by <upn>, --mailbox <upn> or --cross-mailbox.",
+  "exitCode": 2,
+  "requests": [],
+}
+`;
+
 exports[`dry-run endpoint snapshot (every command) > audit-trail mailbox [optional flags] 1`] = `
 {
   "argv": "audit-trail mailbox a@contoso.com --since 2026-10-20T10:00 --until 2026-10-21T10:00 --operations x --by a@contoso.com --timeout 5 --page-limit 5 --page-delay 5 --output json",

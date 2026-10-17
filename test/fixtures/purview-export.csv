@@ -1,0 +1,224 @@
+﻿RecordId,CreationDate,RecordType,Operation,UserId,AuditData,AssociatedAdminUnits,AssociatedAdminUnitsNames
+00000000-aaaa-4bbb-8ccc-000000000000,2026-10-15T08:00:00.0000000Z,ExchangeItem,MailItemsAccessed,Pat.Admin@Contoso.com,"{
+ ""CreationTime"": ""2026-10-15T08:00:00"",
+ ""Id"": ""ZZLEAK_AuditId1_ZZ"",
+ ""Operation"": ""MailItemsAccessed"",
+ ""OrganizationId"": ""ZZLEAK_OrgId_ZZ"",
+ ""RecordType"": 50,
+ ""ResultStatus"": ""Succeeded"",
+ ""UserKey"": ""ZZLEAK_UserKey1_ZZ"",
+ ""UserType"": 0,
+ ""Version"": 1,
+ ""Workload"": ""Exchange"",
+ ""UserId"": ""Pat.Admin@Contoso.com"",
+ ""ClientIPAddress"": ""203.0.113.7"",
+ ""ClientInfoString"": ""Client=REST;Client=RESTSystem;;"",
+ ""ExternalAccess"": false,
+ ""LogonType"": 0,
+ ""MailboxGuid"": ""ZZLEAK_MailboxGuid_ZZ"",
+ ""MailboxOwnerUPN"": ""Pat.Admin@Contoso.com"",
+ ""MailboxOwnerSid"": ""ZZLEAK_OwnerSid_ZZ"",
+ ""LogonUserSid"": ""ZZLEAK_LogonSid_ZZ"",
+ ""OperationCount"": 2,
+ ""SessionId"": ""ZZLEAK_SessionId_ZZ"",
+ ""Item"": {
+  ""Subject"": ""SECRET-SUBJECT \""Q3 layoffs, final\"""",
+  ""Id"": ""ZZLEAK_ItemId_ZZ""
+ },
+ ""AffectedItems"": [
+  {
+   ""Subject"": ""SECRET-SUBJECT-AFFECTED"",
+   ""InternetMessageId"": ""<SECRET-IMID-AFFECTED@x>""
+  }
+ ],
+ ""Recipients"": [
+  ""secret-recipient@external.example""
+ ],
+ ""SendAsUserSmtp"": ""secret-recipient@external.example"",
+ ""Folders"": [
+  {
+   ""Id"": ""ZZLEAK_FolderId_ZZ"",
+   ""Path"": ""ZZLEAK_FolderPath_ZZ"",
+   ""FolderItems"": [
+    {
+     ""Id"": ""ZZLEAK_ItemId1_0_ZZ"",
+     ""InternetMessageId"": ""<SECRET-IMID-1-0@mail.contoso.com>"",
+     ""SizeInBytes"": 1234
+    },
+    {
+     ""Id"": ""ZZLEAK_ItemId1_1_ZZ"",
+     ""InternetMessageId"": ""<SECRET-IMID-1-1@mail.contoso.com>"",
+     ""SizeInBytes"": 1234
+    }
+   ]
+  }
+ ],
+ ""OperationProperties"": [
+  {
+   ""Name"": ""MailAccessType"",
+   ""Value"": ""ZZLEAK_OpProp_ZZ""
+  }
+ ],
+ ""AppId"": ""a1a1a1a1-1111-4111-8111-111111111111"",
+ ""ClientAppId"": ""a1a1a1a1-1111-4111-8111-111111111111"",
+ ""AppAccessContext"": {
+  ""ClientAppId"": ""a1a1a1a1-1111-4111-8111-111111111111"",
+  ""ClientAppName"": ""ZZLEAK_ClientAppName_ZZ"",
+  ""UniqueTokenId"": ""ZZLEAK_Token_ZZ""
+ }
+}",,"ZZLEAK_AdminUnitName_ZZ"
+00000001-aaaa-4bbb-8ccc-000000000001,2026-10-15T09:00:00.0000000Z,ExchangeItem,MailItemsAccessed,Pat.Admin@Contoso.com,"{
+ ""CreationTime"": ""2026-10-15T09:00:00"",
+ ""Id"": ""ZZLEAK_AuditId2_ZZ"",
+ ""Operation"": ""MailItemsAccessed"",
+ ""OrganizationId"": ""ZZLEAK_OrgId_ZZ"",
+ ""RecordType"": 50,
+ ""ResultStatus"": ""Succeeded"",
+ ""UserKey"": ""ZZLEAK_UserKey2_ZZ"",
+ ""UserType"": 0,
+ ""Version"": 1,
+ ""Workload"": ""Exchange"",
+ ""UserId"": ""Pat.Admin@Contoso.com"",
+ ""ClientIPAddress"": ""203.0.113.7"",
+ ""ClientInfoString"": ""Client=REST;Client=RESTSystem;;"",
+ ""ExternalAccess"": false,
+ ""LogonType"": 2,
+ ""MailboxGuid"": ""ZZLEAK_MailboxGuid_ZZ"",
+ ""MailboxOwnerUPN"": ""mbx-a@contoso.com"",
+ ""MailboxOwnerSid"": ""ZZLEAK_OwnerSid_ZZ"",
+ ""LogonUserSid"": ""ZZLEAK_LogonSid_ZZ"",
+ ""OperationCount"": 3,
+ ""SessionId"": ""ZZLEAK_SessionId_ZZ"",
+ ""Item"": {
+  ""Subject"": ""SECRET-SUBJECT \""Q3 layoffs, final\"""",
+  ""Id"": ""ZZLEAK_ItemId_ZZ""
+ },
+ ""AffectedItems"": [
+  {
+   ""Subject"": ""SECRET-SUBJECT-AFFECTED"",
+   ""InternetMessageId"": ""<SECRET-IMID-AFFECTED@x>""
+  }
+ ],
+ ""Recipients"": [
+  ""secret-recipient@external.example""
+ ],
+ ""SendAsUserSmtp"": ""secret-recipient@external.example"",
+ ""Folders"": [
+  {
+   ""Id"": ""ZZLEAK_FolderId_ZZ"",
+   ""Path"": ""ZZLEAK_FolderPath_ZZ"",
+   ""FolderItems"": [
+    {
+     ""Id"": ""ZZLEAK_ItemId2_0_ZZ"",
+     ""InternetMessageId"": ""<SECRET-IMID-2-0@mail.contoso.com>"",
+     ""SizeInBytes"": 1234
+    },
+    {
+     ""Id"": ""ZZLEAK_ItemId2_1_ZZ"",
+     ""InternetMessageId"": ""<SECRET-IMID-2-1@mail.contoso.com>"",
+     ""SizeInBytes"": 1234
+    },
+    {
+     ""Id"": ""ZZLEAK_ItemId2_2_ZZ"",
+     ""InternetMessageId"": ""<SECRET-IMID-2-2@mail.contoso.com>"",
+     ""SizeInBytes"": 1234
+    }
+   ]
+  }
+ ],
+ ""OperationProperties"": [
+  {
+   ""Name"": ""MailAccessType"",
+   ""Value"": ""ZZLEAK_OpProp_ZZ""
+  }
+ ],
+ ""AppId"": ""a1a1a1a1-1111-4111-8111-111111111111"",
+ ""ClientAppId"": ""a1a1a1a1-1111-4111-8111-111111111111"",
+ ""AppAccessContext"": {
+  ""ClientAppId"": ""a1a1a1a1-1111-4111-8111-111111111111"",
+  ""ClientAppName"": ""ZZLEAK_ClientAppName_ZZ"",
+  ""UniqueTokenId"": ""ZZLEAK_Token_ZZ""
+ }
+}",,"ZZLEAK_AdminUnitName_ZZ"
+00000002-aaaa-4bbb-8ccc-000000000002,2026-10-15T10:00:00.0000000Z,ExchangeItem,MailItemsAccessed,Pat.Admin@Contoso.com,"{""CreationTime"":""2026-10-15T10:00:00"",""Id"":""ZZLEAK_AuditId3_ZZ"",""Operation"":""MailItemsAccessed"",""OrganizationId"":""ZZLEAK_OrgId_ZZ"",""RecordType"":50,""ResultStatus"":""Succeeded"",""UserKey"":""ZZLEAK_UserKey3_ZZ"",""UserType"":0,""Version"":1,""Workload"":""Exchange"",""UserId"":""Pat.Admin@Contoso.com"",""ClientIPAddress"":""203.0.113.7"",""ClientInfoString"":""Client=REST;Client=RESTSystem;;"",""ExternalAccess"":false,""LogonType"":2,""MailboxGuid"":""ZZLEAK_MailboxGuid_ZZ"",""MailboxOwnerUPN"":""MBX-A@contoso.com"",""MailboxOwnerSid"":""ZZLEAK_OwnerSid_ZZ"",""LogonUserSid"":""ZZLEAK_LogonSid_ZZ"",""OperationCount"":2,""SessionId"":""ZZLEAK_SessionId_ZZ"",""Item"":{""Subject"":""SECRET-SUBJECT \""Q3 layoffs, final\"""",""Id"":""ZZLEAK_ItemId_ZZ""},""AffectedItems"":[{""Subject"":""SECRET-SUBJECT-AFFECTED"",""InternetMessageId"":""<SECRET-IMID-AFFECTED@x>""}],""Recipients"":[""secret-recipient@external.example""],""SendAsUserSmtp"":""secret-recipient@external.example"",""Folders"":[{""Id"":""ZZLEAK_FolderId_ZZ"",""Path"":""ZZLEAK_FolderPath_ZZ"",""FolderItems"":[{""Id"":""ZZLEAK_ItemId3_0_ZZ"",""InternetMessageId"":""<SECRET-IMID-3-0@mail.contoso.com>"",""SizeInBytes"":1234},{""Id"":""ZZLEAK_ItemId3_1_ZZ"",""InternetMessageId"":""<SECRET-IMID-3-1@mail.contoso.com>"",""SizeInBytes"":1234}]}],""OperationProperties"":[{""Name"":""MailAccessType"",""Value"":""ZZLEAK_OpProp_ZZ""}],""AppId"":""a1a1a1a1-1111-4111-8111-111111111111"",""ClientAppId"":""a1a1a1a1-1111-4111-8111-111111111111"",""AppAccessContext"":{""ClientAppId"":""a1a1a1a1-1111-4111-8111-111111111111"",""ClientAppName"":""ZZLEAK_ClientAppName_ZZ"",""UniqueTokenId"":""ZZLEAK_Token_ZZ""}}",,"ZZLEAK_AdminUnitName_ZZ"
+00000003-aaaa-4bbb-8ccc-000000000003,2026-10-15T11:00:00.0000000Z,ExchangeItem,MailItemsAccessed,Pat.Admin@Contoso.com,"{""CreationTime"":""2026-10-15T11:00:00"",""Id"":""ZZLEAK_AuditId4_ZZ"",""Operation"":""MailItemsAccessed"",""OrganizationId"":""ZZLEAK_OrgId_ZZ"",""RecordType"":50,""ResultStatus"":""Succeeded"",""UserKey"":""ZZLEAK_UserKey4_ZZ"",""UserType"":0,""Version"":1,""Workload"":""Exchange"",""UserId"":""Pat.Admin@Contoso.com"",""ClientIPAddress"":""203.0.113.7"",""ClientInfoString"":""Client=REST;Client=RESTSystem;;"",""ExternalAccess"":false,""LogonType"":2,""MailboxGuid"":""ZZLEAK_MailboxGuid_ZZ"",""MailboxOwnerUPN"":""mbx-b@contoso.com"",""MailboxOwnerSid"":""ZZLEAK_OwnerSid_ZZ"",""LogonUserSid"":""ZZLEAK_LogonSid_ZZ"",""OperationCount"":1,""SessionId"":""ZZLEAK_SessionId_ZZ"",""Item"":{""Subject"":""SECRET-SUBJECT \""Q3 layoffs, final\"""",""Id"":""ZZLEAK_ItemId_ZZ""},""AffectedItems"":[{""Subject"":""SECRET-SUBJECT-AFFECTED"",""InternetMessageId"":""<SECRET-IMID-AFFECTED@x>""}],""Recipients"":[""secret-recipient@external.example""],""SendAsUserSmtp"":""secret-recipient@external.example"",""Folders"":[{""Id"":""ZZLEAK_FolderId_ZZ"",""Path"":""ZZLEAK_FolderPath_ZZ"",""FolderItems"":[{""Id"":""ZZLEAK_ItemId4_0_ZZ"",""InternetMessageId"":""<SECRET-IMID-4-0@mail.contoso.com>"",""SizeInBytes"":1234}]}],""OperationProperties"":[{""Name"":""MailAccessType"",""Value"":""ZZLEAK_OpProp_ZZ""}],""AppId"":""b2b2b2b2-2222-4222-8222-222222222222"",""ClientAppId"":""b2b2b2b2-2222-4222-8222-222222222222"",""AppAccessContext"":{""ClientAppId"":""b2b2b2b2-2222-4222-8222-222222222222"",""ClientAppName"":""ZZLEAK_ClientAppName_ZZ"",""UniqueTokenId"":""ZZLEAK_Token_ZZ""}}",,"ZZLEAK_AdminUnitName_ZZ"
+00000004-aaaa-4bbb-8ccc-000000000004,2026-10-15T12:00:00.0000000Z,ExchangeItem,MailItemsAccessed,Pat.Admin@Contoso.com,"{
+ ""CreationTime"": ""2026-10-15T12:00:00"",
+ ""Id"": ""ZZLEAK_AuditId5_ZZ"",
+ ""Operation"": ""MailItemsAccessed"",
+ ""OrganizationId"": ""ZZLEAK_OrgId_ZZ"",
+ ""RecordType"": 50,
+ ""ResultStatus"": ""Succeeded"",
+ ""UserKey"": ""ZZLEAK_UserKey5_ZZ"",
+ ""UserType"": 0,
+ ""Version"": 1,
+ ""Workload"": ""Exchange"",
+ ""UserId"": ""Pat.Admin@Contoso.com"",
+ ""ClientIPAddress"": ""203.0.113.7"",
+ ""ClientInfoString"": ""Client=REST;Client=RESTSystem;;"",
+ ""ExternalAccess"": false,
+ ""LogonType"": 2,
+ ""MailboxGuid"": ""ZZLEAK_MailboxGuid_ZZ"",
+ ""MailboxOwnerUPN"": ""mbx-c@contoso.com"",
+ ""MailboxOwnerSid"": ""ZZLEAK_OwnerSid_ZZ"",
+ ""LogonUserSid"": ""ZZLEAK_LogonSid_ZZ"",
+ ""OperationCount"": 4,
+ ""SessionId"": ""ZZLEAK_SessionId_ZZ"",
+ ""Item"": {
+  ""Subject"": ""SECRET-SUBJECT \""Q3 layoffs, final\"""",
+  ""Id"": ""ZZLEAK_ItemId_ZZ""
+ },
+ ""AffectedItems"": [
+  {
+   ""Subject"": ""SECRET-SUBJECT-AFFECTED"",
+   ""InternetMessageId"": ""<SECRET-IMID-AFFECTED@x>""
+  }
+ ],
+ ""Recipients"": [
+  ""secret-recipient@external.example""
+ ],
+ ""SendAsUserSmtp"": ""secret-recipient@external.example"",
+ ""Folders"": [
+  {
+   ""Id"": ""ZZLEAK_FolderId_ZZ"",
+   ""Path"": ""ZZLEAK_FolderPath_ZZ"",
+   ""FolderItems"": [
+    {
+     ""Id"": ""ZZLEAK_ItemId5_0_ZZ"",
+     ""InternetMessageId"": ""<SECRET-IMID-5-0@mail.contoso.com>"",
+     ""SizeInBytes"": 1234
+    },
+    {
+     ""Id"": ""ZZLEAK_ItemId5_1_ZZ"",
+     ""InternetMessageId"": ""<SECRET-IMID-5-1@mail.contoso.com>"",
+     ""SizeInBytes"": 1234
+    },
+    {
+     ""Id"": ""ZZLEAK_ItemId5_2_ZZ"",
+     ""InternetMessageId"": ""<SECRET-IMID-5-2@mail.contoso.com>"",
+     ""SizeInBytes"": 1234
+    },
+    {
+     ""Id"": ""ZZLEAK_ItemId5_3_ZZ"",
+     ""InternetMessageId"": ""<SECRET-IMID-5-3@mail.contoso.com>"",
+     ""SizeInBytes"": 1234
+    }
+   ]
+  }
+ ],
+ ""OperationProperties"": [
+  {
+   ""Name"": ""MailAccessType"",
+   ""Value"": ""ZZLEAK_OpProp_ZZ""
+  }
+ ],
+ ""AppId"": ""b2b2b2b2-2222-4222-8222-222222222222"",
+ ""ClientAppId"": ""b2b2b2b2-2222-4222-8222-222222222222"",
+ ""AppAccessContext"": {
+  ""ClientAppId"": ""b2b2b2b2-2222-4222-8222-222222222222"",
+  ""ClientAppName"": ""ZZLEAK_ClientAppName_ZZ"",
+  ""UniqueTokenId"": ""ZZLEAK_Token_ZZ""
+ }
+}",,"ZZLEAK_AdminUnitName_ZZ"
+00000005-aaaa-4bbb-8ccc-000000000005,2026-10-15T13:00:00.0000000Z,ExchangeItem,MailItemsAccessed,NT AUTHORITY\SYSTEM (Microsoft.Exchange.ServiceHost),"{""CreationTime"":""2026-10-15T13:00:00"",""Id"":""ZZLEAK_AuditId6_ZZ"",""Operation"":""MailItemsAccessed"",""OrganizationId"":""ZZLEAK_OrgId_ZZ"",""RecordType"":50,""ResultStatus"":""Succeeded"",""UserKey"":""ZZLEAK_UserKey6_ZZ"",""UserType"":2,""Version"":1,""Workload"":""Exchange"",""UserId"":""NT AUTHORITY\\SYSTEM (Microsoft.Exchange.ServiceHost)"",""ClientIPAddress"":""203.0.113.7"",""ClientInfoString"":""Client=Microsoft.Exchange.ServiceHost"",""ExternalAccess"":false,""LogonType"":1,""MailboxGuid"":""ZZLEAK_MailboxGuid_ZZ"",""MailboxOwnerUPN"":""mbx-b@contoso.com"",""MailboxOwnerSid"":""ZZLEAK_OwnerSid_ZZ"",""LogonUserSid"":""ZZLEAK_LogonSid_ZZ"",""OperationCount"":1,""SessionId"":""ZZLEAK_SessionId_ZZ"",""Item"":{""Subject"":""SECRET-SUBJECT \""Q3 layoffs, final\"""",""Id"":""ZZLEAK_ItemId_ZZ""},""AffectedItems"":[{""Subject"":""SECRET-SUBJECT-AFFECTED"",""InternetMessageId"":""<SECRET-IMID-AFFECTED@x>""}],""Recipients"":[""secret-recipient@external.example""],""SendAsUserSmtp"":""secret-recipient@external.example"",""Folders"":[{""Id"":""ZZLEAK_FolderId_ZZ"",""Path"":""ZZLEAK_FolderPath_ZZ"",""FolderItems"":[{""Id"":""ZZLEAK_ItemId6_0_ZZ"",""InternetMessageId"":""<SECRET-IMID-6-0@mail.contoso.com>"",""SizeInBytes"":1234}]}],""OperationProperties"":[{""Name"":""MailAccessType"",""Value"":""ZZLEAK_OpProp_ZZ""}]}",,"ZZLEAK_AdminUnitName_ZZ"
+00000006-aaaa-4bbb-8ccc-000000000006,2026-10-15T07:00:00.0000000Z,AzureActiveDirectoryStsLogon,UserLoggedIn,Pat.Admin@Contoso.com,"{""CreationTime"":""2026-10-15T07:00:00"",""Operation"":""UserLoggedIn"",""UserId"":""Pat.Admin@Contoso.com"",""RecordType"":15,""Id"":""ZZLEAK_LoginId_ZZ""}",,"ZZLEAK_AdminUnitName_ZZ"

@@ -307,6 +307,8 @@ const COMMANDS: Record<string, Entry> = {
   'audit-trail apps': ['read', ['Directory.Read.All']],
   // access: same saved-query POST as mailbox (AO-25); the target annotation's User.Read.All is already in ORG_SCOPES (AO-30).
   'audit-trail access': ['action', ['AuditLogsQuery-Exchange.Read.All']],
+  // import: offline analysis of a local Purview export CSV — no scopes, so describe reports it offline (AO-31, AO-34).
+  'audit-trail import': ['read', []],
   'meetings transcript': ['read', ['OnlineMeetings.Read', 'OnlineMeetingTranscript.Read.All']],
   'meetings recordings': ['read', ['OnlineMeetings.Read', 'OnlineMeetingRecording.Read.All']],
   'meetings recording': ['read', ['OnlineMeetings.Read', 'OnlineMeetingRecording.Read.All']],
