@@ -14,7 +14,8 @@ export interface RecordedCall {
   rawBody?: unknown;
 }
 
-export type RouteHandler = (call: RecordedCall) => Response | unknown;
+/** `signal` is the request's abort signal, so a handler can hang until the client's timeout fires. */
+export type RouteHandler = (call: RecordedCall, signal?: AbortSignal) => Response | unknown;
 export type Route = [method: string, pattern: RegExp | string, handler: RouteHandler];
 
 export interface RunResult {
@@ -71,7 +72,7 @@ export async function runCommand(register: Register, argv: string[], opts: RunOp
     for (const [m, pattern, handler] of routes) {
       const hit = (m === '*' || m === method) && (typeof pattern === 'string' ? call.path.startsWith(pattern) : pattern.test(call.path));
       if (hit) {
-        const r = handler(call);
+        const r = await handler(call, init.signal ?? undefined);
         return r instanceof Response ? r : json(r ?? {});
       }
     }

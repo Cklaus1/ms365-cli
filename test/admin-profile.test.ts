@@ -162,7 +162,7 @@ describe('ID-8: az token source', () => {
     expect(r.stdout).toContain('Group.ReadWrite.All');
     r = await runCommand(regAdmin(adminManager()), ['auth', 'scopes', '-o', 'json']);
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(JSON.parse(r.stdout)).toMatchObject({ user: 'admin@contoso.com', scopes: AZ_SCP.split(' '), source: 'azure-cli', profile: 'adm' });
+    expect(JSON.parse(r.stdout)).toMatchObject({ upn: 'admin@contoso.com', scopes: AZ_SCP.split(' '), source: 'azure-cli', profile: 'adm' });
   });
 });
 

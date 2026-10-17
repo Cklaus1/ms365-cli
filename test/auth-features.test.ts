@@ -71,14 +71,14 @@ describe('T39: access-token introspection (§6)', () => {
   it('tokenInfo extracts scopes, audience, tenant, user and expiry', () => {
     expect(tokenInfo(TOKEN, new Date('2030-01-01T00:00:00Z'))).toEqual({
       scopes: ['Mail.Read', 'User.Read', 'Files.ReadWrite'],
-      audience: 'https://graph.microsoft.com', tenantId: 'tenant-1', user: 'ada@contoso.com',
-      expiresOn: new Date(EXP * 1000).toISOString(), expired: false,
+      audience: 'https://graph.microsoft.com', tenantId: 'tenant-1', upn: 'ada@contoso.com',
+      expiresAt: new Date(EXP * 1000).toISOString(), expired: false,
     });
   });
 
   it('falls back to preferred_username and reports expiry', () => {
     const info = tokenInfo(jwt({ scp: 'User.Read', preferred_username: 'bob@x.com', exp: 1 }));
-    expect(info.user).toBe('bob@x.com');
+    expect(info.upn).toBe('bob@x.com');
     expect(info.expired).toBe(true);
   });
 
@@ -93,7 +93,9 @@ describe('T39: access-token introspection (§6)', () => {
     expect(r.exitCode, r.stderr).toBe(0);
     const out = JSON.parse(r.stdout);
     expect(out.scopes).toEqual(['Mail.Read', 'User.Read', 'Files.ReadWrite']);
-    expect(out).toMatchObject({ audience: 'https://graph.microsoft.com', tenantId: 'tenant-1', user: 'ada@contoso.com' });
+    expect(out).toMatchObject({ audience: 'https://graph.microsoft.com', tenantId: 'tenant-1', upn: 'ada@contoso.com', expiresAt: new Date(EXP * 1000).toISOString() });
+    expect(out).not.toHaveProperty('user');
+    expect(out).not.toHaveProperty('expiresOn');
   });
 
   it('`auth scopes` with no login exits 3', async () => {

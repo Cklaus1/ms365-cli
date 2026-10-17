@@ -9,7 +9,7 @@ import { info, isDryRun, parseTime, resolveTimeZone, preferTimeZone } from '../u
 import { resolve } from '../resolve.js';
 
 const RESOURCES = ['mail', 'events', 'files', 'contacts'] as const;
-type Resource = typeof RESOURCES[number];
+export type Resource = typeof RESOURCES[number];
 
 const MAIL_SELECT = 'id,subject,from,receivedDateTime,createdDateTime,lastModifiedDateTime,changeKey,isRead,hasAttachments,bodyPreview';
 /** Fields every `watch --select` keeps, so a line always has its dedupe key (AH-4(6)). */
@@ -30,7 +30,7 @@ interface Window {
 }
 
 /** Sync state: where to resume, when the pass that produced it started, and since when coverage is unbroken. */
-interface Cursor {
+export interface Cursor {
   resource: Resource;
   endpoint: string;
   deltaLink: string;
@@ -40,7 +40,7 @@ interface Cursor {
 }
 
 /** The decoded --checkpoint blob (AH-4(1)): a cursor plus the scope it covers. */
-interface Checkpoint extends Cursor {
+export interface Checkpoint extends Cursor {
   v: number;
   coverageStart: string;
   folder?: string;
@@ -155,8 +155,15 @@ function removeCursor(file: string): void {
   try { fs.unlinkSync(file); } catch { /* none saved */ }
 }
 
+/** The cursor a plain `watch <resource>` keeps (mail: the inbox), for `health`; undefined when none is readable. */
+export function defaultCursor(resource: Resource): Cursor | undefined {
+  let parsed: unknown;
+  try { parsed = JSON.parse(fs.readFileSync(cursorPath(cursorName(resource, {}, 'inbox')), 'utf8')); } catch { return undefined; }
+  return parsed && typeof parsed === 'object' && 'syncedAt' in parsed && typeof parsed.syncedAt === 'string' ? parsed as Cursor : undefined;
+}
+
 /** The --checkpoint value's text: the blob itself, `@file`, or `@-` for stdin. */
-function checkpointText(value: string): string {
+export function checkpointText(value: string): string {
   if (value === '@-') {
     if (process.env.MS365_CLI_MCP === '1') throw usage('--checkpoint @- cannot read stdin under MCP; pass the blob itself.');
     return watchDeps.readStdin().trim();
@@ -172,7 +179,7 @@ function checkpointText(value: string): string {
 }
 
 /** Decode a blob; undefined for an empty value or `new` (start a baseline). */
-function decodeCheckpoint(text: string): Checkpoint | undefined {
+export function decodeCheckpoint(text: string): Checkpoint | undefined {
   if (text === '' || text === 'new') return undefined;
   let parsed: unknown;
   try { parsed = JSON.parse(Buffer.from(text, 'base64url').toString('utf8')); } catch { /* reported below */ }
