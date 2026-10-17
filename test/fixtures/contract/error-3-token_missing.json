@@ -1,0 +1,1 @@
+{"error":{"code":"token_missing","exitCode":3,"message":"Host profile \"chief\" takes its token from the agent host, but neither MS365_CLI_TOKEN nor MS365_CLI_TOKEN_COMMAND is set.","fix":"the host sets MS365_CLI_TOKEN (or MS365_CLI_TOKEN_COMMAND) in this process's environment (ms365 never signs in under a host profile)"}}

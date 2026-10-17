@@ -1,0 +1,1 @@
+{"error":{"code":"checkpoint_mismatch","exitCode":2,"message":"--checkpoint belongs to watch events, not watch mail.","fix":"pass the checkpoint printed by this same watch command, or --checkpoint new"}}

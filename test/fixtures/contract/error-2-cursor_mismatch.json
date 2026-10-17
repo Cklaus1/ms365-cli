@@ -1,0 +1,1 @@
+{"error":{"code":"cursor_mismatch","exitCode":2,"message":"--cursor belongs to /v1.0/me/drive/root/children, not to this command (/v1.0/me/messages).","fix":"pass the nextCursor printed by the previous page of this same command and --api-version"}}

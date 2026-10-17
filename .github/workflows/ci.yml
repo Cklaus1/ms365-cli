@@ -40,3 +40,6 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Contract fixture matches the built dist (AHT-15)
+        run: node scripts/contract.mjs --check

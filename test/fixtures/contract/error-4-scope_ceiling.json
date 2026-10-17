@@ -1,0 +1,1 @@
+{"error":{"code":"scope_ceiling","exitCode":4,"message":"\"mail send\" needs Mail.ReadWrite, which is outside the scope ceiling of profile \"chief\" (User.Read, Mail.Read, Calendars.Read).","fix":"use a profile whose scopes include Mail.ReadWrite, or widen profile \"chief\": ms365 auth profile set chief --scopes <list>"}}

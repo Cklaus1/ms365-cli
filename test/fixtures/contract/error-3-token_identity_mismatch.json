@@ -1,0 +1,1 @@
+{"error":{"code":"token_identity_mismatch","exitCode":3,"message":"The supplied token is for another tenant than the pinned one (token tid 99999999-2222-3333-4444-555555555555).","fix":"get a token for the tenant and account of profile \"chief\" from the host"}}

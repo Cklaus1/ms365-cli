@@ -1,0 +1,1 @@
+{"error":{"code":"token_rejected","exitCode":3,"message":"Microsoft Graph rejected the supplied token (401): it was revoked, expired early or lacks consent.","status":401,"graphCode":"InvalidAuthenticationToken","fix":"get a fresh token from the host (the agent host sets MS365_CLI_TOKEN)"}}

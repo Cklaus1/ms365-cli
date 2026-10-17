@@ -130,3 +130,22 @@ DONE = AHT-1..5, 6a, 7, 8, 9 (TTY part), 10, 11, 13 DONE or BLOCKED-and-logged
 - Gate: `tsc` 0 errors; `vitest` 68 files / 1970 tests passed (baseline 58 / 1784; 0 new failures); `docs:check` clean (230 commands).
 - Smoke: `scripts/smoke.sh` pass=32 fail=0 skip=0 (≈ 8 s); pinned conformance signal `conformance: dist sha256=58f4c44fb0fbd5066dc4dc41650fb9fd7c93f1fe1742b985b2f5235ec689282e` (dist built from the final source).
 - Estimate vs actual: Fastest 7–11 h [INFERENCE] vs ≈ 2 h 10 min by commit clock (adf2d12 16:16 → review fixes ≈ 18:25).
+
+---
+
+# Follow-up run 2026-10-17: AHT-15 contract fixture + AHT-9 non-TTY apply (owner decisions OQ-8 b, D12)
+
+Steps 0–2 done upstream (owner decisions recorded in the spec, 8a438f4). Branch `build/agent-host-integration` (PR #3), head 8a438f4.
+
+| Placeholder | Value |
+|---|---|
+| `<TEST_CMD>` | `npm test` + `npx tsc --noEmit` + `npm run build` + `bash scripts/smoke.sh` (`docs:check` when options change) |
+| `<SMOKE_SCENARIO>` | `scripts/smoke.sh` (32 checks) + new: `contract fixture` (AHT-15), `apply delete non-TTY host` / refusal rows (AHT-9) |
+| `<RELIABILITY>` | Most reliable for AHT-9 (⚠ production-level: it relaxes a deliberate destructive-command prompt); full gate per task |
+| Baseline (8a438f4, Node 24.21.0) | `npm test` 68 files / 1970 passed (4.9 s wall); tsc 0; smoke pass=32 fail=0 skip=0; dist sha256 `58f4c44f…282e` |
+
+**DAG:** AHT-15 (contract fixture) → AHT-9b (non-TTY apply of approved delete/cancel). AHT-9b changes `apply`, not any fixture shape; the order only follows the owner's priority and the cross-agent contract (ChiefFollowups builds MSC-020 on AHT-15). Serial: both touch `scripts/smoke.sh`, `README.md`, `tasks/*`.
+
+**Critical path:** AHT-9b. Extra gate: every OQ-8 refusal case has a fail-first test that asserts exit code, error code **and an empty request log** (in-process `calls` or the fetch-stub `[fetch]` log); the interactive path keeps its existing test unchanged.
+
+**Cross-agent:** after the AHT-15 commit, message `agent://ChiefFollowups` with the commit, `test/fixtures/contract/` and the manifest format.
