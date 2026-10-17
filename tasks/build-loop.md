@@ -1,6 +1,6 @@
-# Build Loop: identity profiles (user + admin, credential storage)
+# Build Loop: admin oversight (reports + audit-trail)
 
-**Spec:** tasks/specs/identity-profiles-spec.md (Step 1 reviewed; Step 2 decisions E1–E4) · **Branch:** `build/identity-profiles` (off `build/chief-of-staff`)
+**Spec:** tasks/specs/admin-oversight-spec.md (Step 1 reviewed 2026-10-17; Step 2 decisions E1–E5) · **Branch:** `build/admin-oversight` (off `main` at `595e92b`)
 **Previous harnesses:** tasks/archive/.
 
 ## Resolved placeholders
@@ -8,43 +8,47 @@
 | Placeholder | Value |
 |---|---|
 | `<TEST_CMD>` | `npm test` + `npm run typecheck` |
-| `<RUN_CMD>` / `<SMOKE_SCENARIO>` | `node dist/index.js` / `scripts/smoke.sh` (12 checks) + new checks: `auth storage show` reports the file store; a hanging stub keychain tool doesn't delay exit beyond its timeout |
-| `<FULL_SUITE_BUDGET>` | ~6.5 s (measured: 1535 tests in 6.38 s) → full suite after every task |
+| `<RUN_CMD>` / `<SMOKE_SCENARIO>` | `node dist/index.js` / `scripts/smoke.sh` (14 checks) + new: `audit-trail import` on a fixture CSV offline (exit 0, aggregated rows, no subject text in output) |
+| `<FULL_SUITE_BUDGET>` | ~7 s → full suite after every task |
 | `<RUN_BUDGET>` | unbounded |
 | `<REVIEW_MODEL>` | fable |
 
-**Baseline (HEAD `009077d` + review commits):** 1535/1535 tests, tsc 0, smoke 12/0/0, docs:check clean. This machine: Linux/WSL, no D-Bus session, no `security`/`secret-tool`/PowerShell DPAPI → real behaviour is the file store; keychain backends are tested with stub tools on PATH.
+**Baseline (`595e92b` + spec commits):** 1664/1664 tests, tsc 0, smoke 14/0/0, docs:check clean.
 
-## DAG (serial: every task touches `src/auth.ts`)
+## DAG
 
 ```mermaid
 graph LR
-  IDT4[IDT-4 profile types + admin via az] --> IDT1[IDT-1 credential-store + file backend]
-  IDT1 --> IDT2[IDT-2 per-account split + keychain backends + storage.json]
-  IDT2 --> IDT3[IDT-3 migration + auth storage cmd + logout cleanup]
-  IDT3 --> IDT5[IDT-5 long-running re-read + az re-borrow]
-  IDT5 --> IDT6[IDT-6 docs, snapshot, smoke]
-  IDT3 -.-> IDT7[IDT-7 real macOS/Windows — needs-human]
+  AOT1[AOT-1 reports fixes + src/csv.ts] --> AOT6
+  AOT2[AOT-2 remove chief brief] --> AOT3[AOT-3 audit-trail core: scopes, query engine, mailbox, changes]
+  AOT3 --> AOT5[AOT-5 apps + access]
+  AOT5 --> AOT6[AOT-6 import csv offline]
+  AOT6 --> AOT4[AOT-4 snapshot, docs, smoke]
+  AOT4 -.-> AOT7[AOT-7 live tenant — needs-human]
 ```
 
 ## Loops
-- **Outer:** next ready task in DAG order; one subagent per task (scope = the task's files); the orchestrator gates (full suite + typecheck, separate step from commit) and commits per task.
-- **Inner:** fail-first test for behaviour changes; behaviour-preserving refactors (IDT-1) are gated by the unchanged full suite + snapshot.
+- **Outer:** next ready task; wave 1 dispatches AOT-1 and AOT-2 in parallel (disjoint files: reports.ts/csv.ts/lint comment vs chief.ts/index.ts/catalog.ts/test MODULES); then serial.
+- **Inner:** fail-first tests for behaviour changes; removal (AOT-2) gated by full suite + describe/MCP consistency. Orchestrator gates (suite + typecheck) in a separate step from the commit (lesson 7).
 - **Meta:** lessons on correction only; spec/DAG updated on divergence.
-- **Smoke:** after IDT-3 and in IDT-6.
+- **Snapshot:** intermediate runs never use `-u`; regenerated once at AOT-4.
+- **Smoke:** after AOT-3 and at AOT-4.
 
 ## Gates
-- **Critical path: IDT-2** (cache split/reassembly — every login depends on it). Extra proof: round-trip of a multi-account MSAL cache through split → store → reassemble (deep-equal), concurrent writers for different accounts under the lock (8 processes), and corrupt/missing item handling.
-- IDT-1 is behaviour-preserving: the full suite and the dry-run snapshot must not change.
-- No real keychain access in any test (tests force `MS365_CLI_STORAGE=file` or use PATH stubs).
-- No new dependencies. Poison ceiling: 2 retries then BLOCKED; a blocked IDT-2 halts the run.
+- **Critical path: AOT-3** (the audit query engine every other audit-trail command uses). Extra proof: mocked async lifecycle (notStarted → running → succeeded; failed; cancelled; limit exceeded; timeout), and an **output allow-list property test**: fixtures whose `auditData` carries `Item.Subject`, `AffectedItems[].Subject`, `Folders[].FolderItems[].InternetMessageId` and recipients — no output format (json, table, csv, text) may contain any of those strings.
+- AOT-1 privacy gate: differencing property test over several `--min-group-size` values (AO-22).
+- No command added that reads message content; `access` requires `--app` or `--by`.
+- No new npm dependencies (CSV parser is in-repo). Poison ceiling: 2 retries then BLOCKED; a blocked AOT-3 halts the run.
 
 ## Stop condition
 ```
-DONE = IDT-1..IDT-6 DONE or BLOCKED-and-logged
-       AND npm test + typecheck: no new failures vs 1535 baseline
-       AND every ID-* item addressed or under needs-human IDT-7
-       AND smoke passes (incl. the new storage checks) AND docs:check clean
+DONE = AOT-1..AOT-6 DONE or BLOCKED-and-logged
+       AND npm test + typecheck: no new failures vs the 1664 baseline
+       AND every AO-* item addressed or under needs-human AOT-7
+       AND smoke passes (incl. audit-trail import) AND docs:check clean
 ```
 
 ## Divergence log
+- **2026-10-17 AOT-1:** dry-run snapshot updated in AOT-1 (not deferred to AOT-4), because intentional request-shape changes (`by-department` `$select` + `accountEnabled`) otherwise leave the gate red; AOT-4 still regenerates once at the end. Same diff pruned the two obsolete `chief brief` entries from AOT-2.
+- **2026-10-17 AOT-1:** AO-23 coverage warning counts enabled accounts *with a department* missing from the report (the literal "all enabled users" would warn on every tenant with unlicensed/service accounts).
+- **2026-10-17 after AOT-6:** real-export smoke found `appIdOf()` preferring `AppId` (the resource) over `ClientAppId` (the caller); `--app` matched nothing. Fixed with a fail-first test; real-file aggregates now match the manual 2026-10-17 analysis. Lesson 12.

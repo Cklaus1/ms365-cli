@@ -40,3 +40,8 @@ Things discovered mid-build that have no assigned task. Each entry gives a propo
 - **[P4] `invalid_grant` message lacks the AADSTS detail** (MSAL's errorMessage only links to aka.ms); surface `subError`/`errorMessage` from the server response. Pre-existing. (IDT-5)
 - **[P3] Admin-profile az hint shows az's own tenant GUID** instead of the profile's tenant (seen with `--tenant contoso.onmicrosoft.com`). (IDT-6)
 - **[P4] `MS365_CLI_STORAGE` missing from the generated ms365-shared skill env list** (src/docs-gen.ts:275). (IDT-6)
+- **[P4] `audit-trail changes` filters activities after paging,** so a page can be empty yet carry `nextCursor`. Push the activity filter server-side once the `or` list in `$filter` is verified live (AOT-7). (AOT-3)
+- **[P3] `audit-trail apps` reads the tenant ID through a cast to GraphClient's private `auth`.** Add a public `tokenInfo()`/`tenantId()` to GraphClient. (AOT-5)
+- **[P4] `audit-trail apps --with-consenters`** (AO-10 optional join with directoryAudits by principalId) not built; no AC requires it. (AOT-5)
+- **[P4] Snapshot sampler gives `--app x`,** so the `audit-trail access` snapshot exits 2 before the POST. Teach the sampler GUID-shaped values for `--app`. (AOT-5)
+- **[P4] `audit-trail import` stops at the first malformed row (exit 1).** Consider `--skip-bad-rows` with a count on stderr. (AOT-6)

@@ -1,19 +1,20 @@
-# Flight plan: identity profiles
+# Flight plan: admin oversight
 
-**Mission:** give ms365 two profile types (user; admin borrowed from az, never stored) and a credential-store layer with an opt-in OS keychain, keeping the file store as the default until real-hardware checks pass.
+**Mission:** fix the shipped `reports` bugs, remove `chief brief`, and add read-only `audit-trail` commands (mailbox, changes, apps, access, offline import) that show access metadata and grants, never content.
 
 **Decisions:**
-- **E1 ⚠ close call:** default stays the 0600 file everywhere; keychain is opt-in (`auth storage use keychain`) until IDT-7 passes — no Mac/Windows available here.
-- **E2:** Windows backend = DPAPI blob via PowerShell, no `cmdkey` (argv exposure, size limit).
-- **E3:** Windows `auto` → file if PowerShell start > 400 ms.
-- **E4:** serial build IDT-4 → 1 → 2 → 3 → 5 → 6 (all touch auth.ts).
+- **E1:** no new report types this run (after AOT-7).
+- **E2:** reports reader is format-agnostic (CSV on v1.0, JSON when returned), never beta.
+- **E3:** `audit-trail apps` shows facts only, no risk score.
+- **E4 ⚠ close call:** `Directory.Read.All` (broad, read-only, org-mode) to list delegated grants, because Learn lists it as least privileged; AOT-7 probes the narrower `DelegatedPermissionGrant.Read.All`.
+- **E5:** wave 1 AOT-1 ∥ AOT-2, then serial AOT-3 → 5 → 6 → 4.
 
-**needs-human:** IDT-7 (real macOS + Windows verification; flips E1).
+**needs-human:** AOT-7 (live tenant: grant new scopes, run real queries, confirm † items).
 
-**Step 1 revisions:** 7 revised (incl. macOS `security -i` via stdin instead of `-w <value>`; honest threat model: keychain protects at rest, not against same-user code), 7 added (ID-13..ID-19).
+**Step 1 revisions:** 9 revised (incl. `Directory.Read.All` replaces `DelegatedPermissionGrant.Read.All`; `OFFLINE_COMMANDS` can't see `audit-trail import` → AO-34 fix; shared mailboxes look disabled → `disabled-or-shared`; streaming CSV for 141 MB exports), 2 added (AO-33, AO-34).
 
-**Critical path:** IDT-2 — multi-account round-trip, 8-process concurrency, corrupt-item handling.
+**Critical path:** AOT-3 — async query lifecycle tests + allow-list property test across all output formats.
 
-**Shape:** 6 tasks, 1 track, longest chain 6. Test `npm test`+typecheck (6.5 s); smoke `scripts/smoke.sh`; reviewer fable; budget unbounded. Baseline 1535/1535, smoke 12/0/0.
+**Shape:** 6 tasks, longest chain 5, 1 parallel pair. Test `npm test`+typecheck (~7 s); smoke `scripts/smoke.sh`; reviewer fable; budget unbounded. Baseline 1664/1664, smoke 14/0/0.
 
-**First:** IDT-4, IDT-1, IDT-2.
+**First:** AOT-1 ∥ AOT-2, then AOT-3.

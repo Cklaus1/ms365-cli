@@ -1,9 +1,9 @@
-# todo: identity profiles build (derived from commits)
+# todo: admin oversight build (derived from commits)
 
-- [x] IDT-4 profile types; admin via az
-- [x] IDT-1 credential-store interface + file backend
-- [x] IDT-2 per-account split, keychain backends, storage.json [critical path]
-- [x] IDT-3 migration, auth storage command, logout cleanup
-- [x] IDT-5 long-running re-read, az re-borrow
-- [x] IDT-6 docs, snapshot, smoke
-- [ ] IDT-7 real macOS/Windows verification (needs-human)
+- [x] AOT-1 reports fixes + src/csv.ts
+- [x] AOT-2 remove chief brief
+- [x] AOT-3 audit-trail core (mailbox, changes) [critical path]
+- [x] AOT-5 audit-trail apps + access
+- [x] AOT-6 audit-trail import (offline)
+- [x] AOT-4 snapshot, docs, smoke
+- [ ] AOT-7 live tenant checks (needs-human)

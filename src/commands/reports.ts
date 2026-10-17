@@ -3,6 +3,7 @@ import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { outputOption, info, odataQuote } from '../utils.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
+import { parseCsvObjects } from '../csv.js';
 
 /**
  * Aggregate activity reports (Microsoft 365 usage reports, Reports.Read.All).
@@ -46,47 +47,100 @@ const DETAIL = {
 export interface RollUpRow { department: string; people: number; [metric: string]: string | number }
 
 /**
- * Sum metrics by department. Departments with fewer than `min` people are pooled into
- * "Other (groups under N people)"; if that pool is itself under `min`, it is dropped, so no
- * output row ever describes fewer than `min` people. Per-person values are never returned.
+ * Sum metrics by department without ever describing fewer than `floor` people, even across runs.
+ *
+ * - Departments of `min` or more people get their own row.
+ * - Departments between `floor` and `min` are pooled into "Other (groups under N people)".
+ * - Departments under the `floor` join that pool only when all of them together reach the floor;
+ *   otherwise they are dropped at **every** minimum (AO-22). They therefore only ever appear as one
+ *   block of at least `floor` people, so subtracting rows from runs with different `--min-group-size`
+ *   values cannot isolate a group smaller than the floor.
+ * - The pool is printed only if it reaches `min`. Per-person values are never returned.
  */
 export function rollUp(
   details: Row[],
   departmentOf: Map<string, string>,
   fields: readonly string[],
   min = MIN_GROUP_SIZE,
-  excluded: ReadonlySet<string> = new Set(),
-): { rows: RollUpRow[]; unmatched: number; excluded: number } {
+  floor = MIN_GROUP_SIZE,
+): { rows: RollUpRow[]; unmatched: number } {
+  const zero = () => Object.fromEntries(fields.map(f => [f, 0])) as Record<string, number>;
   const groups = new Map<string, { people: number; sums: Record<string, number> }>();
   let unmatched = 0;
-  let skipped = 0;
   for (const raw of details) {
     const r = normalize(raw);
     const upn = String(r.userprincipalname ?? '').toLowerCase();
     if (!upn || /^[0-9a-f]{16,}$/i.test(upn)) { unmatched++; continue; } // concealed names can't be joined
-    if (excluded.has(upn)) { skipped++; continue; }
     const dept = departmentOf.get(upn);
     if (!dept) { unmatched++; continue; }
-    const g = groups.get(dept) ?? { people: 0, sums: Object.fromEntries(fields.map(f => [f, 0])) };
+    const g = groups.get(dept) ?? { people: 0, sums: zero() };
     g.people++;
     for (const f of fields) g.sums[f] += num(r[f]);
     groups.set(dept, g);
   }
+  const add = (into: { people: number; sums: Record<string, number> }, g: { people: number; sums: Record<string, number> }) => {
+    into.people += g.people;
+    for (const f of fields) into.sums[f] += g.sums[f];
+  };
+  // The sub-floor block is decided at the floor, independent of `min`.
+  const smallPool = { people: 0, sums: zero() };
+  for (const g of groups.values()) if (g.people < floor) add(smallPool, g);
+
   const rows: RollUpRow[] = [];
-  const pool = { people: 0, sums: Object.fromEntries(fields.map(f => [f, 0])) as Record<string, number> };
+  const pool = { people: 0, sums: zero() };
+  if (smallPool.people >= floor) add(pool, smallPool);
   for (const [department, g] of groups) {
+    if (g.people < floor) continue;
     if (g.people >= min) rows.push({ department, people: g.people, ...g.sums });
-    else { pool.people += g.people; for (const f of fields) pool.sums[f] += g.sums[f]; }
+    else add(pool, g);
   }
   if (pool.people >= min) rows.push({ department: `Other (groups under ${min} people)`, people: pool.people, ...pool.sums });
   rows.sort((a, b) => b.people - a.people);
-  return { rows, unmatched, excluded: skipped };
+  return { rows, unmatched };
 }
 
-async function jsonReport(client: GraphClient, fn: string, period: string): Promise<Row[]> {
-  const res = await client.request(`/reports/${fn}(period='${odataQuote(period)}')`, { queryParams: { $format: 'application/json' }, responseType: 'json' });
-  if (client.isPreview(res)) return [];
-  return ((res.data as { value?: Row[] }).value ?? []);
+/** CSV cells arrive as text; turn plain numbers back into numbers so CSV and JSON output agree. */
+function csvValue(v: string): string | number {
+  return /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v;
+}
+
+/**
+ * Read a usage report whatever format Graph answers in (AO-4): JSON when `$format=application/json`
+ * is honoured (paged, AO-23), otherwise the 302 → CSV download from reports.office.com (one file,
+ * followed by the client without the bearer token). Rows keep their source keys; callers normalize.
+ */
+async function readReport(client: GraphClient, fn: string, period: string): Promise<Row[]> {
+  const res = await client.requestAllPages(`/reports/${fn}(period='${odataQuote(period)}')`, { queryParams: { $format: 'application/json' } });
+  const value = ((res.data as { value?: unknown[] }).value ?? []);
+  // A non-JSON body comes back as one item: text types as { rawResponse }, octet-stream as base64 { contentBytes }.
+  if (value.length === 1) {
+    const body = value[0] as { rawResponse?: unknown; contentBytes?: unknown };
+    const text = typeof body.rawResponse === 'string' ? body.rawResponse
+      : typeof body.contentBytes === 'string' ? Buffer.from(body.contentBytes, 'base64').toString('utf8')
+        : undefined;
+    if (text !== undefined) {
+      return parseCsvObjects(text).map(o => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, csvValue(v)])));
+    }
+  }
+  return value as Row[];
+}
+
+const REPORTS_403_FIX = 'the signed-in person needs Reports Reader (or an Exchange/Teams admin role) for per-user detail; '
+  + 'Global Reader and Usage Summary Reports Reader can only run `reports email|teams|active-users`; '
+  + 'admin consent via `ms365 --org-mode auth grant-scopes`';
+
+/** Rethrow a 403 with the reports-specific roles hint (AO-27). */
+function withReportsHint(fn: (...args: any[]) => Promise<void>): (...args: any[]) => Promise<void> { // eslint-disable-line @typescript-eslint/no-explicit-any
+  return async (...args) => {
+    try {
+      await fn(...args);
+    } catch (err) {
+      if (err instanceof CliError && err.code === 'permission_denied') {
+        throw new CliError(err.message, { code: err.code, exitCode: err.exitCode, status: err.status, graphCode: err.graphCode, requestId: err.requestId, fix: REPORTS_403_FIX });
+      }
+      throw err;
+    }
+  };
 }
 
 export function registerReportsCommands(program: Command, getClient: () => GraphClient): void {
@@ -98,10 +152,10 @@ export function registerReportsCommands(program: Command, getClient: () => Graph
       .description(def.description)
       .addOption(new Option('--period <period>', 'Reporting window').choices([...PERIODS]).default('D30'))
       .addOption(outputOption())
-      .action(handleErrors(async (opts) => {
-        const rows = (await jsonReport(getClient(), def.fn, opts.period)).map(normalize);
+      .action(handleErrors(withReportsHint(async (opts) => {
+        const rows = (await readReport(getClient(), def.fn, opts.period)).map(normalize);
         console.log(formatOutput({ period: opts.period, report: name, value: rows }, opts.output as OutputFormat));
-      }));
+      })));
   }
 
   reports
@@ -117,15 +171,19 @@ export function registerReportsCommands(program: Command, getClient: () => Graph
       return n;
     }, MIN_GROUP_SIZE)
     .addOption(outputOption())
-    .action(handleErrors(async (opts) => {
+    .action(handleErrors(withReportsHint(async (opts) => {
       const client = getClient();
       const detail = DETAIL[opts.workload as 'email' | 'teams'];
-      const details = await jsonReport(client, detail.fn, opts.period);
+      const details = await readReport(client, detail.fn, opts.period);
 
-      const users = await client.requestAllPages('/users', { queryParams: { $select: 'userPrincipalName,department', $top: '999' } });
+      const users = await client.requestAllPages('/users', { queryParams: { $select: 'userPrincipalName,department,accountEnabled', $top: '999' } });
       const departmentOf = new Map<string, string>();
-      for (const u of ((users.data as { value?: Array<{ userPrincipalName?: string; department?: string | null }> }).value ?? [])) {
-        if (u.userPrincipalName && u.department) departmentOf.set(u.userPrincipalName.toLowerCase(), u.department);
+      const enabledWithDept: string[] = [];
+      for (const u of ((users.data as { value?: Array<{ userPrincipalName?: string; department?: string | null; accountEnabled?: boolean }> }).value ?? [])) {
+        if (!u.userPrincipalName || !u.department) continue;
+        const upn = u.userPrincipalName.toLowerCase();
+        departmentOf.set(upn, u.department);
+        if (u.accountEnabled !== false) enabledWithDept.push(upn);
       }
 
       if (client.isDryRun()) return; // the requests were traced; nothing to compute
@@ -137,6 +195,10 @@ export function registerReportsCommands(program: Command, getClient: () => Graph
         );
       }
       if (unmatched > 0) info(`${unmatched} account(s) had no department and are not included.`);
+      // Cross-check coverage (AO-23): a truncated or stale report silently undercounts departments.
+      const reported = new Set(details.map(d => String(normalize(d).userprincipalname ?? '').toLowerCase()));
+      const missing = enabledWithDept.filter(u => !reported.has(u)).length;
+      if (missing > 0) info(`${missing} enabled account(s) with a department are not in the usage report; their activity is not included.`);
       console.log(formatOutput({ period: opts.period, workload: opts.workload, minGroupSize: opts.minGroupSize, value: rows }, opts.output as OutputFormat));
-    }));
+    })));
 }

@@ -70,7 +70,7 @@ const GROUP_SCOPES: Record<string, { read: string[]; write: string[] }> = {
   describe: { read: [], write: [] },
   meetings: { read: ['OnlineMeetings.Read'], write: [] },
   reports: { read: ['Reports.Read.All'], write: [] },
-  chief: { read: ['Mail.Read', 'Calendars.Read'], write: [] },
+  'audit-trail': { read: ['AuditLog.Read.All'], write: [] },
   watch: { read: [], write: [] },
   audit: { read: [], write: [] },
   idempotency: { read: [], write: [] },
@@ -299,7 +299,16 @@ const COMMANDS: Record<string, Entry> = {
   'reports teams': 'read',
   'reports active-users': 'read',
   'reports by-department': ['read', ['Reports.Read.All', 'User.Read.All']],
-  'chief brief': ['read', ['Calendars.Read', 'Mail.Read', 'Tasks.Read', 'Chat.Read']],
+
+  // audit-trail (AO-25): `mailbox` creates a saved audit query (a POST; no data is changed), so it is not `read`.
+  'audit-trail mailbox': ['action', ['AuditLogsQuery-Exchange.Read.All']],
+  'audit-trail changes': 'read',
+  // apps: every GET; Directory.Read.All is the least-privileged scope for listing grants (AO-28, OQ-9/E4) and also reads service principals.
+  'audit-trail apps': ['read', ['Directory.Read.All']],
+  // access: same saved-query POST as mailbox (AO-25); the target annotation's User.Read.All is already in ORG_SCOPES (AO-30).
+  'audit-trail access': ['action', ['AuditLogsQuery-Exchange.Read.All']],
+  // import: offline analysis of a local Purview export CSV — no scopes, so describe reports it offline (AO-31, AO-34).
+  'audit-trail import': ['read', []],
   'meetings transcript': ['read', ['OnlineMeetings.Read', 'OnlineMeetingTranscript.Read.All']],
   'meetings recordings': ['read', ['OnlineMeetings.Read', 'OnlineMeetingRecording.Read.All']],
   'meetings recording': ['read', ['OnlineMeetings.Read', 'OnlineMeetingRecording.Read.All']],

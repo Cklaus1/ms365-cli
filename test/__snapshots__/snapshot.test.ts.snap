@@ -1,5 +1,107 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`dry-run endpoint snapshot (every command) > audit-trail access [optional flags] 1`] = `
+{
+  "argv": "audit-trail access --app x --by a@contoso.com --since 2026-10-20T10:00 --until 2026-10-21T10:00 --timeout 5 --page-limit 5 --output json",
+  "error": "error: option '--app <appId>' argument 'x' is invalid. an application (client) ID GUID, e.g. 00000000-0000-0000-0000-000000000000.",
+  "exitCode": 2,
+  "requests": [],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > audit-trail access 1`] = `
+{
+  "argv": "audit-trail access",
+  "error": "Error: audit-trail access needs --app <appId> or --by <upn>. (fix: for every access to one mailbox use \`ms365 audit-trail mailbox <upn>\`)",
+  "exitCode": 2,
+  "requests": [],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > audit-trail apps [optional flags] 1`] = `
+{
+  "argv": "audit-trail apps --output json",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/servicePrincipals(appId='00000003-0000-0000-c000-000000000000')?$select=id%2CappRoles",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > audit-trail apps 1`] = `
+{
+  "argv": "audit-trail apps",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/servicePrincipals(appId='00000003-0000-0000-c000-000000000000')?$select=id%2CappRoles",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > audit-trail changes [optional flags] 1`] = `
+{
+  "argv": "audit-trail changes --since 2026-10-20T10:00 --until 2026-10-21T10:00 --top 5 --page-limit 5 --page-delay 5 --output json",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/auditLogs/directoryAudits?$filter=activityDateTime%20ge%202026-10-20T17%3A00%3A00.000Z%20and%20activityDateTime%20le%202026-10-21T17%3A00%3A00.000Z%20and%20(category%20eq%20'RoleManagement'%20or%20category%20eq%20'ApplicationManagement')&$orderby=activityDateTime%20desc&$top=5",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > audit-trail changes 1`] = `
+{
+  "argv": "audit-trail changes",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/auditLogs/directoryAudits?$filter=activityDateTime%20ge%202026-10-07T17%3A00%3A00.000Z%20and%20(category%20eq%20'RoleManagement'%20or%20category%20eq%20'ApplicationManagement')&$orderby=activityDateTime%20desc",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > audit-trail import [optional flags] 1`] = `
+{
+  "argv": "audit-trail import <tmp>/sample.txt --app x --by a@contoso.com --mailbox a@contoso.com --output json",
+  "error": "error: option '--app <appId>' argument 'x' is invalid. an application (client) ID GUID, e.g. 00000000-0000-0000-0000-000000000000.",
+  "exitCode": 2,
+  "requests": [],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > audit-trail import 1`] = `
+{
+  "argv": "audit-trail import <tmp>/sample.txt",
+  "error": "Error: audit-trail import needs a view: --app <appId>, --by <upn>, --mailbox <upn> or --cross-mailbox.",
+  "exitCode": 2,
+  "requests": [],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > audit-trail mailbox [optional flags] 1`] = `
+{
+  "argv": "audit-trail mailbox a@contoso.com --since 2026-10-20T10:00 --until 2026-10-21T10:00 --operations x --by a@contoso.com --timeout 5 --page-limit 5 --page-delay 5 --output json",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/security/auditLog/queries",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > audit-trail mailbox 1`] = `
+{
+  "argv": "audit-trail mailbox a@contoso.com",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/security/auditLog/queries",
+  ],
+}
+`;
+
 exports[`dry-run endpoint snapshot (every command) > calendar accept [optional flags] 1`] = `
 {
   "argv": "calendar accept EVENTID --comment x",
@@ -482,31 +584,6 @@ exports[`dry-run endpoint snapshot (every command) > chat send 1`] = `
   "exitCode": 0,
   "requests": [
     "[dry-run] POST https://graph.microsoft.com/v1.0/chats/CHATID/messages",
-  ],
-}
-`;
-
-exports[`dry-run endpoint snapshot (every command) > chief brief [optional flags] 1`] = `
-{
-  "argv": "chief brief --timezone America/Los_Angeles --days x --output json",
-  "error": "error: option '--days <n>' argument 'x' is invalid. must be 1-14.",
-  "exitCode": 2,
-  "requests": [],
-}
-`;
-
-exports[`dry-run endpoint snapshot (every command) > chief brief 1`] = `
-{
-  "argv": "chief brief",
-  "error": "",
-  "exitCode": 0,
-  "requests": [
-    "[dry-run] GET https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-14T07%3A00%3A00.000Z&endDateTime=2026-10-15T07%3A00%3A00.000Z&$select=subject%2Cstart%2Cend%2CisAllDay%2Clocation%2Corganizer%2CresponseStatus%2ConlineMeeting&$orderby=start%2FdateTime&$top=50",
-    "[dry-run] GET https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$filter=isRead%20eq%20false%20and%20importance%20eq%20'high'&$select=subject%2Cfrom%2CreceivedDateTime%2CbodyPreview&$top=10",
-    "[dry-run] GET https://graph.microsoft.com/v1.0/me/messages?$filter=flag%2FflagStatus%20eq%20'flagged'&$select=subject%2Cfrom%2CreceivedDateTime%2CbodyPreview&$top=10",
-    "[dry-run] GET https://graph.microsoft.com/v1.0/me/todo/lists?$top=10",
-    "[dry-run] GET https://graph.microsoft.com/v1.0/me/chats?$expand=lastMessagePreview&$orderby=lastMessagePreview%2FcreatedDateTime%20desc&$top=8",
-    "[dry-run] GET https://graph.microsoft.com/v1.0/me/mailFolders/inbox?$select=unreadItemCount",
   ],
 }
 `;
@@ -2920,7 +2997,7 @@ exports[`dry-run endpoint snapshot (every command) > reports by-department [opti
   "exitCode": 0,
   "requests": [
     "[dry-run] GET https://graph.microsoft.com/v1.0/reports/getEmailActivityUserDetail(period='D7')?$format=application%2Fjson",
-    "[dry-run] GET https://graph.microsoft.com/v1.0/users?$select=userPrincipalName%2Cdepartment&$top=999",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/users?$select=userPrincipalName%2Cdepartment%2CaccountEnabled&$top=999",
   ],
 }
 `;
@@ -2932,7 +3009,7 @@ exports[`dry-run endpoint snapshot (every command) > reports by-department 1`] =
   "exitCode": 0,
   "requests": [
     "[dry-run] GET https://graph.microsoft.com/v1.0/reports/getEmailActivityUserDetail(period='D30')?$format=application%2Fjson",
-    "[dry-run] GET https://graph.microsoft.com/v1.0/users?$select=userPrincipalName%2Cdepartment&$top=999",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/users?$select=userPrincipalName%2Cdepartment%2CaccountEnabled&$top=999",
   ],
 }
 `;

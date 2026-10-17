@@ -14,7 +14,9 @@ const SUPPORTED_VERSIONS = [PROTOCOL_VERSION, '2025-03-26', '2024-11-05'];
 const CALL_TIMEOUT_MS = 120_000;
 /** Sign-in and profile removal need a person at a terminal; mcp would serve itself. */
 // `auth storage use` migrates credentials (a terminal action that may prompt on macOS, ID-16); `show` stays.
-const EXCLUDED = new Set(['auth login', 'auth setup', 'auth logout', 'auth profile delete', 'auth grant-scopes', 'auth storage use']);
+// audit-trail (AO-14): admin oversight of access is not delegated to an MCP client; `import` reads a local file path.
+const EXCLUDED = new Set(['auth login', 'auth setup', 'auth logout', 'auth profile delete', 'auth grant-scopes', 'auth storage use',
+  'audit-trail mailbox', 'audit-trail changes', 'audit-trail apps', 'audit-trail access', 'audit-trail import']);
 /**
  * Options left out of a tool's schema (by attribute name). A call is one bounded pass that must finish
  * inside CALL_TIMEOUT_MS with stdin closed: `watch` loses its --follow-only flags (X-6, R-10; the
