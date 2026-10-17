@@ -542,12 +542,15 @@ export function decodeAccessToken(token: string): Record<string, unknown> {
   throw opaque();
 }
 
+/** One vocabulary for `auth scopes`, `auth refresh` and `auth status -o json` (D27, AH-8(1)). */
 export interface TokenInfo {
   scopes: string[];
   audience?: string;
   tenantId?: string;
-  user?: string;
-  expiresOn?: string;
+  /** The signed-in user's object id (`oid`). */
+  accountId?: string;
+  upn?: string;
+  expiresAt?: string;
   expired?: boolean;
 }
 
@@ -559,10 +562,11 @@ export function tokenInfo(token: string, now = new Date()): TokenInfo {
     scopes: (str(claims.scp) ?? '').split(' ').filter(Boolean),
     audience: str(claims.aud),
     tenantId: str(claims.tid),
-    user: str(claims.upn) ?? str(claims.preferred_username),
+    accountId: str(claims.oid),
+    upn: str(claims.upn) ?? str(claims.preferred_username),
   };
   if (typeof claims.exp === 'number') {
-    info.expiresOn = new Date(claims.exp * 1000).toISOString();
+    info.expiresAt = new Date(claims.exp * 1000).toISOString();
     info.expired = claims.exp * 1000 <= now.getTime();
   }
   return info;

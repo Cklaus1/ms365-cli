@@ -5,7 +5,8 @@ import { recordAudit } from './audit.js';
 import { dryRunTrace as trace, info, notePreview } from './utils.js';
 import { attachRefs, refMailbox, refResource, selectForRefs, withImmutableIds, type RefIdentity } from './refs.js';
 
-const MAX_RETRIES = 3;
+/** Retries after the first attempt unless MS365_CLI_MAX_RETRIES says otherwise (3 attempts, as before AH-8(6)). */
+const DEFAULT_RETRIES = 2;
 const MAX_PAGES = 100;
 const MAX_REDIRECTS = 5;
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -13,6 +14,26 @@ const REQUEST_TIMEOUT_MS = 30_000;
 const CHUNK_TIMEOUT_MS = 120_000;
 /** Timeout for upload-session status GETs and DELETEs. */
 const QUERY_TIMEOUT_MS = 30_000;
+
+/** A host's bound on one request (AH-8(6), OQ-18): retries after the first attempt, and the time to response headers. */
+export interface RequestBudget {
+  retries: number;
+  timeoutMs: number;
+}
+
+/** The budget from MS365_CLI_MAX_RETRIES (0–2) and MS365_CLI_REQUEST_TIMEOUT_MS (1000–30000); out of range exits 2. */
+export function requestBudget(env: NodeJS.ProcessEnv = process.env): RequestBudget {
+  const read = (name: string, min: number, max: number, fallback: number): number => {
+    const raw = env[name];
+    if (raw === undefined || raw.trim() === '') return fallback;
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < min || n > max) {
+      throw new CliError(`${name} must be an integer from ${min} to ${max} (got "${raw}").`, { code: 'usage', exitCode: ExitCode.USAGE });
+    }
+    return n;
+  };
+  return { retries: read('MS365_CLI_MAX_RETRIES', 0, 2, DEFAULT_RETRIES), timeoutMs: read('MS365_CLI_REQUEST_TIMEOUT_MS', 1000, REQUEST_TIMEOUT_MS, REQUEST_TIMEOUT_MS) };
+}
 
 /**
  * How the caller wants the response body:
@@ -30,6 +51,8 @@ export interface GraphRequestOptions {
   responseType?: ResponseType;
   /** Timeout until response headers (default 30s). */
   timeoutMs?: number;
+  /** Retries after the first attempt (default: the client's budget). `health` probes pass 0. */
+  retries?: number;
 }
 
 export interface GraphResponse {
@@ -152,6 +175,7 @@ export class GraphClient {
   private apiVersion: string;
   private baseUrl: string;
   private refs: boolean;
+  private budget: RequestBudget;
   private identityPromise?: Promise<RefIdentity>;
 
   constructor(auth: AuthManager | (() => AuthManager), dryRun = false, apiVersion = 'v1.0', readOnly = false, options: GraphClientOptions = {}) {
@@ -163,6 +187,7 @@ export class GraphClient {
     this.apiVersion = apiVersion;
     this.baseUrl = `https://graph.microsoft.com/${this.apiVersion}`;
     this.refs = !!options.refs;
+    this.budget = requestBudget();
   }
 
   private get auth(): AuthManager {
@@ -293,12 +318,13 @@ export class GraphClient {
     };
 
     const idempotent = IDEMPOTENT_METHODS.has(method);
-    const timeoutMs = options.timeoutMs ?? bodyTimeoutMs(options.body);
+    const timeoutMs = options.timeoutMs ?? this.budget.timeoutMs + bodyAllowanceMs(options.body);
+    const attempts = (options.retries ?? this.budget.retries) + 1;
     const notRetried = idempotent ? '' : ' (not retried; it may have been processed)';
     let lastError: Error | null = null;
     let retriedWith401 = false;
 
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    for (let attempt = 0; attempt < attempts; attempt++) {
       let response: Response;
       try {
         response = await this.fetchFollowingRedirects(url, method, headers, options.body, timeoutMs);
@@ -317,7 +343,7 @@ export class GraphClient {
           lastError = new CliError(`Network error (${reason}): ${method} ${url}${preSend ? '' : notRetried}`,
             { code: 'network_error', maybeProcessed });
         }
-        if ((idempotent || preSend) && attempt < MAX_RETRIES - 1) {
+        if ((idempotent || preSend) && attempt < attempts - 1) {
           const waitMs = Math.pow(2, attempt) * 1000;
           logger.warn(`${timedOut ? 'Request timed out' : 'Connection error'}. Retrying in ${waitMs / 1000}s...`);
           await sleep(waitMs);
@@ -329,7 +355,7 @@ export class GraphClient {
       logger.debug(`Response: ${response.status} ${response.statusText}`, { attempt });
 
       // Rate limited — the request was not processed, so any method may retry
-      if (response.status === 429 && attempt < MAX_RETRIES - 1) {
+      if (response.status === 429 && attempt < attempts - 1) {
         const waitMs = parseRetryAfter(response.headers.get('Retry-After'), Math.pow(2, attempt) * 1000);
         logger.warn(`Rate limited. Retrying in ${waitMs / 1000}s...`);
         console.error(`Rate limited. Retrying in ${waitMs / 1000}s...`);
@@ -339,7 +365,7 @@ export class GraphClient {
       }
 
       // Server error — retry only idempotent methods (a POST may already have been applied)
-      if (response.status >= 500 && idempotent && attempt < MAX_RETRIES - 1) {
+      if (response.status >= 500 && idempotent && attempt < attempts - 1) {
         const waitMs = Math.pow(2, attempt) * 1000;
         logger.warn(`Server error (${response.status}). Retrying in ${waitMs / 1000}s...`);
         console.error(`Server error (${response.status}). Retrying in ${waitMs / 1000}s...`);
@@ -362,7 +388,9 @@ export class GraphClient {
           errorMessage = errorText;
         }
         const requestId = response.headers.get('request-id') || bodyRequestId || undefined;
-        const details = { status: response.status, graphCode, requestId };
+        const retryAfter = response.status === 429 ? response.headers.get('Retry-After') : null;
+        // AH-8(4): a host schedules its own retry from retryAfterMs.
+        const details = { status: response.status, graphCode, requestId, ...(retryAfter && { retryAfterMs: parseRetryAfter(retryAfter, 0) }) };
 
         logger.error(`API error ${response.status}: ${errorMessage}`);
 
@@ -581,7 +609,7 @@ export class GraphClient {
         const status = res?.status;
         const text = res ? await res.text() : '';
         const retryable = !res || status === 429 || (status !== undefined && status >= 500) || status === 416;
-        if (!retryable || ++failures >= MAX_RETRIES) {
+        if (!retryable || ++failures > this.budget.retries) {
           throw new CliError(`Chunk upload failed at byte ${offset}${status ? ` (${status})` : ''}: ${failure ?? text}`,
             { code: 'upload_failed', status, exitCode: status === 429 ? ExitCode.THROTTLED : ExitCode.GENERIC });
         }
@@ -679,7 +707,7 @@ export class GraphClient {
   /**
    * Send requests through JSON batching (POST /$batch, 20 per batch). Results come back in
    * input order. Items throttled with 429 — and 5xx on idempotent methods — are retried in a
-   * new batch after the longest Retry-After, up to MAX_RETRIES rounds.
+   * new batch after the longest Retry-After, up to 1 + the budget's retries rounds.
    */
   async batch(requests: BatchRequest[]): Promise<BatchResult[]> {
     if (this.readOnly && requests.some(r => r.method.toUpperCase() !== 'GET')) {
@@ -695,7 +723,7 @@ export class GraphClient {
 
     const results: Array<BatchResult | undefined> = new Array(requests.length);
     let pending = requests.map((_, i) => i);
-    for (let round = 0; round < MAX_RETRIES && pending.length > 0; round++) {
+    for (let round = 0; round <= this.budget.retries && pending.length > 0; round++) {
       const retry: number[] = [];
       let waitMs = 0;
       for (let start = 0; start < pending.length; start += BATCH_SIZE) {
@@ -727,7 +755,7 @@ export class GraphClient {
           const idx = Number(r.id);
           const method = requests[idx].method.toUpperCase();
           const retryable = r.status === 429 || (r.status >= 500 && IDEMPOTENT_METHODS.has(method));
-          if (retryable && round < MAX_RETRIES - 1) {
+          if (retryable && round < this.budget.retries) {
             retry.push(idx);
             const ra = r.headers?.['Retry-After'] ?? r.headers?.['retry-after'] ?? null;
             waitMs = Math.max(waitMs, parseRetryAfter(ra, Math.pow(2, round) * 1000));
@@ -873,7 +901,7 @@ function extractODataMeta(json: unknown): { nextLink?: string; deltaLink?: strin
 export function graphError(
   status: number,
   message: string,
-  details: { status?: number; graphCode?: string; requestId?: string } = {},
+  details: { status?: number; graphCode?: string; requestId?: string; retryAfterMs?: number } = {},
   opts: { orgMode?: boolean } = {},
 ): CliError {
   const d = { ...details, status };
@@ -941,11 +969,11 @@ function parseRetryAfter(header: string | null, fallbackMs: number): number {
 }
 
 /**
- * Default timeout to response headers: 30 s plus time to send the body at 32 KiB/s, so a 4 MB inline attachment
- * on a slow uplink isn't cut off mid-upload (R-9). A string's length stands in for its byte count.
+ * Extra time to response headers for sending the body at 32 KiB/s, so a 4 MB inline attachment on a slow uplink
+ * isn't cut off mid-upload (R-9). A string's length stands in for its byte count.
  */
-function bodyTimeoutMs(body: string | Uint8Array | undefined): number {
-  return REQUEST_TIMEOUT_MS + Math.round(((body?.length ?? 0) / (32 * 1024)) * 1000);
+function bodyAllowanceMs(body: string | Uint8Array | undefined): number {
+  return Math.round(((body?.length ?? 0) / (32 * 1024)) * 1000);
 }
 
 /** fetch to a pre-authorized upload URL, aborted after `timeoutMs`. */

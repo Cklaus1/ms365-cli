@@ -19,7 +19,7 @@ process.stdout.write = function(chunk: any, ...args: any[]): boolean {
 
 import { Command, Option } from 'commander';
 import { AuthManager, buildScopes } from './auth.js';
-import { GraphClient } from './graph-client.js';
+import { GraphClient, requestBudget } from './graph-client.js';
 import { registerAuthCommands } from './commands/auth.js';
 import { registerMailCommands } from './commands/mail.js';
 import { registerCalendarCommands } from './commands/calendar.js';
@@ -42,6 +42,7 @@ import { registerMeetingsCommands } from './commands/meetings.js';
 import { registerReportsCommands } from './commands/reports.js';
 import { registerAuditTrailCommands } from './commands/audit-trail.js';
 import { registerWatchCommands } from './commands/watch.js';
+import { registerHealthCommand } from './commands/health.js';
 import { registerAuditCommands } from './commands/audit.js';
 import { registerIdempotencyCommands } from './commands/idempotency.js';
 import { registerDescribeCommand } from './commands/describe.js';
@@ -176,6 +177,7 @@ registerMeetingsCommands(program, getClient);
 registerReportsCommands(program, getClient);
 registerAuditTrailCommands(program, getClient);
 registerWatchCommands(program, getClient);
+registerHealthCommand(program, getClient);
 registerAuditCommands(program);
 registerIdempotencyCommands(program);
 registerNotesCommands(program, getClient);
@@ -204,6 +206,7 @@ program.hook('preAction', async (_program, actionCommand) => {
   setActor(o.actor || process.env.MS365_CLI_ACTOR);
   const commandPath = commandChain.slice(1).join(' ');
   setCommandPath(commandPath);
+  requestBudget(); // AH-8(6): a bad MS365_CLI_MAX_RETRIES / MS365_CLI_REQUEST_TIMEOUT_MS exits 2 before anything runs
 
   // AH-1: a user/host profile's scopes are a ceiling. Checked before the offline and dry-run returns and before any
   // token is read, so no MS365_CLI_PREFLIGHT=0, opaque token or --dry-run gets past it.

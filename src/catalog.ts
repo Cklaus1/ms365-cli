@@ -72,6 +72,7 @@ const GROUP_SCOPES: Record<string, { read: string[]; write: string[] }> = {
   reports: { read: ['Reports.Read.All'], write: [] },
   'audit-trail': { read: ['AuditLog.Read.All'], write: [] },
   watch: { read: [], write: [] },
+  health: { read: ['User.Read'], write: [] },
   audit: { read: [], write: [] },
   idempotency: { read: [], write: [] },
 };
@@ -315,6 +316,8 @@ const COMMANDS: Record<string, Entry> = {
   'meetings all-transcripts': ['read', ['User.Read', 'OnlineMeetingTranscript.Read.All']],
 
   watch: ['read', { arg: 0, map: { mail: ['Mail.Read'], events: ['Calendars.Read'], files: ['Files.Read'], contacts: ['Contacts.Read'] } }],
+  // GET /me plus one read per resource; a resource outside the ceiling is reported UNSUPPORTED, not probed (E12).
+  health: ['read', ['User.Read']],
 
   'audit tail': 'read',
   'excel tables': 'read',

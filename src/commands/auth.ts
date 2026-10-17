@@ -7,7 +7,8 @@ import type { StorageSetting } from '../keychain.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import { confirm, dryRunTrace, info, isDryRun, outputOption } from '../utils.js';
-import { deleteProfile, ignoredAdminFields, listProfiles, profileExists, readProfile, saveProfile, validateProfile, validateProfileName, type Profile } from '../profiles.js';
+import { deleteProfile, ignoredAdminFields, listProfiles, profileExists, profileType, readProfile, saveProfile, validateProfile, validateProfileName, type Profile } from '../profiles.js';
+import { profileCeiling } from '../ceiling.js';
 import { openBrowserCommand } from './setup.js';
 import { GraphClient } from '../graph-client.js';
 import { adminConsentUrl, azGraphToken, CONSENT_REDIRECT_URI, grantScopes } from '../grant-scopes.js';
@@ -73,26 +74,42 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
 
   auth
     .command('status')
-    .description('Verify current login status')
-    .action(handleErrors(async () => {
+    .description('Verify current login status (-o json: token source, account, expiry, scopes and profile ceiling)')
+    .addOption(outputOption('text'))
+    .action(handleErrors(async (opts) => {
       // Offline under --dry-run: no AuthManager, so no token-cache read or refresh (DR-22 class).
       if (isDryRun()) return dryRunTrace('would check the login status (token cache not read)');
       const authManager = getAuth();
       await authManager.initialize();
-      if (authManager.tokenSource() === 'external') {
+      const source = authManager.tokenSource();
+      const admin = adminProfile();
+      if (opts.output !== 'text') {
+        // AH-8(1): what a host needs to decide whether the token is usable, from the token itself (no Graph call).
+        // A missing or unusable token still exits 3 (token_*, not_logged_in, az_required).
+        const t = tokenInfo(await authManager.getToken());
+        const profileName: string | undefined = program.opts().profile || process.env.MS365_CLI_PROFILE || undefined;
+        const profile = profileName ? readProfile(profileName) : undefined;
+        const ceiling = profile ? profileCeiling(profile) : null;
+        console.log(formatOutput({
+          source, profile: profileName ?? null, type: profile ? profileType(profile) : null,
+          tenantId: t.tenantId ?? null, accountId: t.accountId ?? null, upn: t.upn ?? null, expiresAt: t.expiresAt ?? null,
+          scopes: t.scopes, ceiling: ceiling ? [...ceiling] : null, ok: t.expired !== true,
+        }, opts.output as OutputFormat));
+        return;
+      }
+      if (source === 'external') {
         // AH-2: the supplied token is checked (exit 3 token_*) and described; nothing is read from a cache.
         const token = await authManager.getToken();
         let t: TokenInfo | undefined;
         try { t = tokenInfo(token); } catch { /* opaque: nothing to report */ }
-        console.log(`Token supplied by the host (MS365_CLI_TOKEN): ${t?.user ?? 'unknown user'}${t?.tenantId ? ` (tenant ${t.tenantId})` : ''}${t?.expiresOn ? `, expires ${t.expiresOn}` : ''}`);
+        console.log(`Token supplied by the host (MS365_CLI_TOKEN): ${t?.upn ?? 'unknown user'}${t?.tenantId ? ` (tenant ${t.tenantId})` : ''}${t?.expiresAt ? `, expires ${t.expiresAt}` : ''}`);
         if (t) console.log(`Scopes: ${t.scopes.join(' ') || '(none)'}`);
         return;
       }
-      const admin = adminProfile();
       if (admin !== undefined) {
         // ID-8: report the borrowed identity and its scp from the token itself (az errors exit 3 az_required).
         const t = tokenInfo(await authManager.getToken());
-        console.log(`Admin profile "${admin}": ${t.user ?? 'unknown user'} (tenant ${t.tenantId ?? authManager.getTenantId()}) via the Azure CLI`);
+        console.log(`Admin profile "${admin}": ${t.upn ?? 'unknown user'} (tenant ${t.tenantId ?? authManager.getTenantId()}) via the Azure CLI`);
         console.log(`Scopes: ${t.scopes.join(' ') || '(none)'}`);
         return;
       }
@@ -134,7 +151,7 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
       const added = after.scopes.filter(s => !before.includes(s));
       const removed = before.filter(s => !after.scopes.includes(s));
       console.log(formatOutput({
-        user: after.user, expiresOn: after.expiresOn, scopes: after.scopes.length, added, removed,
+        upn: after.upn, expiresAt: after.expiresAt, scopes: after.scopes.length, added, removed,
       }, opts.output as OutputFormat));
     }));
 
