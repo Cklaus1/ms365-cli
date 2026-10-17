@@ -211,20 +211,45 @@ describe('apply without a terminal under a host profile (OQ-8 b)', () => {
     expect([...missing.calls, ...wrong.calls, ...other.calls, ...ceiling.calls, ...expired.calls]).toEqual([]);
   });
 
-  it('refuses a mislabelled plan (E27) and one that names no identity: exit 7, nothing sent', async () => {
+  it('refuses a plan whose requests are not exactly the one its label and event say (E27), a series, a missing identity and an MCP call: exit 7, nothing sent', async () => {
     const { file, plan } = await hostPlan('mislabel');
+    const original = fs.readFileSync(file);
     const del = plan.requests[0];
-    const relabelled = forge(file, { command: 'calendar update' });
-    const r1 = await run(['apply', file, '--expect-digest', relabelled], { routes: [DELETE_ROUTE], env: HOST });
-    const mixed = forge(file, { command: 'calendar delete', requests: [{ ...del, method: 'PATCH', body: '{"subject":"x"}' }, del] });
-    const r2 = await run(['apply', file, '--expect-digest', mixed], { routes: [DELETE_ROUTE], env: HOST });
-    const anonymous = forge(file, { requests: [del], identity: { tenantId: null, accountId: null, profile: null } });
-    const r3 = await run(['apply', file, '--expect-digest', anonymous], { routes: [DELETE_ROUTE], env: HOST });
-    for (const r of [r1, r2, r3]) {
-      expect(r.exitCode).toBe(7);
-      expect(lastError(r.stderr).error.code).toBe('confirmation_refused');
-      expect(r.calls).toEqual([]);
+    const T = '11111111-2222-3333-4444-555555555555';
+    const forgeries: Record<string, Partial<Plan>> = {
+      'update label over a DELETE': { command: 'calendar update' },
+      'a PATCH before the DELETE': { requests: [{ ...del, method: 'PATCH', body: '{"subject":"x"}' }, del] },
+      'two DELETEs': { requests: [del, { ...del, path: '/me/events/E2' }] },
+      'DELETE of a whole calendar': { requests: [{ ...del, path: '/me/calendars/C1' }] },
+      'DELETE of an attachment': { requests: [{ ...del, path: '/me/events/E1/attachments/A1' }] },
+      'DELETE of a OneDrive file': { requests: [{ ...del, path: '/me/drive/root:/events/E1' }] },
+      'DELETE of another event': { requests: [{ ...del, path: '/me/events/E2' }] },
+      'cancel label over a DELETE': { command: 'calendar cancel' },
+      'target is another event': { target: { id: 'E2', version: 'W/"ek1"' } },
+      'series scope': { payload: { ...(plan.payload as object), scope: 'series' } },
+      'no identity': { identity: { tenantId: null, accountId: null, profile: null } },
+      'tenant only': { identity: { tenantId: T, accountId: null, profile: null } },
+    };
+    for (const [name, change] of Object.entries(forgeries)) {
+      fs.writeFileSync(file, original);
+      const r = await run(['apply', file, '--expect-digest', forge(file, change)], { routes: [DELETE_ROUTE], env: HOST });
+      expect([name, r.exitCode, lastError(r.stderr).error.code, r.calls]).toEqual([name, 7, 'confirmation_refused', []]);
     }
+    fs.writeFileSync(file, original);
+    const mcp = await run(['apply', file, '--expect-digest', plan.digest], { routes: [DELETE_ROUTE], env: { ...HOST, MS365_CLI_MCP: '1' } });
+    expect([mcp.exitCode, lastError(mcp.stderr).error.message, mcp.calls]).toEqual([7, expect.stringContaining('mcp serve'), []]);
+  });
+
+  it('applies an approved delete in a named calendar', async () => {
+    const file = planFile('host-delete-calendar');
+    const made = await run(['calendar', 'delete', 'E1', '--calendar', 'C1'], {
+      routes: [['GET', /\/me\/calendars\/C1\/events\/E1\?/, () => ({ '@odata.etag': 'W/"ek2"', attendees: [], type: 'singleInstance', isOrganizer: true })]],
+      plan: { file, command: 'calendar delete', host: true },
+    });
+    expect(made.exitCode).toBe(0);
+    const r = await run(['apply', file, '--expect-digest', readPlan(file).digest], { routes: [['DELETE', /\/me\/calendars\/C1\/events\/E1$/, () => ({})]], env: HOST });
+    expect(r.exitCode).toBe(0);
+    expect(r.calls).toEqual([expect.objectContaining({ method: 'DELETE', headers: expect.objectContaining({ 'If-Match': 'W/"ek2"' }) })]);
   });
 
   it('a terminal still asks under the host profile; --dry-run previews without asking', async () => {
