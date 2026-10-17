@@ -3058,7 +3058,7 @@
     },
     {
       "path": "apply",
-      "description": "Send exactly the requests of a plan written by --plan, after checking its digest, the profile ceiling, expiry, attachment bytes and token identity; If-Match is part of the plan (412 → exit 4 version_changed)",
+      "description": "Send exactly the requests of a plan written by --plan, after checking its digest, the profile ceiling, expiry, attachment bytes and token identity; If-Match is part of the plan (412 → exit 4 version_changed). A calendar delete/cancel plan asks on a terminal; without one it is applied only under a type: host profile (the host approved the digest), otherwise exit 7",
       "arguments": [
         {
           "name": "planFile",

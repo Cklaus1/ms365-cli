@@ -50,7 +50,7 @@ export const PLAN_COMMANDS: Record<string, true> = {
   'calendar cancel': true,
 };
 
-/** Plan commands that destroy or cancel: apply asks on a terminal first, and refuses without one (OQ-8 is open). */
+/** Plan commands that destroy or cancel: apply asks on a terminal; without one only a host approval applies them (OQ-8 b). */
 export const PLAN_CONFIRM: Record<string, true> = {
   'calendar delete': true,
   'calendar cancel': true,

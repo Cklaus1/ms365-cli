@@ -23,4 +23,4 @@
 
 ## Follow-up run 2026-10-17 (owner decisions OQ-8 b, D12)
 - [x] AHT-15 shared contract fixture (`test/fixtures/contract/`, `npm run contract:check`)
-- [ ] AHT-9 non-TTY apply of approved calendar delete/cancel under a `type: host` profile (OQ-8 b)
+- [x] AHT-9 non-TTY apply of approved calendar delete/cancel under a `type: host` profile (OQ-8 b)

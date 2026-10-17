@@ -2,12 +2,13 @@ import fs from 'fs';
 import { Command } from 'commander';
 import { usedScopes } from '../catalog.js';
 import { activeCeiling, assertWithinCeiling } from '../ceiling.js';
-import { CliError, ExitCode, handleErrors } from '../errors.js';
+import { CliError, ConfirmationRefusedError, ExitCode, handleErrors } from '../errors.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import type { GraphClient } from '../graph-client.js';
 import { withIdempotency } from '../idempotency.js';
 import { PLAN_COMMANDS, PLAN_CONFIRM, planDigest, readPlan, requestCommand, resolveRefs, sha256Hex, usage, type Plan } from '../plan.js';
-import { confirm, info, outputOption, success } from '../utils.js';
+import { profileType, readProfile } from '../profiles.js';
+import { confirm, info, isDryRun, outputOption, success } from '../utils.js';
 
 /**
  * Every check that needs no token: digest, command, ceiling (AH-5(7)), expiry, attachment bytes. Nothing is sent.
@@ -43,6 +44,27 @@ function checkPlan(plan: Plan, expectDigest: string, profileFlag: string | undef
   return [...commands];
 }
 
+/**
+ * OQ-8 (b): without a terminal, a delete/cancel plan is applied only when the approval happened in the host. By the
+ * time this runs, checkPlan has matched `--expect-digest`, the expiry and the ceiling for every request; this adds
+ * that the active profile is `type: host`, that every request is the delete/cancel its label names (a mislabelled
+ * plan, E27, was not what the host showed), and that the plan names the tenant and account the identity check
+ * compares (done before sending). Anything else keeps exit 7 with nothing sent.
+ */
+function assertHostApproval(plan: Plan, commands: string[], profileFlag: string | undefined): void {
+  const name = profileFlag || process.env.MS365_CLI_PROFILE;
+  const refuse = (why: string) => new ConfirmationRefusedError(`Applying ${plan.command} without a terminal ${why}; nothing was sent.`);
+  if (!name || profileType(readProfile(name)) !== 'host') {
+    throw refuse('needs a type: host profile (the approval happens in the agent host and --expect-digest binds it); run it in a terminal otherwise');
+  }
+  if (commands.length !== 1 || commands[0] !== plan.command) {
+    throw refuse(`is refused: its requests amount to ${commands.join(' and ')}, not only what its label says`);
+  }
+  if (!plan.identity.tenantId || !plan.identity.accountId) {
+    throw refuse('is refused: the plan does not name the tenant and account it was made for');
+  }
+}
+
 /** Send the plan's requests in order; `{{n.id}}` takes the id request n returned. */
 async function sendRequests(client: GraphClient, plan: Plan): Promise<Record<string, unknown>> {
   const ids: (string | undefined)[] = [];
@@ -70,16 +92,18 @@ async function sendRequests(client: GraphClient, plan: Plan): Promise<Record<str
 export function registerApplyCommand(program: Command, getClient: () => GraphClient): void {
   program
     .command('apply <planFile>')
-    .description('Send exactly the requests of a plan written by --plan, after checking its digest, the profile ceiling, expiry, attachment bytes and token identity; If-Match is part of the plan (412 → exit 4 version_changed)')
+    .description('Send exactly the requests of a plan written by --plan, after checking its digest, the profile ceiling, expiry, attachment bytes and token identity; If-Match is part of the plan (412 → exit 4 version_changed). A calendar delete/cancel plan asks on a terminal; without one it is applied only under a type: host profile (the host approved the digest), otherwise exit 7')
     .requiredOption('--expect-digest <sha256>', 'The plan digest that was approved; any other plan is refused')
     .addOption(outputOption('json'))
     .action(handleErrors(async (file: string, opts) => {
       if (!/^[0-9a-f]{64}$/.test(opts.expectDigest)) throw usage('--expect-digest must be a sha256 in lowercase hex.');
       const plan = readPlan(file);
       const commands = checkPlan(plan, opts.expectDigest, program.opts().profile);
-      // A delete or cancel still asks on a terminal and is refused without one: OQ-8 (approval in the host) is open.
       const destructive = commands.filter(c => PLAN_CONFIRM[c]);
-      if (destructive.length) {
+      // A delete or cancel asks on a terminal (and previews under --dry-run); without one, only a host approval counts.
+      const hostApproval = destructive.length > 0 && !process.stdin.isTTY && !isDryRun();
+      if (hostApproval) assertHostApproval(plan, commands, program.opts().profile);
+      else if (destructive.length) {
         const field = (key: string): unknown => Reflect.get(Object(plan.payload), key);
         const notifies = field('notifies');
         await confirm(PLAN_CONFIRM[plan.command]
