@@ -1,16 +1,55 @@
+import { execFile } from 'child_process';
+import path from 'path';
 import { CliError, ExitCode } from './errors.js';
 import { decodeAccessToken } from './auth.js';
+import { childEnv } from './child-env.js';
 import { profileType, type Profile } from './profiles.js';
 
 /**
  * AH-2: the `external` token source. A host (Chief's broker, an MCP host) supplies the access token in
- * MS365_CLI_TOKEN; ms365 never caches it, never loads MSAL, and checks it before the first request.
- * Only the real process environment counts: src/load-env.ts drops values that came from a `.env` file.
+ * MS365_CLI_TOKEN, or names a helper in MS365_CLI_TOKEN_COMMAND that prints one; ms365 never caches it, never
+ * loads MSAL, and checks it before the first request. Only the real process environment counts: src/load-env.ts
+ * drops values that came from a `.env` file.
  */
 
-/** External mode: a token in MS365_CLI_TOKEN, or a `type: host` profile (which never falls back to the cache). */
+/** External mode: a token in MS365_CLI_TOKEN, a helper in MS365_CLI_TOKEN_COMMAND, or a `type: host` profile (which never falls back to the cache). */
 export function externalTokenMode(profile: Profile): boolean {
-  return !!process.env.MS365_CLI_TOKEN || profileType(profile) === 'host';
+  return !!process.env.MS365_CLI_TOKEN || !!process.env.MS365_CLI_TOKEN_COMMAND || profileType(profile) === 'host';
+}
+
+export const TOKEN_HELPER_TIMEOUT_MS = 30_000;
+
+/**
+ * Run the host's token helper (MS365_CLI_TOKEN_COMMAND): an absolute path to an executable, run with no arguments and
+ * no shell, 30 s at most, without any MS365_CLI_TOKEN* variable. Its trimmed stdout is the token; stderr is discarded
+ * (it never reaches an error message). A relative path, a failure, a timeout or empty output → exit 3 `token_helper_failed`.
+ */
+export function runTokenHelper(command: string, timeoutMs = TOKEN_HELPER_TIMEOUT_MS): Promise<string> {
+  const failed = (why: string) => authError(`The token helper MS365_CLI_TOKEN_COMMAND ${why}.`, 'token_helper_failed',
+    'fix the host\'s token helper: an absolute path to an executable that prints a Microsoft Graph access token');
+  if (!path.isAbsolute(command)) return Promise.reject(failed('is not an absolute path'));
+  return new Promise((resolve, reject) => {
+    execFile(command, [], { timeout: timeoutMs, env: childEnv(), encoding: 'utf8', maxBuffer: 1024 * 1024, windowsHide: true }, (err, stdout) => {
+      if (err) {
+        const why = err.killed ? `timed out after ${timeoutMs / 1000} s` : typeof err.code === 'number' ? `exited with code ${err.code}` : `could not run (${String(err.code ?? 'error')})`;
+        reject(failed(why));
+        return;
+      }
+      const token = stdout.trim();
+      if (token) resolve(token);
+      else reject(failed('printed no token'));
+    });
+  });
+}
+
+/** A JWT that expires within the 5-minute margin; false when it cannot be decoded or has no `exp`. */
+export function expiresSoon(token: string, now = Date.now()): boolean {
+  try {
+    const exp = decodeAccessToken(token).exp;
+    return typeof exp === 'number' && exp * 1000 - EXPIRY_MARGIN_MS <= now;
+  } catch {
+    return false;
+  }
 }
 
 /** Microsoft Graph's audience, as a URL (v1 tokens, with or without the slash) or the app ID (v2 tokens). */
@@ -40,8 +79,8 @@ const authError = (message: string, code: string, fix = FRESH_TOKEN) => new CliE
 export function requireExternalToken(profileName: string | null | undefined): string {
   const token = process.env.MS365_CLI_TOKEN;
   if (token) return token;
-  throw authError(`Host profile "${profileName ?? ''}" takes its token from the agent host, but MS365_CLI_TOKEN is not set.`, 'token_missing',
-    'the host sets MS365_CLI_TOKEN in this process\'s environment (ms365 never signs in under a host profile)');
+  throw authError(`Host profile "${profileName ?? ''}" takes its token from the agent host, but neither MS365_CLI_TOKEN nor MS365_CLI_TOKEN_COMMAND is set.`, 'token_missing',
+    'the host sets MS365_CLI_TOKEN (or MS365_CLI_TOKEN_COMMAND) in this process\'s environment (ms365 never signs in under a host profile)');
 }
 
 /**

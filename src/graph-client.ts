@@ -2,6 +2,7 @@ import { AuthManager, decodeAccessToken } from './auth.js';
 import logger from './logger.js';
 import { CliError, ExitCode } from './errors.js';
 import { recordAudit } from './audit.js';
+import { tokenRejectedError } from './external-token.js';
 import { dryRunTrace as trace, info, notePreview } from './utils.js';
 import { attachRefs, refMailbox, refResource, selectForRefs, withImmutableIds, type RefIdentity } from './refs.js';
 import { planning, recordRequest, usage } from './plan.js';
@@ -412,12 +413,14 @@ export class GraphClient {
             attempt--; // a token refresh is not a failed attempt
             continue;
           } catch (err) {
-            // A host-supplied token cannot be refreshed here: keep its token_rejected (never "ms365 auth login", AH-2).
-            if (err instanceof CliError && err.code === 'token_rejected') throw Object.assign(err, details);
+            // A host-supplied token: keep its own error (token_rejected, token_helper_failed, …; never "ms365 auth login", AH-2).
+            if (err instanceof CliError && this.auth.tokenSource() === 'external') throw Object.assign(err, details);
             throw new CliError(`Authentication failed. Run: ms365 auth login`,
               { ...details, code: 'auth_failed', exitCode: ExitCode.AUTH, fix: 'ms365 auth login' });
           }
         }
+        // The helper's fresh token was refused too: the host has to fix it (AH-2).
+        if (response.status === 401 && this.auth.tokenSource() === 'external') throw Object.assign(tokenRejectedError(), details);
         const error = graphError(response.status, errorMessage, details, { orgMode: this.orgMode });
         if (response.status >= 500 && !idempotent) error.maybeProcessed = true;
         throw error;

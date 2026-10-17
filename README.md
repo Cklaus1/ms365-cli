@@ -302,7 +302,7 @@ The reference below is generated from the live command tree (`ms365 describe --j
 |---|---|---|---|---|
 | `auth accounts` | List all cached accounts |  |  | offline |
 | `auth grant-scopes` | Add the scopes ms365 requests to its app registration and grant tenant-wide admin consent (uses the Azure CLI's admin sign-in; falls back to an admin-consent link) |  | `--link` | offline |
-| `auth login` | Login (device code flow by default) |  | `--browser` | not idempotent · User.Read |
+| `auth login` | Login (device code flow by default; --start/--wait relay the code through a host) |  | `--browser` `--start` `--wait <handle>` `--timeout <seconds>` `--hold <handle>` | not idempotent · User.Read |
 | `auth logout` | Log out and clear saved credentials |  |  | **destructive** · offline |
 | `auth profile delete` | Delete a saved profile | `<name>` |  | **destructive** · offline |
 | `auth profile list` | List saved profiles |  |  | offline |

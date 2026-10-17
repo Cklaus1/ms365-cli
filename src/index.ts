@@ -62,6 +62,7 @@ import logger from './logger.js';
 import { setDryRun, setQuiet } from './utils.js';
 import { setFields, setCursor } from './formatter.js';
 import { reportError, setErrorFormat, ExitCode, CliError } from './errors.js';
+import { readCallArgv } from './mcp-server.js';
 
 const program = new Command();
 
@@ -252,7 +253,15 @@ program.hook('preAction', async (_program, actionCommand) => {
   }
 });
 
-program.parseAsync(process.argv).catch((err) => {
-  logger.error(err instanceof Error ? err.message : String(err));
-  process.exit(reportError(err));
-});
+// AH-11(3): a call from `mcp serve` brings its arguments in a 0600 file, never on the command line.
+const mcpArgvFile = process.env.MS365_CLI_MCP === '1' ? process.env.MS365_CLI_MCP_ARGV : undefined;
+delete process.env.MS365_CLI_MCP_ARGV;
+Promise.resolve()
+  .then(() => {
+    if (mcpArgvFile) process.argv.splice(2, Infinity, ...readCallArgv(mcpArgvFile));
+    return program.parseAsync(process.argv);
+  })
+  .catch((err) => {
+    logger.error(err instanceof Error ? err.message : String(err));
+    process.exit(reportError(err));
+  });

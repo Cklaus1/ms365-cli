@@ -71,7 +71,7 @@ export function toCliError(err: unknown): CliError {
   const message = err instanceof Error ? err.message : String(err);
   if (AUTH_PATTERN.test(message)) {
     // A host-supplied token (AH-2) is renewed by the host, never by an ms365 sign-in.
-    const fix = process.env.MS365_CLI_TOKEN ? 'get a fresh token from the host (the agent host sets MS365_CLI_TOKEN)' : 'ms365 auth login';
+    const fix = process.env.MS365_CLI_TOKEN || process.env.MS365_CLI_TOKEN_COMMAND ? 'get a fresh token from the host (the agent host sets MS365_CLI_TOKEN)' : 'ms365 auth login';
     return new CliError(message, { code: 'auth_required', exitCode: ExitCode.AUTH, fix });
   }
   return new CliError(message);

@@ -4,11 +4,17 @@
  * process.exit and global state never touch the server.
  */
 import { spawn } from 'child_process';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import readline from 'readline';
 import type { Readable } from 'stream';
 import type { Command, Option } from 'commander';
 import { commandMeta } from './catalog.js';
 import { ceilingSurface } from './ceiling.js';
+import { cursorPath } from './commands/watch.js';
+import { expiresSoon, runTokenHelper } from './external-token.js';
+import { CliError, ExitCode } from './errors.js';
 
 export const PROTOCOL_VERSION = '2025-06-18';
 const SUPPORTED_VERSIONS = [PROTOCOL_VERSION, '2025-03-26', '2024-11-05'];
@@ -35,7 +41,7 @@ const WATCH_URI = 'ms365://watch/';
 const WATCH_MIME = 'application/x-ndjson';
 export const DEFAULT_WATCH_INTERVAL_MS = 60_000;
 const MAX_WATCH_BACKOFF_MS = 15 * 60_000;
-/** Changes kept per resource between reads; the oldest are dropped first. */
+/** Changes kept per resource between reads; the oldest are dropped first and counted in one leading `gap` line (AH-11(1)). */
 const WATCH_BUFFER_LIMIT = 1000;
 
 type JsonSchema = Record<string, unknown>;
@@ -127,7 +133,7 @@ function toolFor(cmd: Command, path: string): Tool {
   const kind = meta?.readOnly ? 'read' : meta?.destructive ? 'destructive' : 'write';
   const hints = [
     kind === 'read' ? 'Read-only.' : kind === 'destructive'
-      ? 'Destructive: deletes data and needs interactive confirmation, so over MCP it is refused; run it in a terminal.'
+      ? 'Destructive: it may delete data, and a delete needs interactive confirmation, so over MCP it is refused; run it in a terminal.'
       : 'Changes data.',
     meta && !meta.idempotent ? 'Not idempotent: repeating it repeats the action.' : '',
     meta?.scopes.length ? `Graph scopes: ${meta.scopes.join(', ')}.` : '',
@@ -221,26 +227,77 @@ export function buildArgv(tool: Tool, args: Record<string, unknown>, globals: st
 }
 
 /**
- * Spawn the CLI (`node [loader flags] <entry> ...argv`) with stdin closed, killed after 120 s.
- * MS365_CLI_MCP=1 tells the child it serves MCP (watch's `mcp-` cursor names, no stdin reads; X-6, X-15).
+ * Spawn the CLI (`node [loader flags] <entry>`) with stdin closed, killed after 120 s. The call's argv travels in a
+ * 0600 file named by MS365_CLI_MCP_ARGV, never on the child's command line, which other local users can read
+ * (AH-11(3): mail bodies, long values). MS365_CLI_MCP=1 tells the child it serves MCP (watch's `mcp-` cursor names,
+ * no stdin reads; X-6, X-15). `env` adds variables per call (the token from a parent-held helper, AH-2).
  */
-export function spawnRunner(entry: string = process.argv[1], timeoutMs = CALL_TIMEOUT_MS): Runner {
-  return (argv) => new Promise((resolve) => {
-    const child = spawn(process.execPath, [...process.execArgv, entry, ...argv], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, MS365_CLI_MCP: '1' },
+export function spawnRunner(entry: string = process.argv[1], timeoutMs = CALL_TIMEOUT_MS, env?: () => Promise<NodeJS.ProcessEnv>): Runner {
+  return async (argv) => {
+    let extra: NodeJS.ProcessEnv;
+    try {
+      extra = env ? await env() : {};
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err));
+      const fields = { code: Reflect.get(e, 'code') ?? 'error', exitCode: Reflect.get(e, 'exitCode') ?? 1, message: e.message, fix: Reflect.get(e, 'fix') };
+      return { exitCode: typeof fields.exitCode === 'number' ? fields.exitCode : 1, stdout: '', stderr: `${JSON.stringify({ error: fields })}\n` };
+    }
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ms365-mcp-'));
+    const argvFile = path.join(dir, 'argv.json');
+    fs.writeFileSync(argvFile, JSON.stringify(argv), { mode: 0o600 });
+    return new Promise((resolve) => {
+      const child = spawn(process.execPath, [...process.execArgv, entry], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, ...extra, MS365_CLI_MCP: '1', MS365_CLI_MCP_ARGV: argvFile },
+      });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.setEncoding('utf8').on('data', (d: string) => { stdout += d; });
+      child.stderr.setEncoding('utf8').on('data', (d: string) => { stderr += d; });
+      const timer = setTimeout(() => {
+        stderr += `\nTimed out after ${timeoutMs / 1000}s.`;
+        child.kill('SIGKILL');
+      }, timeoutMs);
+      const done = (result: RunResult) => {
+        clearTimeout(timer);
+        fs.rmSync(dir, { recursive: true, force: true });
+        resolve(result);
+      };
+      child.on('error', (err) => done({ exitCode: 1, stdout, stderr: `${stderr}${err.message}` }));
+      child.on('close', (code) => done({ exitCode: code ?? 1, stdout, stderr }));
     });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.setEncoding('utf8').on('data', (d: string) => { stdout += d; });
-    child.stderr.setEncoding('utf8').on('data', (d: string) => { stderr += d; });
-    const timer = setTimeout(() => {
-      stderr += `\nTimed out after ${timeoutMs / 1000}s.`;
-      child.kill('SIGKILL');
-    }, timeoutMs);
-    child.on('error', (err) => { clearTimeout(timer); resolve({ exitCode: 1, stdout, stderr: `${stderr}${err.message}` }); });
-    child.on('close', (code) => { clearTimeout(timer); resolve({ exitCode: code ?? 1, stdout, stderr }); });
-  });
+  };
+}
+
+/** The child's side of spawnRunner: read (and delete) the call's argv file; anything but a JSON string array exits 2. */
+export function readCallArgv(file: string): string[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    fs.rmSync(file, { force: true });
+  } catch (err) {
+    throw new CliError(`Cannot read the MCP call arguments ${file}: ${err instanceof Error ? err.message : String(err)}`, { code: 'usage', exitCode: ExitCode.USAGE });
+  }
+  if (!Array.isArray(parsed) || !parsed.every(a => typeof a === 'string')) {
+    throw new CliError(`The MCP call arguments ${file} are not a list of strings.`, { code: 'usage', exitCode: ExitCode.USAGE });
+  }
+  return parsed;
+}
+
+/**
+ * `mcp serve` with MS365_CLI_TOKEN_COMMAND: the server runs the helper (cached until `exp − 5 min`; an opaque token
+ * until a call fails) and hands the token to each call in MS365_CLI_TOKEN, so N calls do not run it N times (AH-2).
+ * A child that gets a 401 still re-runs the helper itself once.
+ */
+export function helperTokenEnv(command: string): () => Promise<NodeJS.ProcessEnv> {
+  let token: Promise<string> | null = null;
+  return async () => {
+    if (!token || expiresSoon(await token)) {
+      token = runTokenHelper(command);
+      token.catch(() => { token = null; });
+    }
+    return { MS365_CLI_TOKEN: await token };
+  };
 }
 
 function errorText(stderr: string): string {
@@ -270,6 +327,8 @@ export interface ServeOptions {
   watchIntervalMs?: number;
   /** Server diagnostics (default: stderr). */
   log?: (line: string) => void;
+  /** Whether the `mcp-<resource>` watch cursor exists (default: its file in the config dir). */
+  hasCursor?: (name: string) => boolean;
 }
 
 /** Per-session server state handed to every request. */
@@ -287,16 +346,20 @@ interface Subscription { timer?: ReturnType<typeof setTimeout>; delayMs: number;
 /**
  * `watch` as subscribable resources (X-8): each subscription runs one `watch <r> --name mcp-<r>` pass
  * now and then every interval, buffers the NDJSON it prints and sends `notifications/resources/updated`.
- * The first successful pass of a session uses --reset, so a session never replays old changes (F10).
+ * A pass resumes from the `mcp-<r>` cursor, so changes made while the server was down are delivered (AH-11(2));
+ * only without one does it use --reset, and its first lines are then a `gap` with reason `no_checkpoint`.
  * A failed pass is logged and retried at twice the delay (at most 15 min); it is never a tool error.
  */
 class WatchPoller {
   private subs = new Map<string, Subscription>();
   private buffers = new Map<string, string[]>();
+  /** Lines dropped from each buffer since its last read (AH-11(1)). */
+  private dropped = new Map<string, number>();
   private baselined = new Set<string>();
   private closed = false;
   private readonly intervalMs: number;
   private readonly log: (line: string) => void;
+  private readonly hasCursor: (name: string) => boolean;
 
   /** The watch resources the `watch` tool's enum allows (narrowed by a profile ceiling). */
   private readonly resources: WatchResource[];
@@ -304,6 +367,7 @@ class WatchPoller {
   constructor(private opts: ServeOptions, private notify: (msg: object) => void) {
     this.intervalMs = opts.watchIntervalMs ?? DEFAULT_WATCH_INTERVAL_MS;
     this.log = opts.log ?? ((line) => process.stderr.write(`${line}\n`));
+    this.hasCursor = opts.hasCursor ?? ((name) => fs.existsSync(cursorPath(name)));
     const allowed = opts.tools.find(t => t.name === 'watch')?.inputSchema.properties.resource?.enum as string[] | undefined;
     this.resources = WATCH_RESOURCES.filter(r => !allowed || allowed.includes(r));
   }
@@ -334,8 +398,10 @@ class WatchPoller {
 
   read(uri: unknown) {
     const r = this.resource(uri);
-    const lines = this.buffers.get(r) ?? [];
+    const dropped = this.dropped.get(r);
+    const lines = [...(dropped ? [JSON.stringify({ type: 'gap', resource: r, reason: 'buffer_overflow', dropped })] : []), ...this.buffers.get(r) ?? []];
     this.buffers.delete(r);
+    this.dropped.delete(r);
     return { contents: [{ uri: `${WATCH_URI}${r}`, mimeType: WATCH_MIME, text: lines.map(l => `${l}\n`).join('') }] };
   }
 
@@ -351,7 +417,7 @@ class WatchPoller {
   }
 
   private async pass(r: WatchResource, sub: Subscription): Promise<void> {
-    const reset = !this.baselined.has(r);
+    const reset = !this.baselined.has(r) && !this.hasCursor(`mcp-${r}`);
     const argv = [...callGlobals(this.opts), 'watch', `--name=mcp-${r}`, ...(reset ? ['--reset'] : []), '--', r];
     const res = await this.opts.runner(argv).catch((err: Error): RunResult => ({ exitCode: 1, stdout: '', stderr: err.message }));
     if (sub.stopped || this.closed) return;
@@ -359,9 +425,12 @@ class WatchPoller {
       this.baselined.add(r);
       sub.delayMs = this.intervalMs;
       const lines = res.stdout.split('\n').filter(l => l.trim());
+      if (reset) lines.unshift(JSON.stringify({ type: 'gap', resource: r, reason: 'no_checkpoint' }));
       if (lines.length) {
         const buf = [...(this.buffers.get(r) ?? []), ...lines];
-        this.buffers.set(r, buf.slice(-WATCH_BUFFER_LIMIT));
+        const over = buf.length - WATCH_BUFFER_LIMIT;
+        if (over > 0) this.dropped.set(r, (this.dropped.get(r) ?? 0) + over);
+        this.buffers.set(r, over > 0 ? buf.slice(over) : buf);
         this.notify({ method: 'notifications/resources/updated', params: { uri: `${WATCH_URI}${r}` } });
       }
     } else {

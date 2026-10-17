@@ -4,7 +4,7 @@ import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
 import { CliError, ExitCode } from './errors.js';
-import { checkExternalToken, requireExternalToken, tokenRejectedError } from './external-token.js';
+import { checkExternalToken, expiresSoon, requireExternalToken, runTokenHelper, tokenRejectedError } from './external-token.js';
 import {
   cacheAccounts, cachedStore, createFileStore, ensurePrivateMode, itemKey, migrateFileToItems, migrateItemsToFile,
   MigrationVerifyError, SplitTokenCache, TOKEN_CACHE_KEY,
@@ -659,6 +659,8 @@ function needsInteraction(err: unknown): boolean {
 export interface LoginOptions {
   /** Sign in with the system browser (auth code + PKCE, loopback redirect) instead of device code. */
   openBrowser?: (url: string) => Promise<void>;
+  /** Device code: receive the code instead of printing it (AH-8(5): the `auth login --start` relay writes it to its handle file). */
+  onDeviceCode?: (code: { userCode: string; verificationUri: string; expiresIn: number; message: string }) => void;
 }
 
 export class AuthManager {
@@ -677,12 +679,14 @@ export class AuthManager {
   private readonly host: boolean;
   /** The pinned tenant (profile, else MS365_CLI_TENANT_ID), compared with an external token's `tid`. */
   private readonly pinnedTenant: string | undefined;
+  /** External mode: the token in use (MS365_CLI_TOKEN, or the helper's latest), shared by concurrent requests. */
+  private externalToken: Promise<string> | null = null;
 
   /** @param scopes scopes requested (and consented) at login */
   constructor(scopes: string[], options: AuthManagerOptions = {}) {
     this.scopes = scopes;
     this.host = !!options.host;
-    this.source = options.source ?? (process.env.MS365_CLI_TOKEN || this.host ? 'external' : 'msal');
+    this.source = options.source ?? (process.env.MS365_CLI_TOKEN || process.env.MS365_CLI_TOKEN_COMMAND || this.host ? 'external' : 'msal');
     this.profileName = options.profileName ?? null;
     // An az-backed manager has no cached accounts to pick from; an external one checks the token against it.
     this.accountOverride = this.source === 'az' ? null : options.account || null;
@@ -747,11 +751,23 @@ export class AuthManager {
   }
 
   async getToken(forceRefresh = false): Promise<string> {
-    // AH-2: a supplied token is checked on every use (a long run can outlive it) and never refreshed: a 401 asks for
-    // a fresh one (forceRefresh comes only from GraphClient's 401 retry; cache-touching auth commands refuse earlier).
+    // AH-2: a supplied token is checked on every use (a long run can outlive it). With a helper
+    // (MS365_CLI_TOKEN_COMMAND) it is re-run before `exp − 5 min` and once after a 401 (forceRefresh comes only from
+    // GraphClient's single 401 retry); without one a 401 asks the host for a fresh token. Under `mcp serve` the parent
+    // runs the helper and hands the token over in MS365_CLI_TOKEN, so a call starts without running it.
     if (this.source === 'external') {
-      if (forceRefresh) throw tokenRejectedError();
-      const token = requireExternalToken(this.profileName);
+      const helper = process.env.MS365_CLI_TOKEN_COMMAND;
+      if (forceRefresh && !helper) throw tokenRejectedError();
+      let pending = forceRefresh ? null : this.externalToken;
+      const current = pending ? await pending : null;
+      if (!current || (helper && expiresSoon(current))) {
+        const supplied = this.externalToken || forceRefresh ? undefined : process.env.MS365_CLI_TOKEN;
+        pending = supplied && !(helper && expiresSoon(supplied)) ? Promise.resolve(supplied)
+          : helper ? runTokenHelper(helper) : Promise.resolve(requireExternalToken(this.profileName));
+        this.externalToken = pending;
+        pending.catch(() => { if (this.externalToken === pending) this.externalToken = null; });
+      }
+      const token = await pending!;
       checkExternalToken(token, { host: this.host, tenantId: this.pinnedTenant, account: this.accountOverride ?? undefined, profileName: this.profileName });
       return token;
     }
@@ -898,7 +914,7 @@ export class AuthManager {
         successTemplate: LOGIN_SUCCESS_HTML,
         errorTemplate: LOGIN_ERROR_HTML,
       })
-      : await this.deviceCodeLogin();
+      : await this.deviceCodeLogin(options.onDeviceCode);
 
     if (!response?.accessToken) {
       throw new CliError('Login did not return an access token.', { code: 'login_failed', exitCode: ExitCode.AUTH });
@@ -914,10 +930,11 @@ export class AuthManager {
     return this.accessToken;
   }
 
-  private async deviceCodeLogin() {
+  private async deviceCodeLogin(onDeviceCode: LoginOptions['onDeviceCode']) {
     const response = await (await this.app()).acquireTokenByDeviceCode({
       scopes: this.scopes,
       deviceCodeCallback: (resp) => {
+        if (onDeviceCode) return onDeviceCode(resp);
         // Write to stderr AND a file in user config dir so device code is always visible
         process.stderr.write('\n' + resp.message + '\n\n');
         try {

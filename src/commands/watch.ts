@@ -125,7 +125,8 @@ function cursorName(resource: Resource, opts: Record<string, string | boolean | 
   return process.env.MS365_CLI_MCP === '1' ? `mcp-${base}` : base;
 }
 
-const cursorPath = (name: string) => path.join(configDir(), 'watch', `${name}.json`);
+/** A named watch cursor's file (also read by `mcp serve` to resume its `mcp-` cursors, AH-11(2)). */
+export const cursorPath = (name: string) => path.join(configDir(), 'watch', `${name}.json`);
 
 function readCursor(file: string, feed: Feed): Cursor | undefined {
   let raw: string;

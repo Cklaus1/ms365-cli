@@ -117,7 +117,7 @@ export async function runCommand(register: Register, argv: string[], opts: RunOp
 
   setExitHandler((c) => { exitCode = c; });
   setDryRun(!!opts.dryRun);
-  const auth = { getToken: async () => opts.token ?? 'test-token' };
+  const auth = { getToken: async () => opts.token ?? 'test-token', tokenSource: () => 'msal' };
   const client = new GraphClient(() => auth as never, !!opts.dryRun, opts.apiVersion ?? 'v1.0', !!opts.readOnly, { clientId: opts.clientId, refs: opts.refs });
   const program = new Command().name('ms365').exitOverride();
   program.configureOutput({ writeOut: (s) => { stdout += s; }, writeErr: (s) => { stderr += s; } });
