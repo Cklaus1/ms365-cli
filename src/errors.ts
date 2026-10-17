@@ -109,6 +109,10 @@ let exitHandler: (code: number) => void | Promise<void> = drainAndExit;
 export function setExitHandler(fn: (code: number) => void | Promise<void>): void { exitHandler = fn; }
 export function resetExitHandler(): void { exitHandler = drainAndExit; }
 
+/** Runs once after a successful action, before its exit (AH-5: `--plan` writes the plan file here). */
+let afterSuccess: (() => Promise<void>) | null = null;
+export function setAfterSuccess(fn: (() => Promise<void>) | null): void { afterSuccess = fn; }
+
 /**
  * Wraps an async command action with consistent error handling and a
  * deterministic exit code (see ExitCode).
@@ -121,6 +125,7 @@ export function handleErrors(fn: (...args: any[]) => Promise<void>): (...args: a
     resetPreviewCount();
     try {
       await fn(...args);
+      if (afterSuccess) await afterSuccess();
       const preset = Number(process.exitCode ?? 0);
       code = Number.isFinite(preset) ? preset : ExitCode.GENERIC;
       // One trailer replaces every success() line a dry run suppressed (F2); --quiet drops it, not the trace.

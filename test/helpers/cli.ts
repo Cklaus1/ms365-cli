@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import { GraphClient } from '../../src/graph-client.js';
 import { setExitHandler, resetExitHandler } from '../../src/errors.js';
 import { setDryRun } from '../../src/utils.js';
+import { beginPlan, endPlan } from '../../src/plan.js';
 
 export interface RecordedCall {
   method: string;
@@ -41,6 +42,8 @@ export interface RunOptions {
   refs?: boolean;
   /** The access token the stub auth returns; default the opaque 'test-token'. */
   token?: string;
+  /** Run as `--plan <file>` (AH-5): what index.ts preAction does for the command path given. */
+  plan?: { file: string; command: string; ttl?: number };
 }
 
 type Register = (program: Command, getClient: () => GraphClient) => void;
@@ -120,6 +123,7 @@ export async function runCommand(register: Register, argv: string[], opts: RunOp
   program.configureOutput({ writeOut: (s) => { stdout += s; }, writeErr: (s) => { stderr += s; } });
   register(program, () => client);
 
+  if (opts.plan) beginPlan({ file: opts.plan.file, command: opts.plan.command, ttlMinutes: opts.plan.ttl ?? 15, profile: null, client: () => client });
   try {
     await program.parseAsync(['node', 'ms365', ...argv]);
   } catch (err) {
@@ -128,6 +132,7 @@ export async function runCommand(register: Register, argv: string[], opts: RunOp
     else throw err;
   } finally {
     resetExitHandler();
+    endPlan();
     setDryRun(false);
     spies.forEach(s => s.mockRestore());
     readlineMock?.mockRestore();

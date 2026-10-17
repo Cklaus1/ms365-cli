@@ -192,7 +192,7 @@ exports[`dry-run endpoint snapshot (every command) > calendar decline 1`] = `
 
 exports[`dry-run endpoint snapshot (every command) > calendar delete [optional flags] 1`] = `
 {
-  "argv": "calendar delete EVENTID --calendar 2026-10-20T10:00",
+  "argv": "calendar delete EVENTID --calendar 2026-10-20T10:00 --if-match x",
   "error": "",
   "exitCode": 0,
   "requests": [
@@ -390,7 +390,7 @@ exports[`dry-run endpoint snapshot (every command) > calendar tentative 1`] = `
 
 exports[`dry-run endpoint snapshot (every command) > calendar update [optional flags] 1`] = `
 {
-  "argv": "calendar update EVENTID --subject x --start 2026-10-20T10:00 --end 2026-10-20T10:00 --timezone America/Los_Angeles --body x --location x --calendar 2026-10-20T10:00 --output json",
+  "argv": "calendar update EVENTID --subject x --start 2026-10-20T10:00 --end 2026-10-20T10:00 --timezone America/Los_Angeles --body x --location x --calendar 2026-10-20T10:00 --if-match x --output json",
   "error": "",
   "exitCode": 0,
   "requests": [
@@ -1652,7 +1652,7 @@ exports[`dry-run endpoint snapshot (every command) > mail download-attachment 1`
 
 exports[`dry-run endpoint snapshot (every command) > mail draft [optional flags] 1`] = `
 {
-  "argv": "mail draft --to a@contoso.com --subject x --body x --cc a@contoso.com --attach <tmp>/sample.txt --output json",
+  "argv": "mail draft --to a@contoso.com --subject x --body x --cc a@contoso.com --bcc a@contoso.com --attach <tmp>/sample.txt --output json",
   "error": "",
   "exitCode": 0,
   "requests": [
@@ -2096,11 +2096,11 @@ exports[`dry-run endpoint snapshot (every command) > mail unflag 1`] = `
 
 exports[`dry-run endpoint snapshot (every command) > mail update-draft [optional flags] 1`] = `
 {
-  "argv": "mail update-draft MESSAGEID --to a@contoso.com --cc a@contoso.com --subject x --body x --output json",
+  "argv": "mail update-draft MESSAGEID --to a@contoso.com --cc a@contoso.com --bcc a@contoso.com --subject x --body x --if-match x --output json",
   "error": "",
   "exitCode": 0,
   "requests": [
-    "[dry-run] GET https://graph.microsoft.com/v1.0/me/messages/MESSAGEID?$select=isDraft",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/messages/MESSAGEID?$select=isDraft%2CchangeKey",
     "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/messages/MESSAGEID",
   ],
 }
@@ -2112,7 +2112,7 @@ exports[`dry-run endpoint snapshot (every command) > mail update-draft 1`] = `
   "error": "",
   "exitCode": 0,
   "requests": [
-    "[dry-run] GET https://graph.microsoft.com/v1.0/me/messages/MESSAGEID?$select=isDraft",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/messages/MESSAGEID?$select=isDraft%2CchangeKey",
     "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/messages/MESSAGEID",
   ],
 }
@@ -2373,7 +2373,7 @@ exports[`dry-run endpoint snapshot (every command) > notes update [optional flag
 exports[`dry-run endpoint snapshot (every command) > notes update 1`] = `
 {
   "argv": "notes update ID",
-  "error": "Error: Nothing to update (fix: Pass --body and/or --subject)",
+  "error": "Error: Nothing to update (fix: Pass --body (or --body-file) and/or --subject)",
   "exitCode": 2,
   "requests": [],
 }

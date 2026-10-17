@@ -1,4 +1,4 @@
-import crypto from 'crypto';
+import { canonicalJson, planning, sha256Hex } from './plan.js';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -46,17 +46,9 @@ export function isDryRun(client: GraphClient): boolean {
   return client.isDryRun();
 }
 
-function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.keys(value).sort().map(k => [k, canonical((value as Record<string, unknown>)[k])]));
-  }
-  return value;
-}
-
 /** sha256 of the request body with object keys sorted, so equal requests always match. */
 export function fingerprint(body: unknown): string {
-  return crypto.createHash('sha256').update(JSON.stringify(canonical(body))).digest('hex');
+  return sha256Hex(canonicalJson(body));
 }
 
 function readLedger(): Entry[] {
@@ -194,7 +186,7 @@ export const IDEMPOTENCY_HELP = 'Retry-safe: if this key was used for the same r
 export async function idempotentSend(
   client: GraphClient, key: string | undefined, command: string, request: unknown, send: () => Promise<void>,
 ): Promise<boolean> {
-  if (!key || isDryRun(client)) {
+  if (!key || isDryRun(client) || planning()) {
     await send();
     return true;
   }

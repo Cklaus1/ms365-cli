@@ -3,12 +3,15 @@ import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import {
   addListOptions, outputOption, confirm, info, success, validateEmail, resolveTimeZone, preferTimeZone, parseTime, parseGraphDateTime, toIsoWithOffset, fromGet,
+  addBodyOptions, bodyText,
 } from '../utils.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { fingerprint, isDryRun, withIdempotency } from '../idempotency.js';
+import { ifMatchFor, readVersion } from '../plan.js';
 
 const TZ_HELP = 'IANA time zone (default: MS365_CLI_TIMEZONE or the local zone)';
 const TIME_HELP = 'ISO 8601 or natural ("tomorrow 15:00", "next mon 9:30", "+2h")';
+const IF_MATCH_HELP = 'Only change the event if it is unchanged: an @odata.etag, or "auto" to read it first (412 → exit 4 version_changed)';
 
 /** A CLI time expression as a Graph dateTimeTimeZone in `tz`. */
 function graphTime(input: string, tz: string): { dateTime: string; timeZone: string } {
@@ -130,14 +133,13 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  cal
+  addBodyOptions(cal
     .command('create')
     .description('Create a calendar event')
     .requiredOption('--subject <subject>', 'Event subject')
     .requiredOption('--start <datetime>', `Start: ${TIME_HELP}`)
     .requiredOption('--end <datetime>', `End: ${TIME_HELP}`)
-    .option('--timezone <tz>', TZ_HELP)
-    .option('--body <body>', 'Event body/description')
+    .option('--timezone <tz>', TZ_HELP), 'Event body/description')
     .option('--location <location>', 'Event location')
     .option('--attendees <emails>', 'Comma-separated attendee emails')
     .option('--calendar <calendarId>', 'Calendar ID')
@@ -153,8 +155,9 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
         end: graphTime(opts.end, tz),
       };
 
-      if (opts.body) {
-        event.body = { contentType: opts.html ? 'HTML' : 'Text', content: opts.body };
+      const body = bodyText(opts);
+      if (body) {
+        event.body = { contentType: opts.html ? 'HTML' : 'Text', content: body };
       }
       if (opts.location) {
         event.location = { displayName: opts.location };
@@ -197,16 +200,16 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
       console.log(formatOutput(outcome.status === 'replay' ? outcome.result : created, opts.output as OutputFormat));
     }));
 
-  cal
+  addBodyOptions(cal
     .command('update <eventId>')
     .description('Update a calendar event')
     .option('--subject <subject>', 'Event subject')
     .option('--start <datetime>', `Start: ${TIME_HELP}`)
     .option('--end <datetime>', `End: ${TIME_HELP}`)
-    .option('--timezone <tz>', 'IANA time zone for --start/--end (default: the event\'s own zone)')
-    .option('--body <body>', 'Event body')
+    .option('--timezone <tz>', 'IANA time zone for --start/--end (default: the event\'s own zone)'), 'Event body')
     .option('--location <location>', 'Event location')
     .option('--calendar <calendarId>', 'Specific calendar ID')
+    .option('--if-match <etag>', IF_MATCH_HELP)
     .addOption(outputOption())
     .action(handleErrors(async (eventId: string, opts) => {
       const client = getClient();
@@ -234,12 +237,15 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
         if (opts.start) patch.start = toGraph(opts.start);
         if (opts.end) patch.end = toGraph(opts.end);
       }
-      if (opts.body) patch.body = { contentType: 'Text', content: opts.body };
+      const body = bodyText(opts);
+      if (body) patch.body = { contentType: 'Text', content: body };
       if (opts.location) patch.location = { displayName: opts.location };
 
+      const ifMatch = await ifMatchFor(opts.ifMatch, async () => (await readVersion(client, endpoint, '')).version);
       const response = await client.request(endpoint, {
         method: 'PATCH',
         body: JSON.stringify(patch),
+        ...(ifMatch && { headers: { 'If-Match': ifMatch } }),
       });
 
       console.log(formatOutput(response.data, opts.output as OutputFormat));
@@ -249,6 +255,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     .command('delete <eventId>')
     .description('Delete a calendar event')
     .option('--calendar <calendarId>', 'Specific calendar ID')
+    .option('--if-match <etag>', IF_MATCH_HELP)
     .action(handleErrors(async (eventId: string, opts) => {
       if (!await confirm(`Delete event ${eventId.substring(0, 16)}...?`)) return;
       const client = getClient();
@@ -256,7 +263,8 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
         ? `/me/calendars/${encodeURIComponent(opts.calendar)}/events/${encodeURIComponent(eventId)}`
         : `/me/events/${encodeURIComponent(eventId)}`;
 
-      await client.request(endpoint, { method: 'DELETE' });
+      const ifMatch = await ifMatchFor(opts.ifMatch, async () => (await readVersion(client, endpoint, '')).version);
+      await client.request(endpoint, { method: 'DELETE', ...(ifMatch && { headers: { 'If-Match': ifMatch } }) });
       success('Event deleted.');
     }));
 

@@ -28,6 +28,7 @@ import { registerReportsCommands } from '../src/commands/reports.js';
 import { registerAuditTrailCommands } from '../src/commands/audit-trail.js';
 import { registerWatchCommands } from '../src/commands/watch.js';
 import { registerHealthCommand } from '../src/commands/health.js';
+import { registerApplyCommand } from '../src/commands/apply.js';
 import { registerAuditCommands } from '../src/commands/audit.js';
 import { registerIdempotencyCommands } from '../src/commands/idempotency.js';
 import { registerDescribeCommand } from '../src/commands/describe.js';
@@ -66,6 +67,7 @@ const MODULES: Module[] = [
   { file: 'audit-trail.ts', register: (p, g) => registerAuditTrailCommands(p, g) },
   { file: 'watch.ts', register: (p, g) => registerWatchCommands(p, g) },
   { file: 'health.ts', register: (p, g) => registerHealthCommand(p, g) },
+  { file: 'apply.ts', register: (p, g) => registerApplyCommand(p, g) },
   { file: 'audit.ts', register: (p) => registerAuditCommands(p) },
   { file: 'idempotency.ts', register: (p) => registerIdempotencyCommands(p) },
   { file: 'describe.ts', register: (p) => registerDescribeCommand(p) },

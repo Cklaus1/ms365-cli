@@ -9,7 +9,7 @@
 - [x] AHT-6a offline conformance pack (smoke host-mode checks, dist sha256)
 
 ## Tier G3
-- [ ] AHT-7 plan/apply core, If-Match, `--bcc`, `--body-file`, sha256 attachments
+- [x] AHT-7 plan/apply core, If-Match, `--bcc`, `--body-file`, sha256 attachments
 - [ ] AHT-8 honest send, correlation, `outcome_unknown`, `mail reconcile`
 - [ ] AHT-9 calendar plans: series/type checks, `instances`, `cancel`, `notifies`/`scope` (TTY part)
 - [ ] AHT-10 MCP buffer gap / resume / body via file; `MS365_CLI_TOKEN_COMMAND`; `auth login --start/--wait`

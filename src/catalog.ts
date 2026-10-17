@@ -73,6 +73,7 @@ const GROUP_SCOPES: Record<string, { read: string[]; write: string[] }> = {
   'audit-trail': { read: ['AuditLog.Read.All'], write: [] },
   watch: { read: [], write: [] },
   health: { read: ['User.Read'], write: [] },
+  apply: { read: [], write: [] },
   audit: { read: [], write: [] },
   idempotency: { read: [], write: [] },
 };
@@ -318,6 +319,8 @@ const COMMANDS: Record<string, Entry> = {
   watch: ['read', { arg: 0, map: { mail: ['Mail.Read'], events: ['Calendars.Read'], files: ['Files.Read'], contacts: ['Contacts.Read'] } }],
   // GET /me plus one read per resource; a resource outside the ceiling is reported UNSUPPORTED, not probed (E12).
   health: ['read', ['User.Read']],
+  // AH-5: apply checks the ceiling for the plan's own command; it uses no scope itself.
+  apply: 'action',
 
   'audit tail': 'read',
   'excel tables': 'read',

@@ -4,6 +4,7 @@ import { CliError, ExitCode } from './errors.js';
 import { recordAudit } from './audit.js';
 import { dryRunTrace as trace, info, notePreview } from './utils.js';
 import { attachRefs, refMailbox, refResource, selectForRefs, withImmutableIds, type RefIdentity } from './refs.js';
+import { planning, recordRequest, usage } from './plan.js';
 
 /** Retries after the first attempt unless MS365_CLI_MAX_RETRIES says otherwise (3 attempts, as before AH-8(6)). */
 const DEFAULT_RETRIES = 2;
@@ -223,9 +224,9 @@ export class GraphClient {
     return this.dryRun;
   }
 
-  /** True when `res` is a dry-run placeholder, not a Graph answer. */
+  /** True when `res` is a dry-run or `--plan` placeholder, not a Graph answer. */
   isPreview(res: { status: number }): boolean {
-    return this.dryRun && res.status === 0;
+    return res.status === 0 && (this.dryRun || planning());
   }
 
   buildUrl(endpoint: string, queryParams?: Record<string, string>): string {
@@ -298,6 +299,13 @@ export class GraphClient {
 
     if (this.readOnly && method !== 'GET') {
       throw new CliError(`Read-only mode: ${method} requests are blocked. Remove --read-only to proceed.`, { code: 'read_only', exitCode: ExitCode.PERMISSION });
+    }
+
+    // AH-5 --plan: a write is recorded with its exact headers and body, not sent; reads still go to Graph.
+    if (method !== 'GET' && planning()) {
+      if (options.body !== undefined && typeof options.body !== 'string') throw usage('A plan cannot hold a binary request body.');
+      const planPath = url.startsWith(this.baseUrl) ? url.slice(this.baseUrl.length) : url;
+      return { data: recordRequest({ method, path: planPath, headers: requestHeaders ?? {}, body: options.body ?? null }), status: 0 };
     }
 
     if (this.dryRun) {
@@ -540,6 +548,7 @@ export class GraphClient {
     if (this.readOnly) {
       throw new CliError('Read-only mode: file uploads are blocked. Remove --read-only to proceed.', { code: 'read_only', exitCode: ExitCode.PERMISSION });
     }
+    if (planning()) throw usage('A plan holds inline attachments only (3 MB in total); an upload session cannot be planned.');
     // Chunks must be a multiple of 320 KiB; 10 MiB = 32 × 320 KiB.
     const chunkSize = options.chunkSize ?? 10 * 1024 * 1024;
     const url = this.buildUrl(sessionEndpoint);
@@ -916,6 +925,11 @@ export function graphError(
   }
   if (status === 404) {
     return new CliError(`Graph API error (404): ${message}`, { ...d, code: 'not_found', exitCode: ExitCode.NOT_FOUND });
+  }
+  if (status === 412) {
+    // AH-5: the target changed since its version was read (If-Match); never retried.
+    return new CliError(`The item changed since it was read (412): ${message}`,
+      { ...d, code: 'version_changed', exitCode: ExitCode.PERMISSION, fix: 'read the item again and make a new plan' });
   }
   if (status === 429) {
     return new CliError(`Graph API error (429): ${message}`, { ...d, code: 'throttled', exitCode: ExitCode.THROTTLED });

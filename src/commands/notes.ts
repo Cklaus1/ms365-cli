@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
-import { addListOptions, outputOption, confirm, success } from '../utils.js';
+import { addListOptions, outputOption, confirm, success, addBodyOptions, bodyText } from '../utils.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 
 /**
@@ -35,33 +35,33 @@ export function registerNotesCommands(program: Command, getClient: () => GraphCl
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  notes
+  addBodyOptions(notes
     .command('create')
-    .description('Create a note')
-    .requiredOption('--body <text>', 'Note text')
+    .description('Create a note'), 'Note text', true, 'text')
     .option('--subject <subject>', 'Note subject')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
+      const content = bodyText(opts) ?? '';
       const client = getClient();
       const note: Record<string, unknown> = {};
       if (opts.subject) note.subject = opts.subject;
-      note.body = { contentType: 'text', content: opts.body };
+      note.body = { contentType: 'text', content };
       const response = await client.request('/me/notes', { method: 'POST', body: JSON.stringify(note) });
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  notes
+  addBodyOptions(notes
     .command('update <id>')
-    .description('Update a note')
-    .option('--body <text>', 'New note text')
+    .description('Update a note'), 'New note text', false, 'text')
     .option('--subject <subject>', 'New subject')
     .addOption(outputOption())
     .action(handleErrors(async (id: string, opts) => {
       const patch: Record<string, unknown> = {};
       if (opts.subject !== undefined) patch.subject = opts.subject;
-      if (opts.body !== undefined) patch.body = { contentType: 'text', content: opts.body };
+      const body = bodyText(opts);
+      if (body !== undefined) patch.body = { contentType: 'text', content: body };
       if (Object.keys(patch).length === 0) {
-        throw new CliError('Nothing to update', { code: 'usage', exitCode: ExitCode.USAGE, fix: 'Pass --body and/or --subject' });
+        throw new CliError('Nothing to update', { code: 'usage', exitCode: ExitCode.USAGE, fix: 'Pass --body (or --body-file) and/or --subject' });
       }
       const client = getClient();
       const response = await client.request(notePath(id), { method: 'PATCH', body: JSON.stringify(patch) });

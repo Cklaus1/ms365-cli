@@ -2,7 +2,7 @@ import { Command, Option } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { handleErrors } from '../errors.js';
-import { addListOptions, outputOption, confirm, success, parseTime } from '../utils.js';
+import { addListOptions, outputOption, confirm, success, parseTime, addBodyOptions, bodyText } from '../utils.js';
 import { resolve } from '../resolve.js';
 
 const IMPORTANCE = ['low', 'normal', 'high'];
@@ -59,12 +59,11 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  todo
+  addBodyOptions(todo
     .command('create')
     .argument('<listId>', 'To Do list ID or name')
     .description('Create a task')
-    .requiredOption('--title <title>', 'Task title')
-    .option('--body <body>', 'Task body/notes')
+    .requiredOption('--title <title>', 'Task title'), 'Task body/notes')
     .option('--due <date>', 'Due date (YYYY-MM-DD, "tomorrow", "next fri", "+3d")')
     .option('--timezone <tz>', 'IANA time zone for --due (default: MS365_CLI_TIMEZONE or local)')
     .addOption(new Option('--importance <level>', 'Importance').choices(IMPORTANCE).default('normal'))
@@ -75,8 +74,9 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
         title: opts.title,
         importance: opts.importance,
       };
-      if (opts.body) {
-        task.body = { contentType: 'text', content: opts.body };
+      const body = bodyText(opts);
+      if (body) {
+        task.body = { contentType: 'text', content: body };
       }
       if (opts.due) {
         task.dueDateTime = todoDue(opts.due, opts.timezone);
@@ -90,13 +90,12 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  todo
+  addBodyOptions(todo
     .command('update')
     .argument('<listId>', 'To Do list ID or name')
     .argument('<taskId>', 'Task ID')
     .description('Update a task')
-    .option('--title <title>', 'Task title')
-    .option('--body <body>', 'Task body')
+    .option('--title <title>', 'Task title'), 'Task body')
     .addOption(new Option('--status <status>', 'Status').choices(STATUS))
     .addOption(new Option('--importance <level>', 'Importance').choices(IMPORTANCE))
     .option('--due <date>', 'Due date (YYYY-MM-DD, "tomorrow", "next fri", "+3d")')
@@ -108,7 +107,8 @@ export function registerTodoCommands(program: Command, getClient: () => GraphCli
       if (opts.title) patch.title = opts.title;
       if (opts.status) patch.status = opts.status;
       if (opts.importance) patch.importance = opts.importance;
-      if (opts.body) patch.body = { contentType: 'text', content: opts.body };
+      const body = bodyText(opts);
+      if (body) patch.body = { contentType: 'text', content: body };
       if (opts.due) patch.dueDateTime = todoDue(opts.due, opts.timezone);
 
       const listId = await resolve(client, 'todo-list', listArg);
