@@ -286,3 +286,18 @@ Adversarial review (build-loop Step 1), dev-loop design review and Step 2 classi
 **Cross-spec contract (with `<chief>/tasks/microsoft-connector-spec.md`).** Sent to MSC and accepted: `watch` is NDJSON-only; `--checkpoint <blob|@file|@->` with `new`/empty baseline, conflicts, `checkpoint_mismatch`, baseline items as `backfill`; checkpoint line adds `folder`/`window`; `gap` reason `window_rolled`; delete lines `removedReason`; mail watch lines `untrusted: true`; health mapping by exit-1 code and exit 2 → `UNSUPPORTED`/`usage`; the error JSON is the last non-empty stderr line; `MS365_CLI_MAX_RETRIES` (0–2 retries, default 2) and `MS365_CLI_REQUEST_TIMEOUT_MS`, health probes 0 retries / 10 s; codes `token_missing`, `token_helper_failed`, `external_token_mode` for `auth refresh`; `auth status -o json` field list and `auth scopes` renames; `_ref.provider` ≠ `source`, host-added fields; TOKEN vars not from `.env`; ADR 0014 condition 3/5 notes; pin by `dist/` sha256. Received from MSC and applied: cursor ceiling hole (R-4), `watch --select` (R-22), feature detection via `describe --json` (R-23), host profile pin via `auth profile show -o json` and exit 3 `token_expired` → one refresh and retry on the host side (R-24). OQ-1 (b) stands; MSC's stdin envelope → wrapper → child env is its env-var half.
 
 **needs-human (recommendation only, not canon):** OQ-8 → (b), non-TTY delete/cancel only for `apply --expect-digest` under a `type: host` profile (SPEC-PLAN D7; blocks AHT-9's non-TTY part, not Gate 2). OQ-14 → (a), subscription helpers only, later (SPEC-PLAN D8; blocks AHT-12 only). All other OQs are engineering and canon as written.
+
+## Build decisions (Step 3, 2026-10-17)
+
+Engineering decisions made while building the harness (Step 2 rules: all engineering, none needs-human):
+
+| # | Decision | Why |
+|---|---|---|
+| E1 | The ceiling, external-token checks and `childEnv()` live in pure modules (`src/ceiling.ts`, `src/external-token.ts`, `src/child-env.ts`); `index.ts` preAction only calls them. | R-33: AC 1, 5–9, 15, 28 are tested in-process; the spawned entry cases stay ≤ 12. |
+| E2 | ⚠ close call: catalog `uses` is CNF — `string[][]`, each inner list any-of (satisfied when the ceiling satisfies one of its scopes). The default is the command's selected `requiredScopes` clauses. All 15 multi-scope single-clause entries carry an explicit `uses`. | `user list` (true alternatives) and `workflow digest` (needs all three) cannot both be written as a flat list; CNF keeps one evaluator for pre-flight clauses and the ceiling. |
+| E3 | Cursor binding compares the decoded URL's version segment exactly and its path case-insensitively after percent-decoding; the query may differ. | Graph nextLink paths may re-encode the path †; the exact shape is listed under "Needs a live tenant". |
+| E4 | No parallel dispatch in G3 either: AHT-7…AHT-13 run serially. | Every pair shares `catalog.ts`, the generated README and the dry-run snapshot. |
+| E5 | One fetch-stub `--import` preload (`test/fixtures/fetch-stub.mjs`, routes from an env JSON) serves the spawned entry tests and the AHT-6a smoke checks. | One offline Graph double for tsx and `dist/`. |
+| E6 | Identity for `_ref` and plans comes from one `GraphClient.identity()` (decoded token; `GET /me?$select=id` only for an opaque token). | AHT-3 needs it; AHT-7 reuses it for the plan identity check. |
+| E7 | `health` is a top-level command in `src/commands/health.ts`. | AC 32 names `health`; it is neither auth nor watch. |
+| E8 | Plan/apply lives in `src/plan.ts` (canonical JSON, digest, plan writer, request recorder) and `src/commands/apply.ts`. | Shared by mail and calendar writes (AHT-7, AHT-9). |
