@@ -107,5 +107,15 @@ check "hanging keychain exits 3" 3 env MS365_CLI_STORAGE=keychain MS365_CLI_KEYC
   elif pgrep -f "^sleep 47$" >/dev/null; then bad "hanging keychain left the stub running";
   else ok "hanging keychain exits 3 (${dt}s)"; fi; }
 
+# 15. audit-trail import is offline and leak-free (AO-31, AC 14/16): no client ID, token or config, exits 0 with >=1
+#     aggregated row, and stdout carries none of the fixture's subjects, InternetMessageIds or recipients
+mkdir -p "$TMP/imp-home" "$TMP/imp-cfg"
+check "audit-trail import offline" 0 env HOME="$TMP/imp-home" MS365_CLI_CONFIG_DIR="$TMP/imp-cfg" MS365_CLI_CLIENT_ID= MS365_CLI_TOKEN= \
+  $CLI audit-trail import test/fixtures/purview-export.csv --cross-mailbox -o json && {
+  if grep -qiE "SECRET-SUBJECT|SECRET-IMID|secret-recipient" "$TMP/out"; then bad "audit-trail import leaked message content to stdout";
+  elif [ -n "$(find "$TMP/imp-home" "$TMP/imp-cfg" -mindepth 1 -name '*token*')" ]; then bad "audit-trail import touched the token cache";
+  elif node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); const r=Array.isArray(d)?d:(d.value||d.rows||[]); if(r.length<1) process.exit(1)' "$TMP/out"; then ok "audit-trail import offline";
+  else bad "audit-trail import -o json returned no rows"; fi; }
+
 echo "smoke: pass=$pass fail=$fail skip=$skip"
 [ "$fail" = 0 ]

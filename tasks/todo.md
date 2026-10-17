@@ -5,5 +5,5 @@
 - [x] AOT-3 audit-trail core (mailbox, changes) [critical path]
 - [x] AOT-5 audit-trail apps + access
 - [x] AOT-6 audit-trail import (offline)
-- [ ] AOT-4 snapshot, docs, smoke
+- [x] AOT-4 snapshot, docs, smoke
 - [ ] AOT-7 live tenant checks (needs-human)
