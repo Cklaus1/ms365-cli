@@ -1,6 +1,8 @@
 import { Argument, Command, Option } from 'commander';
 import { exec } from 'child_process';
-import { adminProfileUsageError, AuthManager, explainLoginError, planStorageSwitch, storageStatus, switchStorage, tokenInfo } from '../auth.js';
+import { childEnv } from '../child-env.js';
+import { externalTokenMode, externalTokenModeError } from '../external-token.js';
+import { adminProfileUsageError, AuthManager, explainLoginError, planStorageSwitch, storageStatus, switchStorage, tokenInfo, type TokenInfo } from '../auth.js';
 import type { StorageSetting } from '../keychain.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
@@ -13,7 +15,7 @@ import { adminConsentUrl, azGraphToken, CONSENT_REDIRECT_URI, grantScopes } from
 /** Open the system browser at the sign-in URL; print it too, for machines where no browser opens. */
 async function openSystemBrowser(url: string): Promise<void> {
   info(`Opening the browser to sign in. If it does not open, visit:\n${url}`);
-  exec(openBrowserCommand(url), () => { /* the URL was printed above */ });
+  exec(openBrowserCommand(url), { env: childEnv() }, () => { /* the URL was printed above */ });
 }
 
 /**
@@ -26,12 +28,19 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
     const name = adminProfile();
     if (name !== undefined) throw adminProfileUsageError(name);
   };
+  // AH-2: a supplied token (MS365_CLI_TOKEN or a host profile) leaves no ms365 sign-in or cache to manage: exit 2,
+  // checked before --dry-run like rejectAdmin.
+  const rejectExternal = (subcommand: string) => {
+    const name = program.opts().profile || process.env.MS365_CLI_PROFILE;
+    if (externalTokenMode(name ? readProfile(name) : {})) throw externalTokenModeError(subcommand);
+  };
 
   auth
     .command('login')
     .description('Login (device code flow by default)')
     .option('--browser', 'Sign in with the system browser instead (needs an http://localhost redirect URI on the app registration)')
     .action(handleErrors(async (opts) => {
+      rejectExternal('login');
       rejectAdmin();
       if (isDryRun()) return dryRunTrace('would sign in');
       const authManager = getAuth();
@@ -53,6 +62,7 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
     .command('logout')
     .description('Log out and clear saved credentials')
     .action(handleErrors(async () => {
+      rejectExternal('logout');
       rejectAdmin();
       if (isDryRun()) return dryRunTrace('would log out and clear the token cache and selected account');
       const authManager = getAuth();
@@ -69,6 +79,15 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
       if (isDryRun()) return dryRunTrace('would check the login status (token cache not read)');
       const authManager = getAuth();
       await authManager.initialize();
+      if (authManager.tokenSource() === 'external') {
+        // AH-2: the supplied token is checked (exit 3 token_*) and described; nothing is read from a cache.
+        const token = await authManager.getToken();
+        let t: TokenInfo | undefined;
+        try { t = tokenInfo(token); } catch { /* opaque: nothing to report */ }
+        console.log(`Token supplied by the host (MS365_CLI_TOKEN): ${t?.user ?? 'unknown user'}${t?.tenantId ? ` (tenant ${t.tenantId})` : ''}${t?.expiresOn ? `, expires ${t.expiresOn}` : ''}`);
+        if (t) console.log(`Scopes: ${t.scopes.join(' ') || '(none)'}`);
+        return;
+      }
       const admin = adminProfile();
       if (admin !== undefined) {
         // ID-8: report the borrowed identity and its scp from the token itself (az errors exit 3 az_required).
@@ -105,11 +124,8 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
     .description('Fetch a fresh access token now (e.g. after an admin grants new permissions) and show which scopes changed')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
+      rejectExternal('refresh');
       if (isDryRun()) return dryRunTrace('would refresh the access token (token cache not read)');
-      if (process.env.MS365_CLI_TOKEN) {
-        throw new CliError('MS365_CLI_TOKEN is set, so there is no cached login to refresh.',
-          { code: 'usage', exitCode: ExitCode.USAGE, fix: 'unset MS365_CLI_TOKEN, or supply a new token' });
-      }
       const authManager = getAuth();
       await authManager.initialize();
       let before: string[] = [];
@@ -132,6 +148,7 @@ Needs an admin: either the Azure CLI signed in as one (az login --tenant <tenant
 opening the printed link. Add --org-mode to include the org scopes (Teams, SharePoint, meetings…).
 Nothing is ever removed from the app registration or the existing consent grant.`)
     .action(handleErrors(async (opts, cmd) => {
+      rejectExternal('grant-scopes');
       const g = cmd.optsWithGlobals();
       const authManager = getAuth();
       const appId = authManager.getClientId();
@@ -190,6 +207,7 @@ Nothing is ever removed from the app registration or the existing consent grant.
     .command('accounts')
     .description('List all cached accounts')
     .action(handleErrors(async () => {
+      rejectExternal('accounts');
       rejectAdmin();
       const authManager = getAuth();
       await authManager.initialize();
@@ -213,6 +231,7 @@ Nothing is ever removed from the app registration or the existing consent grant.
     .command('select <accountId>')
     .description('Select an account by ID')
     .action(handleErrors(async (accountId: string) => {
+      rejectExternal('select');
       rejectAdmin();
       if (isDryRun()) return dryRunTrace(`would select account ${accountId}`);
       const authManager = getAuth();
@@ -229,6 +248,7 @@ Nothing is ever removed from the app registration or the existing consent grant.
     .command('remove <accountId>')
     .description('Remove a cached account')
     .action(handleErrors(async (accountId: string) => {
+      rejectExternal('remove');
       rejectAdmin();
       if (isDryRun()) return dryRunTrace(`would remove account ${accountId}`);
       const authManager = getAuth();
@@ -251,6 +271,7 @@ Nothing is ever removed from the app registration or the existing consent grant.
     .option('--no-probe', 'Skip the live keychain probe (write, read back and delete a probe item; at most 1.5 s)')
     .addOption(outputOption())
     .action(handleErrors(async (opts, cmd: Command) => {
+      rejectExternal('storage show');
       // The probe writes (and deletes) a keychain item, so --dry-run and --read-only skip it.
       const skip = isDryRun() ? 'not probed (--dry-run)' : readOnlyMode(cmd) ? 'not probed (--read-only)' : undefined;
       const status = storageStatus({ probe: opts.probe !== false && !skip, noProbeReason: skip });
@@ -265,6 +286,7 @@ Nothing is ever removed from the app registration or the existing consent grant.
 Holds the token-cache lock for the whole move; the old copy is deleted only after the new one reads back
 exactly. MS365_CLI_STORAGE, when set, overrides storage.json (use it for CI); switching against it is refused.`)
     .action(handleErrors(async (mode: StorageSetting, _opts, cmd: Command) => {
+      rejectExternal('storage use');
       if (isDryRun()) {
         const plan = planStorageSwitch(mode, { planOnly: true });
         return dryRunTrace(plan.from === plan.to && plan.to === 'file'

@@ -339,7 +339,9 @@ export class GraphClient {
             logger.info('Token refreshed, retrying request...');
             attempt--; // a token refresh is not a failed attempt
             continue;
-          } catch {
+          } catch (err) {
+            // A host-supplied token cannot be refreshed here: keep its token_rejected (never "ms365 auth login", AH-2).
+            if (err instanceof CliError && err.code === 'token_rejected') throw Object.assign(err, details);
             throw new CliError(`Authentication failed. Run: ms365 auth login`,
               { ...details, code: 'auth_failed', exitCode: ExitCode.AUTH, fix: 'ms365 auth login' });
           }

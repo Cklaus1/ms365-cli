@@ -1,4 +1,5 @@
 import { spawnSync } from 'child_process';
+import { childEnv } from './child-env.js';
 import { GraphClient } from './graph-client.js';
 import { CliError, ExitCode } from './errors.js';
 import { odataQuote } from './utils.js';
@@ -21,7 +22,7 @@ export interface AzToken { accessToken: string; tenant?: string }
 /** Injected in tests. Runs `az` and returns its result. */
 export const azDeps = {
   run(args: string[]): { status: number | null; stdout: string; stderr: string; missing: boolean } {
-    const r = spawnSync('az', args, { encoding: 'utf8', timeout: 60_000, killSignal: 'SIGKILL' });
+    const r = spawnSync('az', args, { encoding: 'utf8', timeout: 60_000, killSignal: 'SIGKILL', env: childEnv() });
     const missing = (r.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT';
     return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '', missing };
   },
