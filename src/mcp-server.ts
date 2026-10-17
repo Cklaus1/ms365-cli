@@ -8,6 +8,7 @@ import readline from 'readline';
 import type { Readable } from 'stream';
 import type { Command, Option } from 'commander';
 import { commandMeta } from './catalog.js';
+import { ceilingSurface } from './ceiling.js';
 
 export const PROTOCOL_VERSION = '2025-06-18';
 const SUPPORTED_VERSIONS = [PROTOCOL_VERSION, '2025-03-26', '2024-11-05'];
@@ -149,13 +150,29 @@ function matcher(patterns: string[]): (name: string) => boolean {
   return (name) => res.some(r => r.test(name));
 }
 
-/** The MCP tool list for a commander tree, walked live like `describe`. */
-export function buildTools(program: Command, opts: { allow?: string[]; readOnly?: boolean } = {}): Tool[] {
+/**
+ * `tool` under a profile ceiling (AH-1(4)): null when no run of it fits; a selector command keeps only the values
+ * that fit in its argument or option enum (`watch` → `mail`, `events` under a mail+calendar ceiling).
+ */
+function underCeiling(tool: Tool, cmd: Command, ceiling: Set<string>): Tool | null {
+  const { allowed, values } = ceilingSurface(tool.path, ceiling);
+  if (!allowed) return null;
+  const sel = commandMeta(tool.path)?.scopesBy;
+  if (!sel || !values) return tool;
+  const key = 'arg' in sel ? cmd.registeredArguments[sel.arg]?.name() : cmd.options.find(o => o.long === sel.option)?.attributeName();
+  const prop = key ? tool.inputSchema.properties[key] : undefined;
+  if (!prop) return tool;
+  const enumValues = (prop.enum as string[] | undefined)?.filter(v => values.includes(v)) ?? values;
+  return { ...tool, inputSchema: { ...tool.inputSchema, properties: { ...tool.inputSchema.properties, [key!]: { ...prop, enum: enumValues } } } };
+}
+
+/** The MCP tool list for a commander tree, walked live like `describe`; `ceiling` is the active profile's (AH-1). */
+export function buildTools(program: Command, opts: { allow?: string[]; readOnly?: boolean; ceiling?: Set<string> | null } = {}): Tool[] {
   const allowed = opts.allow?.length ? matcher(opts.allow) : () => true;
   return leafCommands(program)
     .filter(({ path }) => path.split(' ')[0] !== 'mcp' && !EXCLUDED.has(path))
-    .map(({ cmd, path }) => toolFor(cmd, path))
-    .filter(t => allowed(t.name) && (!opts.readOnly || t.annotations.readOnlyHint));
+    .map(({ cmd, path }) => (opts.ceiling ? underCeiling(toolFor(cmd, path), cmd, opts.ceiling) : toolFor(cmd, path)))
+    .filter((t): t is Tool => t !== null && allowed(t.name) && (!opts.readOnly || t.annotations.readOnlyHint));
 }
 
 function checkType(name: string, value: unknown, schema: JsonSchema): void {
@@ -281,13 +298,18 @@ class WatchPoller {
   private readonly intervalMs: number;
   private readonly log: (line: string) => void;
 
+  /** The watch resources the `watch` tool's enum allows (narrowed by a profile ceiling). */
+  private readonly resources: WatchResource[];
+
   constructor(private opts: ServeOptions, private notify: (msg: object) => void) {
     this.intervalMs = opts.watchIntervalMs ?? DEFAULT_WATCH_INTERVAL_MS;
     this.log = opts.log ?? ((line) => process.stderr.write(`${line}\n`));
+    const allowed = opts.tools.find(t => t.name === 'watch')?.inputSchema.properties.resource?.enum as string[] | undefined;
+    this.resources = WATCH_RESOURCES.filter(r => !allowed || allowed.includes(r));
   }
 
   list() {
-    return WATCH_RESOURCES.map(r => ({
+    return this.resources.map(r => ({
       uri: `${WATCH_URI}${r}`, name: `watch ${r}`, mimeType: WATCH_MIME,
       description: `Changes to ${r} (NDJSON lines from \`ms365 watch ${r}\`); subscribe to be notified, read to drain.`,
     }));
@@ -324,7 +346,7 @@ class WatchPoller {
 
   private resource(uri: unknown): WatchResource {
     const r = typeof uri === 'string' && uri.startsWith(WATCH_URI) ? uri.slice(WATCH_URI.length) : '';
-    if (!(WATCH_RESOURCES as readonly string[]).includes(r)) throw new RpcError(-32602, `Unknown resource: ${String(uri)}`);
+    if (!(this.resources as readonly string[]).includes(r)) throw new RpcError(-32602, `Unknown resource: ${String(uri)}`);
     return r as WatchResource;
   }
 

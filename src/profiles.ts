@@ -5,7 +5,10 @@ import { CliError, ExitCode } from './errors.js';
 
 /** Named sign-in settings (PM-8, D21): `${configDir()}/profiles/<name>.json`, applied with --profile. */
 export interface Profile {
-  /** `user` (default; MSAL sign-in, cached by ms365) or `admin` (token borrowed from the Azure CLI, never stored; ID-7/ID-8). */
+  /**
+   * `user` (default; MSAL sign-in, cached by ms365), `admin` (token borrowed from the Azure CLI, never stored; ID-7/ID-8)
+   * or `host` (token supplied by an agent host's broker, never cached; `scopes` is a ceiling; AH-1/AH-2).
+   */
   type?: ProfileType;
   clientId?: string;
   tenantId?: string;
@@ -14,7 +17,7 @@ export interface Profile {
   account?: string;
 }
 
-export type ProfileType = 'user' | 'admin';
+export type ProfileType = 'user' | 'admin' | 'host';
 
 /** The profile's identity type; absent means `user`. */
 export const profileType = (p: Profile): ProfileType => p.type ?? 'user';
@@ -51,7 +54,7 @@ function parseProfile(name: string, data: string): Profile {
   const r = raw as Record<string, unknown>;
   const profile: Profile = {};
   if (r.type !== undefined) {
-    if (r.type !== 'user' && r.type !== 'admin') throw invalid();
+    if (r.type !== 'user' && r.type !== 'admin' && r.type !== 'host') throw invalid();
     profile.type = r.type;
   }
   for (const key of ['clientId', 'tenantId', 'account'] as const) {
@@ -76,6 +79,14 @@ function parseProfile(name: string, data: string): Profile {
  * `account` or `scopes` (the identity and scopes are whatever az's sign-in has). Throws `invalid_profile`.
  */
 export function validateProfile(name: string, profile: Profile, exitCode: ExitCode = ExitCode.GENERIC): void {
+  if (profileType(profile) === 'host') {
+    // AH-2: the token's tid is checked against the pinned tenant, and `scopes` is the ceiling (AH-1).
+    const bad = (why: string) => new CliError(`Host profile "${name}" ${why}.`,
+      { code: 'invalid_profile', exitCode, fix: `ms365 auth profile set ${name} --type host --tenant <tenant-id> --scopes <list>` });
+    if (!profile.tenantId || MULTI_TENANT.has(profile.tenantId.toLowerCase())) throw bad('needs the tenant ID its tokens come from (not common/organizations/consumers)');
+    if (!profile.scopes?.length) throw bad('needs scopes: they are the ceiling of every command run under it');
+    return;
+  }
   if (profileType(profile) !== 'admin') return;
   const bad = (why: string, fix: string) => new CliError(`Admin profile "${name}" ${why}.`, { code: 'invalid_profile', exitCode, fix });
   if (!profile.tenantId || MULTI_TENANT.has(profile.tenantId.toLowerCase())) {

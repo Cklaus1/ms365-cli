@@ -20,12 +20,29 @@ export function encodeCursor(nextLink: string): string {
   return Buffer.from(nextLink).toString('base64url');
 }
 
-export function decodeCursor(cursor: string): string {
+/** Version segment and path of a Graph URL, percent-decoded and case-folded (E3), for comparing a cursor with a command. */
+function graphPath(url: URL): string {
+  let path = url.pathname;
+  try { path = decodeURIComponent(path); } catch { /* a stray % stays as written */ }
+  return path.replace(/\/+$/, '').toLowerCase();
+}
+
+/**
+ * The Graph URL in a --cursor. With `expected` (the command's own endpoint URL) the cursor must name the same API
+ * version and path — only the query may differ — else exit 2 `cursor_mismatch` before any request (AH-1(7)), so a
+ * cursor can never carry a command to another resource.
+ */
+export function decodeCursor(cursor: string, expected?: string): string {
   const url = Buffer.from(cursor, 'base64url').toString('utf8');
-  let host = '';
-  try { host = new URL(url).hostname; } catch { /* invalid */ }
-  if (host !== 'graph.microsoft.com') {
+  let parsed: URL | undefined;
+  try { parsed = new URL(url); } catch { /* invalid */ }
+  if (parsed?.hostname !== 'graph.microsoft.com') {
     throw new CliError('Invalid --cursor value.', { code: 'usage', exitCode: ExitCode.USAGE, fix: 'pass the nextCursor printed by the previous page' });
+  }
+  if (expected !== undefined && graphPath(parsed) !== graphPath(new URL(expected))) {
+    throw new CliError(`--cursor belongs to ${parsed.pathname}, not to this command (${new URL(expected).pathname}).`, {
+      code: 'cursor_mismatch', exitCode: ExitCode.USAGE, fix: 'pass the nextCursor printed by the previous page of this same command and --api-version',
+    });
   }
   return url;
 }
@@ -449,7 +466,7 @@ export async function printList(
   }
 
   const response = pageCursor
-    ? await client.request(decodeCursor(pageCursor), { headers: options.headers })
+    ? await client.request(decodeCursor(pageCursor, client.buildUrl(endpoint)), { headers: options.headers })
     : await client.request(endpoint, options);
   const pageData = await transformData(response.data);
   const nextCursor = response.nextLink ? encodeCursor(response.nextLink) : undefined;

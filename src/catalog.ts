@@ -407,3 +407,45 @@ export function requiredScopes(path: string, opts: Record<string, unknown> = {},
 export function catalogPaths(): string[] {
   return Object.keys(COMMANDS);
 }
+
+/**
+ * What a run may call, for the profile ceiling (AH-1(2), E2): CNF like `requiredScopes`, but every scope a run
+ * touches is its own clause. Only the 15 entries whose single clause lists several scopes need an entry here —
+ * their clause reads as alternatives for pre-flight, which would let a narrow ceiling through a multi-resource run.
+ * Alternatives that really are alternatives stay together in one inner list (`user list`).
+ * test/ceiling.test.ts fails when such an entry has no explicit `uses`.
+ */
+const USES: Record<string, string[][]> = {
+  // Resolves team and channel names, looks up --mention users, then posts.
+  'teams send-channel-message': [['ChannelMessage.Send'], ['Team.ReadBasic.All'], ['Channel.ReadBasic.All'], ['User.ReadBasic.All']],
+  // GET /me for the caller's id, then POST /chats.
+  'chat create': [['Chat.Create'], ['User.Read']],
+  // --mention users are looked up, then the message is posted.
+  'chat send': [['ChatMessage.Send'], ['User.ReadBasic.All']],
+  // Reads the quoted message, then posts the reply.
+  'chat reply': [['ChatMessage.Read'], ['ChatMessage.Send']],
+  // True alternatives: either scope lists users.
+  'user list': [['User.ReadBasic.All', 'User.Read.All']],
+  'workflow standup': [['Calendars.Read'], ['Mail.Read']],
+  'workflow email-to-task': [['Mail.Read'], ['Tasks.ReadWrite']],
+  'workflow digest': [['Calendars.Read'], ['Mail.Read'], ['Tasks.Read']],
+  'workflow file-announce': [['Files.Read'], ['ChannelMessage.Send']],
+  'meetings transcripts': [['OnlineMeetings.Read'], ['OnlineMeetingTranscript.Read.All']],
+  'meetings transcript': [['OnlineMeetings.Read'], ['OnlineMeetingTranscript.Read.All']],
+  'meetings recordings': [['OnlineMeetings.Read'], ['OnlineMeetingRecording.Read.All']],
+  'meetings recording': [['OnlineMeetings.Read'], ['OnlineMeetingRecording.Read.All']],
+  // GET /me for the organizer id, then getAllTranscripts.
+  'meetings all-transcripts': [['User.Read'], ['OnlineMeetingTranscript.Read.All']],
+  'reports by-department': [['Reports.Read.All'], ['User.Read.All']],
+};
+
+/** The explicit `uses` of a command, or undefined when it uses its `requiredScopes` clauses. */
+export function explicitUses(path: string): string[][] | undefined {
+  return USES[path]?.map(c => [...c]);
+}
+
+/** The clauses the ceiling checks for one run: the explicit `uses`, else the selected `requiredScopes` clauses. */
+export function usedScopes(path: string, opts: Record<string, unknown> = {}, args: unknown[] = []): ScopeClause[] {
+  const uses = USES[path];
+  return uses ? uses.map(scopes => ({ scopes: [...scopes] })) : requiredScopes(path, opts, args);
+}

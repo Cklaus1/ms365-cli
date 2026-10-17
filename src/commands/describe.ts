@@ -1,6 +1,7 @@
 import { Command, Option } from 'commander';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { commandMeta, type ScopeSelector } from '../catalog.js';
+import { activeCeiling, ceilingSurface } from '../ceiling.js';
 
 function describeOption(o: Option) {
   return {
@@ -62,20 +63,27 @@ export function registerDescribeCommand(program: Command): void {
     .command('describe [command...]')
     .description('Describe every command (arguments, options, Graph scopes, safety) as a machine-readable catalogue')
     .option('--json', 'Print the catalogue as JSON')
-    .action(handleErrors(async (words: string[], opts: { json?: boolean }) => {
+    .option('--all', 'Under a profile scope ceiling, also list the commands it does not allow (marked allowed: false)')
+    .action(handleErrors(async (words: string[], opts: { json?: boolean; all?: boolean }) => {
       const prefix = words.join(' ');
       const leaves = leafCommands(program).filter(({ path }) => !prefix || path === prefix || path.startsWith(`${prefix} `));
       if (leaves.length === 0) {
         throw new CliError(`Unknown command: ${prefix}`, { code: 'unknown_command', exitCode: ExitCode.USAGE, fix: 'ms365 describe' });
       }
-      const commands = leaves.map(({ cmd, path }) => describeCommand(cmd, path));
+      // AH-1(5): under a ceiling profile the catalogue is the effective surface; --all keeps the rest, marked.
+      const ceiling = activeCeiling(program.opts().profile)?.ceiling;
+      const entries = leaves
+        .map(leaf => ({ leaf, c: describeCommand(leaf.cmd, leaf.path) }))
+        .map(e => (ceiling ? { ...e, c: { ...e.c, allowed: ceilingSurface(e.c.path, ceiling).allowed } } : e))
+        .filter(e => opts.all || !('allowed' in e.c) || e.c.allowed);
+      const commands = entries.map(e => e.c);
 
       if (opts.json) {
         console.log(JSON.stringify({ version: program.version() ?? null, globalOptions: program.options.map(describeOption), commands }, null, 2));
         return;
       }
-      const rows = commands.map((c, i) => ({ ...c, usage: [c.path, leaves[i].cmd.usage().replace(/^\[options\]\s*/, '')].join(' ').trim() }));
-      const width = Math.max(...rows.map(r => r.usage.length));
+      const rows = entries.map(({ leaf, c }) => ({ ...c, usage: [c.path, leaf.cmd.usage().replace(/^\[options\]\s*/, '')].join(' ').trim() }));
+      const width = Math.max(0, ...rows.map(r => r.usage.length));
       for (const r of rows) console.log(summaryLine(r, width));
     }));
 }

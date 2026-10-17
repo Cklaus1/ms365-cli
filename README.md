@@ -260,7 +260,7 @@ The reference below is generated from the live command tree (`ms365 describe --j
 | `--account <upn\|homeAccountId>` | Use this cached account for this call only (env MS365_CLI_ACCOUNT) |
 | `--actor <name>` | Name recorded as the actor in the audit log (default: MS365_CLI_ACTOR or "cli") |
 | `--api-version <version>` | Graph API version |
-| `--cursor <token>` | Fetch the page after a previous list call (the nextCursor it printed on stderr) |
+| `--cursor <token>` | Fetch the page after a previous call of the same command (its nextCursor); a cursor from another command exits 2 |
 | `--dry-run` | Preview the API request without executing it |
 | `--error-format <format>` | Error output on stderr (default: text) |
 | `--fields <list>` | Only output these comma-separated fields (dot paths allowed, e.g. id,from.emailAddress.address) |

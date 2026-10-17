@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { CliError, ExitCode, handleErrors } from '../errors.js';
 import { info } from '../utils.js';
 import { buildTools, serve, spawnRunner } from '../mcp-server.js';
+import { activeCeiling } from '../ceiling.js';
 
 /** Same floor as `watch --interval`. */
 const MIN_WATCH_INTERVAL_S = 15;
@@ -35,8 +36,10 @@ export function registerMcpCommands(program: Command): void {
       }
       const readOnly = !!opts.readOnly || process.env.MS365_CLI_READ_ONLY === 'true' || process.env.MS365_CLI_READ_ONLY === '1';
       const allow = opts.allow ? String(opts.allow).split(',').map((p: string) => p.trim()).filter(Boolean) : undefined;
-      const tools = buildTools(program, { allow, readOnly });
-      info(`ms365 MCP server on stdio: ${tools.length} tools${readOnly ? ' (read-only)' : ''}`);
+      // AH-1(4): under a ceiling profile only the commands it allows are tools; each call re-checks it (--profile is forwarded).
+      const ceiling = activeCeiling(program.opts().profile);
+      const tools = buildTools(program, { allow, readOnly, ceiling: ceiling?.ceiling });
+      info(`ms365 MCP server on stdio: ${tools.length} tools${readOnly ? ' (read-only)' : ''}${ceiling ? ` (ceiling of profile "${ceiling.profile}")` : ''}`);
       await serve(process.stdin, (line) => process.stdout.write(`${line}\n`), {
         tools,
         version: program.version() ?? '0.0.0',

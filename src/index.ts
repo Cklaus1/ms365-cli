@@ -50,7 +50,8 @@ import { registerCompletionCommand } from './commands/completion.js';
 import { registerResolveCommands } from './commands/resolve.js';
 import { registerNotesCommands } from './commands/notes.js';
 import { setActor, setCommandPath } from './audit.js';
-import { requiredScopes } from './catalog.js';
+import { requiredScopes, usedScopes } from './catalog.js';
+import { activeCeiling, assertWithinCeiling } from './ceiling.js';
 import { assertConsented } from './preflight.js';
 import { profileType, readProfile, type Profile } from './profiles.js';
 import logger from './logger.js';
@@ -72,7 +73,7 @@ program
   .addOption(new Option('--error-format <format>', 'Error output on stderr (default: text)').choices(['text', 'json']))
   .option('--fields <list>', 'Only output these comma-separated fields (dot paths allowed, e.g. id,from.emailAddress.address)')
   .option('--actor <name>', 'Name recorded as the actor in the audit log (default: MS365_CLI_ACTOR or "cli")')
-  .option('--cursor <token>', 'Fetch the page after a previous list call (the nextCursor it printed on stderr)')
+  .option('--cursor <token>', 'Fetch the page after a previous call of the same command (its nextCursor); a cursor from another command exits 2')
   .option('--account <upn|homeAccountId>', 'Use this cached account for this call only (env MS365_CLI_ACCOUNT)')
   .option('--profile <name>', 'Apply a saved profile: client ID, tenant, scopes, org mode, account (env MS365_CLI_PROFILE)');
 
@@ -198,6 +199,13 @@ program.hook('preAction', async (_program, actionCommand) => {
   setActor(o.actor || process.env.MS365_CLI_ACTOR);
   const commandPath = commandChain.slice(1).join(' ');
   setCommandPath(commandPath);
+
+  // AH-1: a user/host profile's scopes are a ceiling. Checked before the offline and dry-run returns and before any
+  // token is read, so no MS365_CLI_PREFLIGHT=0, opaque token or --dry-run gets past it.
+  // Commands that use no scope never read the profile, so `auth profile set` can still repair a broken one.
+  const uses = usedScopes(commandPath, actionCommand.opts(), actionCommand.processedArgs);
+  const ceiling = uses.length ? activeCeiling(o.profile) : null;
+  if (ceiling) assertWithinCeiling(commandPath, uses, ceiling.ceiling, ceiling.profile);
 
   // Skip auth initialization for offline commands and dry-run
   if (OFFLINE_COMMANDS.has(commandChain[1]) || OFFLINE_COMMANDS.has(commandChain.slice(1, 3).join(' '))) return;
