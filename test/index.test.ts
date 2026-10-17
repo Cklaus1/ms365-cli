@@ -46,7 +46,7 @@ describe('global flags (C-15)', () => {
     const r = cli(['--dry-run', 'mail', 'send', '--to', 'a@b.com', '--subject', 's', '--body', 'b'],
       { MS365_CLI_CLIENT_ID: '', MS365_CLI_CONFIG_DIR: cfg });
     expect(r.status, r.stderr).toBe(0);
-    expect(r.stderr).toContain('[dry-run] POST https://graph.microsoft.com/v1.0/me/sendMail');
+    expect(r.stderr).toContain('[dry-run] POST https://graph.microsoft.com/v1.0/me/messages/DRAFT_ID/send');
     expect(fs.readdirSync(cfg)).toEqual([]);
   }, 30_000);
 

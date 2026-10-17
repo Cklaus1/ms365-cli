@@ -25,6 +25,10 @@ export interface CatalogCommand {
   /** Per-option or per-argument scope clauses (`describe`); `scopes` is their union. */
   scopesBy: Record<string, unknown> | null;
   offline: boolean | null;
+  /** Accepts the global `--plan` (AH-5). */
+  plan: boolean;
+  /** How Graph itself de-duplicates a retry, when it does (AH-6(5)). */
+  providerIdempotency: string | null;
 }
 
 export interface Catalog {
@@ -308,6 +312,12 @@ function sharedSkill(catalog: Catalog, version: string): string {
     'Show the plan to the approver, then run `ms365 apply <file> --expect-digest <digest>`. Before sending anything it refuses: a plan whose digest is not `--expect-digest` or its own (exit 2 `plan_digest_mismatch`), a malformed plan (exit 2 `plan_invalid`), a command outside the profile\'s ceiling (exit 4 `scope_ceiling`), an expired plan (exit 2 `plan_expired`), an attachment whose bytes changed (exit 2 `plan_attachment_changed`), and a token of another tenant or account (exit 3 `token_identity_mismatch`). The digest is the idempotency key, so a plan is sent at most once in 24 h; a repeat prints the first result. If the item changed after planning, Graph answers 412 and apply exits 4 `version_changed` without a retry: read the item again and make a new plan. `apply -o json` prints `{outcome: "APPLIED", command, digest, appliedAt, responses[{method, path, status, id}]}`.',
     '',
     'Commands that take `--body` also take `--body-file <path>` (`-` for stdin, not under MCP): the bytes go out unchanged. `mail update-draft`, `calendar update` and `calendar delete` take `--if-match <etag|auto>`.',
+    '',
+    '`mail send`, `mail reply` and `mail forward` take `--plan` too. A planned send is the draft and its `/send` (`{{0.id}}`). A planned reply or forward records the original message as `target` but sends no If-Match (the original is not changed, and its version moves whenever it is read). `--html` on a reply or forward cannot be planned (exit 2). `describe --json` marks each command `plan: true|false`, and names `providerIdempotency` where Graph itself de-duplicates a retry (`calendar create`: `--idempotency-key` is the event `transactionId`).',
+    '',
+    '### Send outcome and reconcile',
+    '',
+    '`mail send` always goes through a draft, so it has a handle before Graph answers. Graph\'s 202 means accepted, not delivered: `-o json` prints `{outcome: "ACCEPTED", acceptedAt, correlation{draftId, internetMessageId, idempotencyKey}, delivery: "unknown"}`, and the text output says "Accepted by Exchange". With `--idempotency-key` the ledger keeps the correlation. A lost `/send` response exits 1 `outcome_unknown` with `maybeProcessed: true` and `correlation` in the error JSON; do not resend. `ms365 mail reconcile --idempotency-key <k>` (or `--internet-message-id <id>`) looks in Sent Items, Outbox and Drafts and prints `{state: SENT|STILL_DRAFT|NOT_FOUND_YET, evidence{id, folder, sentDateTime, webLink, internetMessageId}, checkedAt}`. `SENT` moves the ledger entry from `unknown` to `done`. `NOT_FOUND_YET` (also for a copy still in the Outbox) never means "not sent": check again later.',
     '',
     '## Environment variables',
     '',

@@ -122,6 +122,7 @@ const COMMANDS: Record<string, Entry> = {
   'mail reply': ['action', ['Mail.Send']],
   'mail forward': ['action', ['Mail.Send']],
   'mail mark-read': 'update',
+  'mail reconcile': 'read',
   'mail mark-unread': 'update',
   'mail flag': 'update',
   'mail unflag': 'update',
@@ -417,7 +418,8 @@ export function catalogPaths(): string[] {
 /**
  * What a run may call, for the profile ceiling (AH-1(2), E2): CNF like `requiredScopes`, but every scope a run
  * touches is its own clause. Only the 15 entries whose single clause lists several scopes need an entry here —
- * their clause reads as alternatives for pre-flight, which would let a narrow ceiling through a multi-resource run.
+ * their clause reads as alternatives for pre-flight, which would let a narrow ceiling through a multi-resource run —
+ * plus `mail send`, whose draft path also needs the group write scope.
  * Alternatives that really are alternatives stay together in one inner list (`user list`).
  * test/ceiling.test.ts fails when such an entry has no explicit `uses`.
  */
@@ -443,6 +445,8 @@ const USES: Record<string, string[][]> = {
   // GET /me for the organizer id, then getAllTranscripts.
   'meetings all-transcripts': [['User.Read'], ['OnlineMeetingTranscript.Read.All']],
   'reports by-department': [['Reports.Read.All'], ['User.Read.All']],
+  // Sends through a draft (AH-6): creates the draft, then sends it.
+  'mail send': [['Mail.ReadWrite'], ['Mail.Send']],
 };
 
 /** The explicit `uses` of a command, or undefined when it uses its `requiredScopes` clauses. */

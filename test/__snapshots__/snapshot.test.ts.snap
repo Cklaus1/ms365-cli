@@ -1883,6 +1883,24 @@ exports[`dry-run endpoint snapshot (every command) > mail read 1`] = `
 }
 `;
 
+exports[`dry-run endpoint snapshot (every command) > mail reconcile [optional flags] 1`] = `
+{
+  "argv": "mail reconcile --idempotency-key x --internet-message-id x --output json",
+  "error": "error: option '--idempotency-key <key>' cannot be used with option '--internet-message-id <id>'",
+  "exitCode": 2,
+  "requests": [],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > mail reconcile 1`] = `
+{
+  "argv": "mail reconcile",
+  "error": "Error: Pass --idempotency-key or --internet-message-id.",
+  "exitCode": 2,
+  "requests": [],
+}
+`;
+
 exports[`dry-run endpoint snapshot (every command) > mail reply [optional flags] 1`] = `
 {
   "argv": "mail reply MESSAGEID --body x --attach <tmp>/sample.txt --idempotency-key x",
@@ -1951,11 +1969,12 @@ exports[`dry-run endpoint snapshot (every command) > mail rules 1`] = `
 
 exports[`dry-run endpoint snapshot (every command) > mail send [optional flags] 1`] = `
 {
-  "argv": "mail send --to a@contoso.com --subject x --body x --cc a@contoso.com --bcc a@contoso.com --attach <tmp>/sample.txt --idempotency-key x",
+  "argv": "mail send --to a@contoso.com --subject x --body x --cc a@contoso.com --bcc a@contoso.com --attach <tmp>/sample.txt --idempotency-key x --output json",
   "error": "",
   "exitCode": 0,
   "requests": [
-    "[dry-run] POST https://graph.microsoft.com/v1.0/me/sendMail",
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/messages",
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/messages/DRAFT_ID/send",
   ],
 }
 `;
@@ -1966,7 +1985,8 @@ exports[`dry-run endpoint snapshot (every command) > mail send 1`] = `
   "error": "",
   "exitCode": 0,
   "requests": [
-    "[dry-run] POST https://graph.microsoft.com/v1.0/me/sendMail",
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/messages",
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/messages/DRAFT_ID/send",
   ],
 }
 `;

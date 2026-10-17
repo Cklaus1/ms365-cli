@@ -1,44 +1,16 @@
-import { Command, Option } from 'commander';
+import { Command } from 'commander';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import fs from 'fs';
 import path from 'path';
 import { info } from '../utils.js';
-import { commandMeta } from '../catalog.js';
-import { describeSelector } from './describe.js';
-import { type Catalog, type CatalogCommand, type CatalogOption, renderSkills } from '../docs-gen.js';
-
-function describeOption(o: Option): CatalogOption {
-  return {
-    flags: o.flags,
-    long: o.long ?? null,
-    short: o.short ?? null,
-    description: o.description,
-    required: o.mandatory,
-    takesValue: o.required || o.optional,
-    choices: o.argChoices ?? null,
-    default: o.defaultValue ?? null,
-  };
-}
+import { describeCommand, describeOption } from './describe.js';
+import { type Catalog, type CatalogCommand, renderSkills } from '../docs-gen.js';
 
 /** The `describe --json` catalogue, built from the live command tree under `program`. */
 export function buildCatalog(program: Command): Catalog {
   const commands: CatalogCommand[] = [];
   const walk = (c: Command, chain: string[]) => {
-    if (c.commands.length === 0) {
-      const p = chain.join(' ');
-      const meta = commandMeta(p);
-      commands.push({
-        path: p,
-        description: c.description(),
-        arguments: c.registeredArguments.map(a => ({ name: a.name(), required: a.required, variadic: a.variadic })),
-        options: c.options.map(describeOption),
-        scopes: meta?.scopes ?? null,
-        scopesBy: describeSelector(c, meta?.scopesBy),
-        destructive: meta?.destructive ?? null,
-        idempotent: meta?.idempotent ?? null,
-        offline: meta?.offline ?? null,
-      });
-    }
+    if (c.commands.length === 0) commands.push(describeCommand(c, chain.join(' ')));
     for (const sub of c.commands) walk(sub, [...chain, sub.name()]);
   };
   for (const top of program.commands) walk(top, [top.name()]);

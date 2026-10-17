@@ -86,11 +86,13 @@ export function checkKey(key: string, command: string, fp: string): KeyCheck {
     const why = entry.status === 'unknown'
       ? 'failed in a way that may still have reached Microsoft 365'
       : 'was interrupted before it finished';
+    const correlation: unknown = entry.result?.correlation;
     throw new CliError(
       `A request with idempotency key "${key}" (${entry.command}, started ${entry.startedAt ?? entry.ts}) ${why}; it may or may not have taken effect.`,
       {
         code: 'idempotency_outcome_unknown', exitCode: ExitCode.GENERIC,
-        fix: `Check whether it took effect (for mail: Sent Items and Drafts). If it did not, run \`ms365 idempotency release ${key}\` and retry; \`ms365 idempotency list\` shows the ledger.`,
+        ...(typeof correlation === 'object' && correlation !== null ? { correlation: { ...correlation } } : {}),
+        fix: `${entry.command.startsWith('mail ') ? `Run \`ms365 mail reconcile --idempotency-key ${key}\` (Sent Items, Drafts, Outbox)` : 'Check whether it took effect'}. If it did not, run \`ms365 idempotency release ${key}\` and retry; \`ms365 idempotency list\` shows the ledger.`,
       },
     );
   }
@@ -169,7 +171,10 @@ export async function withIdempotency(
       const entries = readLedger();
       const claim = entries.find(e => e.key === key);
       const rest = entries.filter(e => e.key !== key);
-      writeLedger(err instanceof CliError && err.maybeProcessed && claim ? [...rest, { ...claim, status: 'unknown' }] : rest);
+      // A lost send response keeps the claim as 'unknown', with the handles to reconcile it (AH-6(3)).
+      writeLedger(err instanceof CliError && err.maybeProcessed && claim
+        ? [...rest, { ...claim, status: 'unknown', ...(err.correlation && { result: { correlation: err.correlation } }) }]
+        : rest);
     });
     throw err;
   }
@@ -180,22 +185,31 @@ export async function withIdempotency(
 export const IDEMPOTENCY_HELP = 'Retry-safe: if this key was used for the same request in the last 24 h, do not send again';
 
 /**
- * Run `send` under --idempotency-key (D23). Returns false when the key replays an earlier send: the stored result is
- * printed and Graph is not called. Dry-run never touches the ledger.
+ * Run `send` under --idempotency-key (D23) and return what it returned (stored as the key's result; default
+ * `{sentAt}`). Returns null when the key replays an earlier send: the stored result is printed and Graph is not
+ * called. Dry-run and --plan never touch the ledger.
  */
 export async function idempotentSend(
-  client: GraphClient, key: string | undefined, command: string, request: unknown, send: () => Promise<void>,
-): Promise<boolean> {
-  if (!key || isDryRun(client) || planning()) {
-    await send();
-    return true;
-  }
-  const outcome = await withIdempotency(key, command, fingerprint(request), async () => {
-    await send();
-    return { sentAt: new Date().toISOString() };
-  });
-  if (outcome.status === 'done') return true;
+  client: GraphClient, key: string | undefined, command: string, request: unknown, send: () => Promise<IdempotencyResult | void>,
+): Promise<IdempotencyResult | null> {
+  if (!key || isDryRun(client) || planning()) return (await send()) ?? {};
+  const outcome = await withIdempotency(key, command, fingerprint(request), async () => (await send()) ?? { sentAt: new Date().toISOString() });
+  if (outcome.status === 'done') return outcome.result;
   info(`Already sent at ${outcome.ts}; not sent again.`);
   console.log(formatOutput(outcome.result, 'json'));
-  return false;
+  return null;
+}
+
+/**
+ * Reconciliation found the send (AH-6(4)): an `unknown` entry becomes `done`, and the evidence joins its result.
+ * Returns the entry's status after the update, or null when there is no such entry.
+ */
+export function settleKey(key: string, evidence: Record<string, unknown>): Entry['status'] | null {
+  return withLedgerLock(() => {
+    const entry = readLedger().find(e => e.key === key);
+    if (!entry) return null;
+    if (entry.status === 'pending') return entry.status;
+    putEntry({ ...entry, status: 'done', result: { ...entry.result, reconciled: evidence } });
+    return 'done';
+  });
 }

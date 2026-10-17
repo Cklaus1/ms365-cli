@@ -93,8 +93,8 @@ describe('--plan (AC18)', () => {
   });
 
   it('refuses a command that cannot be planned, and an upload session', async () => {
-    expect(() => beginPlan({ file: path.join(dir, 'x'), command: 'mail send', ttlMinutes: 15, profile: null, client: () => { throw new Error('unused'); } }))
-      .toThrow(/not supported by "mail send"/);
+    expect(() => beginPlan({ file: path.join(dir, 'x'), command: 'todo create', ttlMinutes: 15, profile: null, client: () => { throw new Error('unused'); } }))
+      .toThrow(/not supported by "todo create"/);
     const big = path.join(dir, 'big.bin');
     fs.writeFileSync(big, Buffer.alloc(3 * 1024 * 1024 + 1));
     const { r } = await planDraft(['--attach', big], { routes: [['POST', '/me/messages', () => ({ id: 'D1' })]] });

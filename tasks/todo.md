@@ -10,7 +10,7 @@
 
 ## Tier G3
 - [x] AHT-7 plan/apply core, If-Match, `--bcc`, `--body-file`, sha256 attachments
-- [ ] AHT-8 honest send, correlation, `outcome_unknown`, `mail reconcile`
+- [x] AHT-8 honest send, correlation, `outcome_unknown`, `mail reconcile`
 - [ ] AHT-9 calendar plans: series/type checks, `instances`, `cancel`, `notifies`/`scope` (TTY part)
 - [ ] AHT-10 MCP buffer gap / resume / body via file; `MS365_CLI_TOKEN_COMMAND`; `auth login --start/--wait`
 - [ ] AHT-11 `--mailbox` delegate reads; fold `mail shared-list`/`shared-get`

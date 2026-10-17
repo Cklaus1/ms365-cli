@@ -24,6 +24,8 @@ export interface CliErrorDetails {
   maybeProcessed?: boolean;
   /** 429: how long Graph asked to wait (Retry-After), in ms (AH-8(4)). */
   retryAfterMs?: number;
+  /** A send whose outcome is unknown: the handles to reconcile it with (AH-6(3)). */
+  correlation?: Record<string, unknown>;
 }
 
 /** An error carrying a machine-readable code and the exit code it maps to. */
@@ -36,6 +38,7 @@ export class CliError extends Error {
   fix?: string;
   maybeProcessed?: boolean;
   retryAfterMs?: number;
+  correlation?: Record<string, unknown>;
 
   constructor(message: string, details: CliErrorDetails = {}) {
     super(message);
@@ -48,6 +51,7 @@ export class CliError extends Error {
     this.fix = details.fix;
     if (details.maybeProcessed) this.maybeProcessed = true;
     this.retryAfterMs = details.retryAfterMs;
+    this.correlation = details.correlation;
   }
 }
 
@@ -88,6 +92,7 @@ export function reportError(err: unknown): ExitCode {
     if (e.fix) payload.fix = e.fix;
     if (e.maybeProcessed) payload.maybeProcessed = true;
     if (e.retryAfterMs !== undefined) payload.retryAfterMs = e.retryAfterMs;
+    if (e.correlation) payload.correlation = e.correlation;
     process.stderr.write(JSON.stringify({ error: payload }) + '\n');
   } else {
     const hint = e.fix && !e.message.includes(e.fix) ? ` (fix: ${e.fix})` : '';

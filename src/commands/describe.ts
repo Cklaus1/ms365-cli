@@ -2,8 +2,15 @@ import { Command, Option } from 'commander';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { commandMeta, type ScopeSelector } from '../catalog.js';
 import { activeCeiling, ceilingSurface } from '../ceiling.js';
+import { PLAN_COMMANDS } from '../plan.js';
+import type { CatalogCommand, CatalogOption } from '../docs-gen.js';
 
-function describeOption(o: Option) {
+/** Commands Graph itself de-duplicates (AH-6(5)), so a host may retry them after a lost response. */
+const PROVIDER_IDEMPOTENCY: Record<string, string> = {
+  'calendar create': 'With --idempotency-key the key is sent as the event transactionId; Graph returns the first event for a repeat, so a retry after a lost response creates no second event.',
+};
+
+export function describeOption(o: Option): CatalogOption {
   return {
     flags: o.flags,
     long: o.long ?? null,
@@ -23,7 +30,7 @@ export function describeSelector(cmd: Command, sel: ScopeSelector | null | undef
   return { argument: cmd.registeredArguments[sel.arg]?.name() ?? String(sel.arg), map: sel.map, ...(sel.withOption ? { withOption: sel.withOption } : {}) };
 }
 
-function describeCommand(cmd: Command, path: string) {
+export function describeCommand(cmd: Command, path: string): CatalogCommand {
   const meta = commandMeta(path);
   return {
     path,
@@ -35,10 +42,10 @@ function describeCommand(cmd: Command, path: string) {
     destructive: meta?.destructive ?? null,
     idempotent: meta?.idempotent ?? null,
     offline: meta?.offline ?? null,
+    plan: !!PLAN_COMMANDS[path],
+    providerIdempotency: PROVIDER_IDEMPOTENCY[path] ?? null,
   };
 }
-
-type Described = ReturnType<typeof describeCommand>;
 
 /** Every leaf command under `program`, walked live so the catalogue never drifts from the registered tree. */
 function leafCommands(program: Command): Array<{ cmd: Command; path: string }> {
@@ -51,7 +58,7 @@ function leafCommands(program: Command): Array<{ cmd: Command; path: string }> {
   return out;
 }
 
-function summaryLine(c: Described & { usage: string }, width: number): string {
+function summaryLine(c: CatalogCommand & { usage: string }, width: number): string {
   const by = c.scopesBy && ('option' in c.scopesBy ? c.scopesBy.option : `<${c.scopesBy.argument}>`);
   const scopes = c.scopes?.join(' ') + (by ? ` (by ${by})` : '');
   const tags = [c.destructive && 'destructive', c.offline ? 'offline' : scopes].filter(Boolean).join(', ');
