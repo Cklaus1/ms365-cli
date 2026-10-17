@@ -6,8 +6,8 @@ import { CliError, ExitCode, handleErrors } from '../errors.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import type { GraphClient } from '../graph-client.js';
 import { withIdempotency } from '../idempotency.js';
-import { PLAN_COMMANDS, planDigest, readPlan, resolveRefs, sha256Hex, usage, type Plan } from '../plan.js';
-import { info, outputOption, success } from '../utils.js';
+import { PLAN_COMMANDS, PLAN_CONFIRM, planDigest, readPlan, resolveRefs, sha256Hex, usage, type Plan } from '../plan.js';
+import { confirm, info, outputOption, success } from '../utils.js';
 
 /** Every check that needs no token: digest, command, ceiling (AH-5(7)), expiry, attachment bytes. Nothing is sent. */
 function checkPlan(plan: Plan, expectDigest: string, profileFlag: string | undefined): void {
@@ -66,6 +66,12 @@ export function registerApplyCommand(program: Command, getClient: () => GraphCli
       if (!/^[0-9a-f]{64}$/.test(opts.expectDigest)) throw usage('--expect-digest must be a sha256 in lowercase hex.');
       const plan = readPlan(file);
       checkPlan(plan, opts.expectDigest, program.opts().profile);
+      // A delete or cancel still asks on a terminal and is refused without one: OQ-8 (approval in the host) is open.
+      if (PLAN_CONFIRM[plan.command]) {
+        const field = (key: string): unknown => Reflect.get(Object(plan.payload), key);
+        const notifies = field('notifies');
+        await confirm(`Apply ${plan.command} ${String(field('eventId'))} (${String(field('scope'))}; notifies ${Array.isArray(notifies) ? notifies.length : '?'} attendee(s))?`);
+      }
       const client = getClient();
       if (client.isDryRun()) {
         await sendRequests(client, plan);

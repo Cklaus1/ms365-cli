@@ -144,6 +144,8 @@ const COMMANDS: Record<string, Entry> = {
   'calendar create': 'action',
   'calendar update': 'update',
   'calendar delete': 'delete',
+  'calendar cancel': 'delete',
+  'calendar instances': 'read',
   'calendar view': 'read',
   'calendar accept': 'action',
   'calendar decline': 'action',
@@ -320,8 +322,9 @@ const COMMANDS: Record<string, Entry> = {
   watch: ['read', { arg: 0, map: { mail: ['Mail.Read'], events: ['Calendars.Read'], files: ['Files.Read'], contacts: ['Contacts.Read'] } }],
   // GET /me plus one read per resource; a resource outside the ceiling is reported UNSUPPORTED, not probed (E12).
   health: ['read', ['User.Read']],
-  // AH-5: apply checks the ceiling for the plan's own command; it uses no scope itself.
-  apply: 'action',
+  // AH-5: apply checks the ceiling for the plan's own command; it uses no scope itself. It may delete or cancel (and
+  // asks first, AH-7), and the plan digest makes a repeat a no-op: so destructive and idempotent.
+  apply: 'delete',
 
   'audit tail': 'read',
   'excel tables': 'read',

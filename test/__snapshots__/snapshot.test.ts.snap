@@ -124,6 +124,32 @@ exports[`dry-run endpoint snapshot (every command) > calendar accept 1`] = `
 }
 `;
 
+exports[`dry-run endpoint snapshot (every command) > calendar cancel [optional flags] 1`] = `
+{
+  "argv": "calendar cancel EVENTID --comment x --calendar 2026-10-20T10:00 --if-match x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/calendars/2026-10-20T10%3A00/events/EVENTID?$select=type%2CseriesMasterId%2CisOrganizer%2Cattendees%2CoriginalStartTimeZone%2CchangeKey",
+    "[dry-run] scope: <from GET>; notifies: <from GET>",
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/calendars/2026-10-20T10%3A00/events/EVENTID/cancel",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > calendar cancel 1`] = `
+{
+  "argv": "calendar cancel EVENTID",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/events/EVENTID?$select=type%2CseriesMasterId%2CisOrganizer%2Cattendees%2CoriginalStartTimeZone%2CchangeKey",
+    "[dry-run] scope: <from GET>; notifies: <from GET>",
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/events/EVENTID/cancel",
+  ],
+}
+`;
+
 exports[`dry-run endpoint snapshot (every command) > calendar create [optional flags] 1`] = `
 {
   "argv": "calendar create --subject x --start 2026-10-20T10:00 --end 2026-10-20T10:00 --timezone America/Los_Angeles --body x --location x --attendees a@contoso.com --calendar 2026-10-20T10:00 --idempotency-key x --output json",
@@ -196,6 +222,8 @@ exports[`dry-run endpoint snapshot (every command) > calendar delete [optional f
   "error": "",
   "exitCode": 0,
   "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/calendars/2026-10-20T10%3A00/events/EVENTID?$select=type%2CseriesMasterId%2CisOrganizer%2Cattendees%2CoriginalStartTimeZone%2CchangeKey",
+    "[dry-run] scope: <from GET>; notifies: <from GET>",
     "[dry-run] DELETE https://graph.microsoft.com/v1.0/me/calendars/2026-10-20T10%3A00/events/EVENTID",
   ],
 }
@@ -207,6 +235,8 @@ exports[`dry-run endpoint snapshot (every command) > calendar delete 1`] = `
   "error": "",
   "exitCode": 0,
   "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/events/EVENTID?$select=type%2CseriesMasterId%2CisOrganizer%2Cattendees%2CoriginalStartTimeZone%2CchangeKey",
+    "[dry-run] scope: <from GET>; notifies: <from GET>",
     "[dry-run] DELETE https://graph.microsoft.com/v1.0/me/events/EVENTID",
   ],
 }
@@ -296,6 +326,28 @@ exports[`dry-run endpoint snapshot (every command) > calendar get 1`] = `
   "exitCode": 0,
   "requests": [
     "[dry-run] GET https://graph.microsoft.com/v1.0/me/events/EVENTID",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > calendar instances [optional flags] 1`] = `
+{
+  "argv": "calendar instances SERIESID --start 2026-10-20T10:00 --end 2026-10-20T10:00 --calendar 2026-10-20T10:00 --timezone America/Los_Angeles --page-limit 5 --page-delay 5 --output json",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/calendars/2026-10-20T10%3A00/events/SERIESID/instances?startDateTime=2026-10-20T17%3A00%3A00.000Z&endDateTime=2026-10-20T17%3A00%3A00.000Z",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > calendar instances 1`] = `
+{
+  "argv": "calendar instances SERIESID --start 2026-10-20T10:00 --end 2026-10-20T10:00",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/events/SERIESID/instances?startDateTime=2026-10-20T17%3A00%3A00.000Z&endDateTime=2026-10-20T17%3A00%3A00.000Z",
   ],
 }
 `;
@@ -394,6 +446,8 @@ exports[`dry-run endpoint snapshot (every command) > calendar update [optional f
   "error": "",
   "exitCode": 0,
   "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/calendars/2026-10-20T10%3A00/events/EVENTID?$select=type%2CseriesMasterId%2CisOrganizer%2Cattendees%2CoriginalStartTimeZone%2CchangeKey",
+    "[dry-run] scope: <from GET>; notifies: <from GET>",
     "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/calendars/2026-10-20T10%3A00/events/EVENTID",
   ],
 }
@@ -405,6 +459,8 @@ exports[`dry-run endpoint snapshot (every command) > calendar update 1`] = `
   "error": "",
   "exitCode": 0,
   "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/events/EVENTID?$select=type%2CseriesMasterId%2CisOrganizer%2Cattendees%2CoriginalStartTimeZone%2CchangeKey",
+    "[dry-run] scope: <from GET>; notifies: <from GET>",
     "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/events/EVENTID",
   ],
 }

@@ -3,15 +3,21 @@ import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import {
   addListOptions, outputOption, confirm, info, success, validateEmail, resolveTimeZone, preferTimeZone, parseTime, parseGraphDateTime, toIsoWithOffset, fromGet,
-  addBodyOptions, bodyText,
+  addBodyOptions, bodyText, dryRunTrace,
 } from '../utils.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { fingerprint, isDryRun, withIdempotency } from '../idempotency.js';
-import { ifMatchFor, readVersion } from '../plan.js';
+import { hostPlanning, ifMatchFor, planning, readVersion, setPlanPayload, setPlanTarget, usage } from '../plan.js';
 
 const TZ_HELP = 'IANA time zone (default: MS365_CLI_TIMEZONE or the local zone)';
 const TIME_HELP = 'ISO 8601 or natural ("tomorrow 15:00", "next mon 9:30", "+2h")';
 const IF_MATCH_HELP = 'Only change the event if it is unchanged: an @odata.etag, or "auto" to read it first (412 → exit 4 version_changed)';
+const SERIES_HELP = 'The event is a recurring series and the change is meant for every occurrence (refused in a host plan)';
+
+/** An event's path, in the given calendar or the default one. */
+const eventPath = (calendar: string | undefined, eventId: string): string => (calendar
+  ? `/me/calendars/${encodeURIComponent(calendar)}/events/${encodeURIComponent(eventId)}`
+  : `/me/events/${encodeURIComponent(eventId)}`);
 
 /** A CLI time expression as a Graph dateTimeTimeZone in `tz`. */
 function graphTime(input: string, tz: string): { dateTime: string; timeZone: string } {
@@ -37,6 +43,67 @@ function eventZoneTime(input: string, eventTz: string): { dateTime: string; time
       { code: 'usage', exitCode: ExitCode.USAGE });
   }
   return graphTime(input, tz);
+}
+
+/** Graph's event `type` → what a write to that event reaches (AH-7(4)). */
+const EVENT_SCOPE: Record<string, string> = { seriesMaster: 'series', occurrence: 'occurrence', exception: 'occurrence', singleInstance: 'single' };
+
+type Notified = Array<{ address: string; type: string }>;
+
+/** What a calendar write reaches, read before it is made (AH-7(1), (4)). Under --dry-run scope and notifies are `<from GET>`. */
+interface EventCheck {
+  version?: string;
+  scope: string;
+  /** Who Graph notifies: every attendee when we organize the event, nobody otherwise (†). */
+  notifies: Notified | string;
+  isOrganizer: boolean | null;
+  /** The event's own zone (originalStartTimeZone), which an update keeps (AH-7(5)). */
+  zone?: string;
+  /** "occurrence; notifies a@x, b@y", for the confirmation prompt. */
+  impact: string;
+}
+
+/**
+ * GET the event's type, organizer flag, attendees, zone and version before an update, delete or cancel. A series master
+ * is refused unless --series is given; a host plan never takes --series (Chief: never cancel a whole series).
+ */
+async function checkEvent(client: GraphClient, endpoint: string, eventId: string, series: boolean): Promise<EventCheck> {
+  if (series && hostPlanning()) {
+    throw usage('A host plan never changes a whole recurring series (--series). Plan one occurrence; `ms365 calendar instances <seriesId> --start … --end …` lists them.', 'series_refused');
+  }
+  const { item, version } = await readVersion(client, endpoint, 'type,seriesMasterId,isOrganizer,attendees,originalStartTimeZone');
+  if (client.isDryRun()) {
+    const unknown = fromGet();
+    dryRunTrace(`scope: ${unknown}; notifies: ${unknown}`);
+    return { version, scope: unknown, notifies: unknown, isOrganizer: null, impact: `${unknown}; notifies ${unknown}` };
+  }
+  const field = (key: string): unknown => (item && typeof item === 'object' ? Reflect.get(item, key) : undefined);
+  const type = field('type');
+  if (type === 'seriesMaster' && !series) {
+    throw usage(`Event ${eventId} is a recurring series, so this would change every occurrence. Act on one occurrence (\`ms365 calendar instances ${eventId} --start … --end …\` lists them), or pass --series.`, 'series_refused');
+  }
+  const organizer = field('isOrganizer');
+  const isOrganizer = typeof organizer === 'boolean' ? organizer : null;
+  const attendees = field('attendees');
+  const notifies: Notified = isOrganizer && Array.isArray(attendees)
+    ? attendees.flatMap((a: unknown) => {
+      const address: unknown = Reflect.get(Object(Reflect.get(Object(a), 'emailAddress')), 'address');
+      const kind: unknown = Reflect.get(Object(a), 'type');
+      return typeof address === 'string' ? [{ address, type: typeof kind === 'string' ? kind : 'required' }] : [];
+    })
+    : [];
+  const scope = EVENT_SCOPE[String(type)] ?? 'single';
+  const zone = field('originalStartTimeZone');
+  return {
+    version, scope, notifies, isOrganizer, ...(typeof zone === 'string' && { zone }),
+    impact: `${scope}; notifies ${notifies.length ? notifies.map(n => n.address).join(', ') : 'nobody'}`,
+  };
+}
+
+/** Under --plan: bind the event's version and record what the write does and whom it reaches. */
+function planEvent(eventId: string, check: EventCheck, payload: Record<string, unknown>): void {
+  setPlanTarget({ id: eventId, version: check.version ?? '' });
+  setPlanPayload({ eventId, ...payload, scope: check.scope, notifies: check.notifies });
 }
 
 /** getSchedule's availabilityViewInterval: whole minutes, 5 to 1440 (†). */
@@ -180,14 +247,17 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
 
       const create = () => client.request(endpoint, { method: 'POST', body: JSON.stringify(event) });
       const key: string | undefined = opts.idempotencyKey;
-      if (!key) {
-        console.log(formatOutput((await create()).data, opts.output as OutputFormat));
-        return;
-      }
       // Graph de-duplicates on transactionId server-side; the ledger also skips the request on a local retry (D23).
-      event.transactionId = key;
-      if (isDryRun(client)) {
-        console.log(formatOutput((await create()).data, opts.output as OutputFormat));
+      if (key) event.transactionId = key;
+      // Under --plan the invitees are who it notifies (AH-7(4)); apply sends the recorded transactionId too.
+      const invited: unknown = event.attendees;
+      setPlanPayload({
+        ...event, scope: 'single',
+        notifies: Array.isArray(invited) ? invited.map(a => ({ address: Reflect.get(Object(Reflect.get(Object(a), 'emailAddress')), 'address'), type: 'required' })) : [],
+      });
+      if (!key || isDryRun(client) || planning()) {
+        const created = (await create()).data;
+        if (!planning()) console.log(formatOutput(created, opts.output as OutputFormat));
         return;
       }
       let created: unknown;
@@ -202,20 +272,20 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
 
   addBodyOptions(cal
     .command('update <eventId>')
-    .description('Update a calendar event')
+    .description('Update a calendar event (a series master needs --series; the organizer\'s change notifies every attendee)')
     .option('--subject <subject>', 'Event subject')
     .option('--start <datetime>', `Start: ${TIME_HELP}`)
     .option('--end <datetime>', `End: ${TIME_HELP}`)
     .option('--timezone <tz>', 'IANA time zone for --start/--end (default: the event\'s own zone)'), 'Event body')
     .option('--location <location>', 'Event location')
     .option('--calendar <calendarId>', 'Specific calendar ID')
+    .option('--series', SERIES_HELP)
     .option('--if-match <etag>', IF_MATCH_HELP)
     .addOption(outputOption())
     .action(handleErrors(async (eventId: string, opts) => {
       const client = getClient();
-      const endpoint = opts.calendar
-        ? `/me/calendars/${encodeURIComponent(opts.calendar)}/events/${encodeURIComponent(eventId)}`
-        : `/me/events/${encodeURIComponent(eventId)}`;
+      const endpoint = eventPath(opts.calendar, eventId);
+      const check = await checkEvent(client, endpoint, eventId, !!opts.series);
 
       const patch: Record<string, unknown> = {};
       if (opts.subject) patch.subject = opts.subject;
@@ -224,15 +294,12 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
         if (opts.timezone) {
           const tz = resolveTimeZone(opts.timezone);
           toGraph = (input) => graphTime(input, tz);
+        } else if (client.isDryRun()) {
+          toGraph = (input) => ({ dateTime: graphTime(input, resolveTimeZone()).dateTime, timeZone: fromGet() });
         } else {
           // Without a Prefer header start.timeZone is always UTC; originalStartTimeZone is the event's real zone.
-          const existing = await client.request(endpoint, { queryParams: { $select: 'originalStartTimeZone' } });
-          const eventTz = (existing.data as { originalStartTimeZone?: string }).originalStartTimeZone;
-          if (client.isPreview(existing)) {
-            toGraph = (input) => ({ dateTime: graphTime(input, resolveTimeZone()).dateTime, timeZone: fromGet() });
-          } else {
-            toGraph = eventTz ? (input) => eventZoneTime(input, eventTz) : (input) => graphTime(input, resolveTimeZone());
-          }
+          const eventTz = check.zone;
+          toGraph = eventTz ? (input) => eventZoneTime(input, eventTz) : (input) => graphTime(input, resolveTimeZone());
         }
         if (opts.start) patch.start = toGraph(opts.start);
         if (opts.end) patch.end = toGraph(opts.end);
@@ -241,31 +308,76 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
       if (body) patch.body = { contentType: 'Text', content: body };
       if (opts.location) patch.location = { displayName: opts.location };
 
-      const ifMatch = await ifMatchFor(opts.ifMatch, async () => (await readVersion(client, endpoint, '')).version);
+      if (planning()) planEvent(eventId, check, { patch });
+      const ifMatch = await ifMatchFor(opts.ifMatch, async () => check.version);
       const response = await client.request(endpoint, {
         method: 'PATCH',
         body: JSON.stringify(patch),
         ...(ifMatch && { headers: { 'If-Match': ifMatch } }),
       });
 
-      console.log(formatOutput(response.data, opts.output as OutputFormat));
+      if (!planning()) console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
   cal
     .command('delete <eventId>')
-    .description('Delete a calendar event')
+    .description('Delete a calendar event (as organizer this sends cancellations; a series master needs --series)')
     .option('--calendar <calendarId>', 'Specific calendar ID')
+    .option('--series', SERIES_HELP)
     .option('--if-match <etag>', IF_MATCH_HELP)
     .action(handleErrors(async (eventId: string, opts) => {
-      if (!await confirm(`Delete event ${eventId.substring(0, 16)}...?`)) return;
       const client = getClient();
-      const endpoint = opts.calendar
-        ? `/me/calendars/${encodeURIComponent(opts.calendar)}/events/${encodeURIComponent(eventId)}`
-        : `/me/events/${encodeURIComponent(eventId)}`;
+      const endpoint = eventPath(opts.calendar, eventId);
+      const check = await checkEvent(client, endpoint, eventId, !!opts.series);
+      // A plan is not the delete: `apply` asks (AH-7(6), OQ-8 open).
+      if (planning()) planEvent(eventId, check, {});
+      else if (!await confirm(`Delete event ${eventId.substring(0, 16)}... (${check.impact})?`)) return;
 
-      const ifMatch = await ifMatchFor(opts.ifMatch, async () => (await readVersion(client, endpoint, '')).version);
+      const ifMatch = await ifMatchFor(opts.ifMatch, async () => check.version);
       await client.request(endpoint, { method: 'DELETE', ...(ifMatch && { headers: { 'If-Match': ifMatch } }) });
-      success('Event deleted.');
+      if (!planning()) success('Event deleted.');
+    }));
+
+  cal
+    .command('cancel <eventId>')
+    .description('Cancel a meeting you organize: every attendee gets a cancellation with --comment (attendees: use decline)')
+    .option('--comment <text>', 'Message sent with the cancellation')
+    .option('--calendar <calendarId>', 'Specific calendar ID')
+    .option('--series', SERIES_HELP)
+    .option('--if-match <etag>', IF_MATCH_HELP)
+    .action(handleErrors(async (eventId: string, opts) => {
+      const client = getClient();
+      const endpoint = eventPath(opts.calendar, eventId);
+      const check = await checkEvent(client, endpoint, eventId, !!opts.series);
+      if (!client.isDryRun() && check.isOrganizer !== true) {
+        throw usage(`You do not organize event ${eventId}, so you cannot cancel it. To leave it, decline it: \`ms365 calendar decline ${eventId} --comment …\`.`, 'not_organizer');
+      }
+      const comment: string = opts.comment ?? '';
+      if (planning()) planEvent(eventId, check, { comment });
+      else if (!await confirm(`Cancel event ${eventId.substring(0, 16)}... (${check.impact})?`)) return;
+
+      const ifMatch = await ifMatchFor(opts.ifMatch, async () => check.version);
+      await client.request(`${endpoint}/cancel`, {
+        method: 'POST', body: JSON.stringify({ comment }), ...(ifMatch && { headers: { 'If-Match': ifMatch } }),
+      });
+      if (!planning()) success('Event cancelled; the attendees were sent a cancellation.');
+    }));
+
+  addListOptions(cal
+    .command('instances <seriesId>')
+    .description('List the occurrences of a recurring series in a time range (paged)')
+    .requiredOption('--start <datetime>', `Start: ${TIME_HELP}`)
+    .requiredOption('--end <datetime>', `End: ${TIME_HELP}`)
+    .option('--calendar <calendarId>', 'Specific calendar ID')
+    .option('--timezone <tz>', `Zone for --start/--end and returned times; ${TZ_HELP}`))
+    .addOption(outputOption())
+    .action(handleErrors(async (seriesId: string, opts) => {
+      const tz = resolveTimeZone(opts.timezone);
+      const queryParams: Record<string, string> = {
+        startDateTime: parseTime(opts.start, { tz }).date.toISOString(),
+        endDateTime: parseTime(opts.end, { tz }).date.toISOString(),
+      };
+      await printList(getClient(), `${eventPath(opts.calendar, seriesId)}/instances`, { queryParams, headers: preferTimeZone(tz) }, opts);
     }));
 
   addListOptions(cal
