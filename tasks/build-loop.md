@@ -51,3 +51,4 @@ DONE = AOT-1..AOT-6 DONE or BLOCKED-and-logged
 ## Divergence log
 - **2026-10-17 AOT-1:** dry-run snapshot updated in AOT-1 (not deferred to AOT-4), because intentional request-shape changes (`by-department` `$select` + `accountEnabled`) otherwise leave the gate red; AOT-4 still regenerates once at the end. Same diff pruned the two obsolete `chief brief` entries from AOT-2.
 - **2026-10-17 AOT-1:** AO-23 coverage warning counts enabled accounts *with a department* missing from the report (the literal "all enabled users" would warn on every tenant with unlicensed/service accounts).
+- **2026-10-17 after AOT-6:** real-export smoke found `appIdOf()` preferring `AppId` (the resource) over `ClientAppId` (the caller); `--app` matched nothing. Fixed with a fail-first test; real-file aggregates now match the manual 2026-10-17 analysis. Lesson 12.

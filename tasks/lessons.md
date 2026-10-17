@@ -16,3 +16,7 @@ Mistake → rule. Added only after a correction or failure.
 ## 11. Timing bounds in tests must hold under full-suite load
 **Mistake:** the hung-keychain test asserted < 2.5 s; it passed alone 5/5 but failed once in the parallel full suite.
 **Rule:** a wall-clock bound only has to separate "killed at the timeout" from "waited for the hang" — set it near the midpoint (stub hangs 30 s → bound 8 s), never just above the timeout.
+
+## 12. Fixtures written from the spec share the spec's blind spots — smoke against one real record
+**Mistake:** every audit-trail fixture put the calling app in `AppId`; real Exchange records put the resource (Microsoft Graph) there and the caller in `ClientAppId`. 1,781 tests passed while `--app` matched nothing on a real export.
+**Rule:** when a feature parses an external record format, run it once against a real sample (or a fixture copied field-for-field from one, content scrubbed) before calling the task done.

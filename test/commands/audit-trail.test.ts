@@ -747,3 +747,24 @@ describe('audit-trail mailbox: target annotation (AO-30)', () => {
     expect(JSON.parse(r.stdout).value).toHaveLength(1);
   });
 });
+
+describe('audit-trail: calling app vs resource app (real Purview record shape)', () => {
+  // Real MailItemsAccessed records carry the RESOURCE in AppId (Microsoft Graph) and the calling
+  // client in ClientAppId / AppAccessContext.ClientAppId. Found on a live export 2026-10-17.
+  const GRAPH = '00000003-0000-0000-c000-000000000000';
+  const CLIENT = '07c030f6-5743-41b7-ba00-0a6e85f37c17';
+  const real = {
+    Operation: 'MailItemsAccessed', UserId: 'pat@contoso.com', MailboxOwnerUPN: 'ops@contoso.com', LogonType: 2,
+    AppId: GRAPH, ClientAppId: CLIENT, AppAccessContext: { ClientAppId: CLIENT, APIId: GRAPH },
+  };
+  it('projectRecord reports the calling app, not the resource', () => {
+    expect(projectRecord(real).appId).toBe(CLIENT);
+  });
+  it('falls back to AppAccessContext.ClientAppId, then AppId', () => {
+    expect(projectRecord({ ...real, ClientAppId: undefined }).appId).toBe(CLIENT);
+    expect(projectRecord({ AppId: 'aaaaaaaa-0000-4000-8000-000000000001' }).appId).toBe('aaaaaaaa-0000-4000-8000-000000000001');
+  });
+  it('accessFacts keeps the calling app so --app filters match', () => {
+    expect(accessFacts(real).appId).toBe(CLIENT);
+  });
+});

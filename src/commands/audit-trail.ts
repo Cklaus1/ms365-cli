@@ -192,8 +192,9 @@ export function projectRecord(auditData: unknown, envelope: AuditEnvelope = {}):
   };
 }
 
+/** The calling app. In Exchange records `AppId` is often the resource (Microsoft Graph), so the client comes first. */
 function appIdOf(a: Obj): string | undefined {
-  return str(a.AppId) ?? str(a.ClientAppId) ?? str(obj(a.AppAccessContext).ClientAppId);
+  return str(a.ClientAppId) ?? str(obj(a.AppAccessContext).ClientAppId) ?? str(a.AppId);
 }
 
 /** projectRecord() plus the facts aggregation needs (target mailbox, raw logon code, item count). Pure. */
