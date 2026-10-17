@@ -280,7 +280,7 @@ The reference below is generated from the live command tree (`ms365 describe --j
 
 | Command | Description | Arguments | Key options | Notes |
 |---|---|---|---|---|
-| `apply` | Send exactly the requests of a plan written by --plan, after checking its digest, the profile ceiling, expiry, attachment bytes and token identity; If-Match is part of the plan (412 → exit 4 version_changed) | `<planFile>` | `--expect-digest <sha256>` (required) | **destructive** · offline |
+| `apply` | Send exactly the requests of a plan written by --plan, after checking its digest, the profile ceiling, expiry, attachment bytes and token identity; If-Match is part of the plan (412 → exit 4 version_changed). A calendar delete/cancel plan asks on a terminal; without one it is applied only under a type: host profile (the host approved the digest), otherwise exit 7 | `<planFile>` | `--expect-digest <sha256>` (required) | **destructive** · offline |
 
 ### audit
 
@@ -760,7 +760,10 @@ expiry. `mail send` reports `ACCEPTED` (Exchange took it), never "delivered"; a 
 `outcome_unknown`, and `ms365 mail reconcile --idempotency-key <key>` then says `SENT`, `STILL_DRAFT` or
 `NOT_FOUND_YET` (do not resend). Calendar plans name their `scope`
 (`single`, `occurrence`, `series`) and who gets a notice (`notifies`); a series needs `--series`, which a host plan
-refuses. Applying a calendar delete or cancel asks on a terminal and exits 7 without one.
+refuses. Applying a calendar delete or cancel asks on a terminal. Without one it runs only under a `type: host`
+profile, with the approved `--expect-digest`, before expiry, for the identity the plan names, inside the ceiling, and
+when every request is the delete/cancel its label says; anything else sends nothing (exit 2/3/4 for digest, expiry,
+identity, ceiling; exit 7 `confirmation_refused` otherwise).
 
 **7. MCP.** `ms365 mcp serve` exposes the same commands as tools (arguments passed in a 0600 file, never argv) and
 `ms365://watch/<resource>` resources that resume their cursor after a restart.

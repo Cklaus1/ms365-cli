@@ -1,8 +1,8 @@
 {
   "v": 1,
   "ms365": {
-    "commit": "8a438f44d842292a98c54afbda5a654d5f4529e1",
-    "distSha256": "58f4c44fb0fbd5066dc4dc41650fb9fd7c93f1fe1742b985b2f5235ec689282e"
+    "commit": "9a3773c8ac02564f52b211cac9d86a7d03a8c881",
+    "distSha256": "9b86f18b6740f86fed2c6ae2495db29bd7f83a39e365d2c0de20c32b58252e67"
   },
   "clock": "2026-10-17T12:00:00.000Z",
   "profile": {
@@ -27,7 +27,7 @@
       ],
       "exitCode": 0,
       "capture": "stdout",
-      "sha256": "8fe3c5fd864bab6f6c2a41b40b9939c26f7da64eeba1fce14405caa9d8e0abe1"
+      "sha256": "5b1a1d11a0588be06abb4ccf12b73969121d2503f67acc2969a289ff74f0ce57"
     },
     "auth-status.json": {
       "argv": [

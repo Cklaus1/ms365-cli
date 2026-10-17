@@ -208,5 +208,24 @@ check "budget out of range" 2 env MS365_CLI_REQUEST_TIMEOUT_MS=10 $CLI --error-f
 #     clock) gives the committed bytes; any contract change must regenerate the fixture in the same commit
 check "contract fixture" 0 node scripts/contract.mjs --check && ok "contract fixture"
 
+# 24. AHT-9 (OQ-8 b): without a terminal, an approved calendar delete plan is applied under a type: host profile
+#     (exactly 1 DELETE; its If-Match is asserted in test/calendar-plans.test.ts); the same plan under a user profile
+#     exits 7 confirmation_refused with zero fetches
+printf '{"type":"host","tenantId":"%s","scopes":["User.Read","Calendars.ReadWrite"]}\n' "$TENANT" > "$H/cfg/profiles/chief-cal.json"
+printf '{"type":"user","scopes":["User.Read","Calendars.ReadWrite"]}\n' > "$H/cfg/profiles/ceo-user.json"
+CALTOK="$(jwt "{\"aud\":\"https://graph.microsoft.com\",\"tid\":\"$TENANT\",\"oid\":\"22222222-3333-4444-5555-666666666666\",\"scp\":\"Calendars.ReadWrite User.Read\",\"exp\":$(( $(date +%s) + 3600 ))}")"
+EV='[{"method":"GET","match":"/me/events/E1\\?","body":{"id":"E1","type":"singleInstance","isOrganizer":true,"@odata.etag":"W/\"ek1\"","attendees":[]}},{"method":"DELETE","match":"/me/events/E1$","status":204}]'
+crun() { # name expected_exit profile cmd-args... (calendar token, stdin not a terminal)
+  local name="$1" want="$2" prof="$3"; shift 3
+  check "$name" "$want" env HOME="$H/home" MS365_CLI_CONFIG_DIR="$H/cfg" MS365_CLI_CLIENT_ID= MS365_CLI_TOKEN="$CALTOK" \
+    MS365_TEST_FETCH_ROUTES="$EV" $HCLI --profile "$prof" --error-format json "$@" </dev/null
+}
+crun "plan calendar delete (host)" 0 chief-cal --plan "$TMP/del.json" calendar delete E1 && ok "plan calendar delete (host)"
+DIG="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).digest)' "$TMP/del.json" 2>/dev/null)"
+crun "apply delete non-TTY, user profile" 7 ceo-user apply "$TMP/del.json" --expect-digest "$DIG" && {
+  [ "$(errcode)" = confirmation_refused ] && [ "$(fetches)" = 0 ] && ok "apply delete non-TTY, user profile (exit 7, 0 fetches)" || bad "apply delete non-TTY, user profile (code $(errcode), $(fetches) fetches)"; }
+crun "apply delete non-TTY, host profile" 0 chief-cal apply "$TMP/del.json" --expect-digest "$DIG" && {
+  [ "$(fetches)" = 1 ] && grep -q '^\[fetch\] DELETE .*/me/events/E1$' "$TMP/err" && ok "apply delete non-TTY, host profile (1 DELETE)" || bad "apply delete non-TTY, host profile ($(fetches) fetches)"; }
+
 echo "smoke: pass=$pass fail=$fail skip=$skip"
 [ "$fail" = 0 ]

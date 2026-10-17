@@ -326,7 +326,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
       const client = getClient();
       const endpoint = eventPath(opts.calendar, eventId);
       const check = await checkEvent(client, endpoint, eventId, !!opts.series);
-      // A plan is not the delete: `apply` asks (AH-7(6), OQ-8 open).
+      // A plan is not the delete: `apply` asks, or takes a host approval without a terminal (AH-7(6), OQ-8 b).
       if (planning()) planEvent(eventId, check, {});
       else if (!await confirm(`Delete event ${eventId.substring(0, 16)}... (${check.impact})?`)) return;
 
