@@ -149,3 +149,17 @@ Steps 0–2 done upstream (owner decisions recorded in the spec, 8a438f4). Branc
 **Critical path:** AHT-9b. Extra gate: every OQ-8 refusal case has a fail-first test that asserts exit code, error code **and an empty request log** (in-process `calls` or the fetch-stub `[fetch]` log); the interactive path keeps its existing test unchanged.
 
 **Cross-agent:** after the AHT-15 commit, message `agent://ChiefFollowups` with the commit, `test/fixtures/contract/` and the manifest format.
+
+## Follow-up run results (2026-10-17)
+
+| Task | Commit | Gate (vs baseline 68 files / 1970, smoke 32) |
+|---|---|---|
+| AHT-15 contract fixture | 9a3773c | 69 files / 1974 passed; tsc 0; smoke 33/0/0; docs:check ok |
+| AHT-9 non-TTY apply (OQ-8 b) | 6a5a47a | 69 / 1980; tsc 0; smoke 36/0/0; docs:check ok |
+| Implementation review fixes | see git log | 69 / 1981; tsc 0; smoke 36/0/0; docs:check ok |
+
+**Implementation review (reviewer agent, 2026-10-17), dispositions:** (1, major) host path trusted the coarse `requestCommand` → fixed: exactly one request, the exact DELETE/POST `/cancel` path of `payload.eventId` = `target.id` (E29 (3)), 7 forge tests; the classifier itself → opportunity P2. (2, minor) series-scope plan applicable unattended → fixed: scope must be `single`/`occurrence`. (3, minor) `mcp serve` tool call took the host path → fixed: refused under `MS365_CLI_MCP=1` (exit 7), tested. (4, minor) manifest `commit` provenance → fixed: `dirty` flag + final manifest-only regeneration on the committed tree. (5, nit) README exit-code list → fixed. (6, nit) partial identity untested → fixed (`tenant only` forge); `--profile` over env precedence → smoke check 24 now sets `MS365_CLI_PROFILE` to the host profile while `--profile ceo-user` is refused.
+
+**Fail-first evidence:** AHT-15: tamper test (changed byte, missing file, stray file) and the check fails on the AHT-9 description change before regeneration (smoke `contract fixture` FAIL observed). AHT-9: 4 of 6 new tests red on 8a438f4 code; the refusal tests that pass on the old (refuse-everything) code are proven by mutation — disabling each guard (profile, MCP, request path, single request, target, scope, identity `||`→`&&`) turns its test red (lesson 17). The `!PLAN_CONFIRM[plan.command]` clause survives mutation (the method/path check already implies it); kept as the explicit invariant.
+
+**Owner-only (not done):** live-tenant evidence of a host-approved delete/cancel is AHT-14 (Gate 3, dedicated test mailbox; owner runs consent and sign-in). Node 22 contract reproduction is CI-only here (no Node 22 installed).

@@ -32,3 +32,11 @@ Mistake → rule. Added only after a correction or failure.
 ## 15. A signed file's self-description is not a capability
 **Mistake:** `apply` took the scope ceiling and the delete/cancel confirmation from the plan's `command` label, but the digest is computed over the file, so whoever writes the file chooses the label.
 **Rule:** derive every safety decision from the bytes that will be acted on (the requests), and treat labels as claims to be checked against them.
+
+## 16. A behaviour change rewrites its own help text, and help text is contract bytes
+**Mistake:** I told ChiefFollowups AHT-9 would not change any fixture bytes; documenting the new non-TTY rule in `apply`'s description changed `describe.json` (the contract check caught it at once).
+**Rule:** before promising a peer "no contract change", run `npm run contract:check` on the finished change; description strings are in `describe --json`.
+
+## 17. Refusal tests cannot fail first when the old code refuses everything — mutate the new guards instead
+**Mistake (near miss):** relaxing "never without a TTY" to "only when …", the mislabel / no-identity / dry-run refusal tests passed on the old code, so a red-then-green run proved nothing about them.
+**Rule:** when a change relaxes a blanket refusal, prove each new guard by disabling it (one at a time) and watching its test fail; record that mutation run as the fail-first evidence.

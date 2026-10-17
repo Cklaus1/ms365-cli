@@ -46,19 +46,34 @@ function checkPlan(plan: Plan, expectDigest: string, profileFlag: string | undef
 
 /**
  * OQ-8 (b): without a terminal, a delete/cancel plan is applied only when the approval happened in the host. By the
- * time this runs, checkPlan has matched `--expect-digest`, the expiry and the ceiling for every request; this adds
- * that the active profile is `type: host`, that every request is the delete/cancel its label names (a mislabelled
- * plan, E27, was not what the host showed), and that the plan names the tenant and account the identity check
- * compares (done before sending). Anything else keeps exit 7 with nothing sent.
+ * time this runs, checkPlan has matched `--expect-digest`, the expiry and the ceiling for every request. This adds:
+ * the active profile is `type: host` and the call is not an MCP tool call; the plan is labelled delete/cancel and
+ * holds exactly the one request that command sends for the event it names (`DELETE …/events/<id>` or `POST
+ * …/events/<id>/cancel`, in the default calendar or one named calendar), so the label and payload the host showed
+ * are what is sent (E27); its scope is one event or occurrence, never a series (AH-7(1)); and it names the tenant
+ * and account the identity check compares before sending. Anything else keeps exit 7 with nothing sent.
  */
-function assertHostApproval(plan: Plan, commands: string[], profileFlag: string | undefined): void {
+function assertHostApproval(plan: Plan, profileFlag: string | undefined): void {
   const name = profileFlag || process.env.MS365_CLI_PROFILE;
   const refuse = (why: string) => new ConfirmationRefusedError(`Applying ${plan.command} without a terminal ${why}; nothing was sent.`);
   if (!name || profileType(readProfile(name)) !== 'host') {
     throw refuse('needs a type: host profile (the approval happens in the agent host and --expect-digest binds it); run it in a terminal otherwise');
   }
-  if (commands.length !== 1 || commands[0] !== plan.command) {
-    throw refuse(`is refused: its requests amount to ${commands.join(' and ')}, not only what its label says`);
+  if (process.env.MS365_CLI_MCP === '1') {
+    throw refuse('is refused under mcp serve: a tool call is not a host approval; run `ms365 apply` from the host');
+  }
+  const eventId: unknown = Reflect.get(Object(plan.payload), 'eventId');
+  const scope: unknown = Reflect.get(Object(plan.payload), 'scope');
+  const tail = typeof eventId === 'string' ? `/events/${encodeURIComponent(eventId)}${plan.command === 'calendar cancel' ? '/cancel' : ''}` : null;
+  const [request, ...more] = plan.requests;
+  const prefix = tail && request?.path.endsWith(tail) ? request.path.slice(0, -tail.length) : null;
+  if (!PLAN_CONFIRM[plan.command] || plan.target?.id !== eventId || more.length > 0 || !request
+    || request.method !== (plan.command === 'calendar delete' ? 'DELETE' : 'POST')
+    || (prefix !== '/me' && !/^\/me\/calendars\/[^/?]+$/.test(prefix ?? ''))) {
+    throw refuse('is refused: its requests are not exactly the one its label and event say');
+  }
+  if (scope !== 'single' && scope !== 'occurrence') {
+    throw refuse(`is refused: its scope is ${String(scope)}; a series is never deleted or cancelled unattended`);
   }
   if (!plan.identity.tenantId || !plan.identity.accountId) {
     throw refuse('is refused: the plan does not name the tenant and account it was made for');
@@ -102,7 +117,7 @@ export function registerApplyCommand(program: Command, getClient: () => GraphCli
       const destructive = commands.filter(c => PLAN_CONFIRM[c]);
       // A delete or cancel asks on a terminal (and previews under --dry-run); without one, only a host approval counts.
       const hostApproval = destructive.length > 0 && !process.stdin.isTTY && !isDryRun();
-      if (hostApproval) assertHostApproval(plan, commands, program.opts().profile);
+      if (hostApproval) assertHostApproval(plan, program.opts().profile);
       else if (destructive.length) {
         const field = (key: string): unknown => Reflect.get(Object(plan.payload), key);
         const notifies = field('notifies');

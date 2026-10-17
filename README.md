@@ -761,9 +761,10 @@ expiry. `mail send` reports `ACCEPTED` (Exchange took it), never "delivered"; a 
 `NOT_FOUND_YET` (do not resend). Calendar plans name their `scope`
 (`single`, `occurrence`, `series`) and who gets a notice (`notifies`); a series needs `--series`, which a host plan
 refuses. Applying a calendar delete or cancel asks on a terminal. Without one it runs only under a `type: host`
-profile, with the approved `--expect-digest`, before expiry, for the identity the plan names, inside the ceiling, and
-when every request is the delete/cancel its label says; anything else sends nothing (exit 2/3/4 for digest, expiry,
-identity, ceiling; exit 7 `confirmation_refused` otherwise).
+profile (not as an `mcp serve` tool call), with the approved `--expect-digest`, before expiry, for the tenant and
+account the plan names, inside the ceiling, and when the plan holds exactly the one DELETE (or POST `/cancel`) of the
+single event or occurrence it names — never a series. Anything else sends nothing: exit 2 for a wrong digest or an
+expired plan, 3 for another identity, 4 for the ceiling, 7 `confirmation_refused` otherwise.
 
 **7. MCP.** `ms365 mcp serve` exposes the same commands as tools (arguments passed in a 0600 file, never argv) and
 `ms365://watch/<resource>` resources that resume their cursor after a restart.
@@ -772,7 +773,8 @@ identity, ceiling; exit 7 `confirmation_refused` otherwise).
 -o json`, `health`, one error line per exit code (incl. `scope_ceiling`, `token_rejected`, `cursor_mismatch`,
 `checkpoint_mismatch`), list pages (`complete`/`incompleteReason`/`nextCursor`/`_meta`/`_ref`) and every `watch` line
 kind — generated in host mode through the offline Graph double with a frozen clock. `manifest.json` names each file's
-argv, exit code and sha256, plus the commit and `dist/` sha256 it came from. `npm run contract:check` (and `npm test`)
+argv, exit code and sha256, plus the commit it came from (`dirty: true` when generated before that commit) and the
+`dist/` sha256, which is the pin. `npm run contract:check` (and `npm test`)
 regenerates it and fails on any byte difference; after a deliberate contract change run `npm run contract` and commit
 the fixture with the change. A host vendors the directory and tests its parser against it.
 

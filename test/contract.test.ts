@@ -13,7 +13,7 @@ import { CASES, FIXTURE_DIR, check } from '../scripts/contract.mjs';
 
 interface Manifest {
   v: number;
-  ms365: { commit: string | null; distSha256: string | null };
+  ms365: { commit: string | null; dirty: boolean | null; distSha256: string | null };
   clock: string;
   files: Record<string, { argv: string[]; exitCode: number; capture: string; sha256: string }>;
 }
@@ -53,6 +53,7 @@ describe('contract fixture (AHT-15)', () => {
       expect(e.sha256, f).toBe(crypto.createHash('sha256').update(fs.readFileSync(path.join(FIXTURE_DIR, f))).digest('hex'));
     }
     expect(m.ms365.commit).toMatch(/^[0-9a-f]{40}$/);
+    expect(typeof m.ms365.dirty).toBe('boolean');
     expect(m.ms365.distSha256).toMatch(/^[0-9a-f]{64}$/);
     expect(m.files['error-4-scope_ceiling.json']).toMatchObject({ exitCode: 4, capture: 'error' });
   });

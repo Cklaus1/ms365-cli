@@ -2,8 +2,8 @@
 // AHT-15: the shared contract fixture (Chief MSC-020 vendors it). Every case runs the CLI in host mode through the
 // offline Graph double (test/fixtures/fetch-stub.mjs) with a frozen clock (MS365_TEST_NOW), a synthetic token and a
 // clean environment, and keeps the exact bytes a host parses: stdout, or the error JSON (the last non-empty stderr
-// line). `manifest.json` lists each file with its argv, exit code and sha256, plus the ms365 commit and the dist/
-// sha256 it was generated from.
+// line). `manifest.json` lists each file with its argv, exit code and sha256, plus the ms365 commit (with `dirty`
+// when the inputs differed from it) and the dist/ sha256 it was generated from.
 //
 //   node scripts/contract.mjs                 regenerate test/fixtures/contract/ from dist/ (run `npm run build` first)
 //   node scripts/contract.mjs --check         regenerate into a temp dir and fail on any byte difference
@@ -129,8 +129,19 @@ export function distSha256() {
   return sha256(files.map(f => `${sha256(fs.readFileSync(path.join(dist, f)))}  ${f}\n`).join(''));
 }
 
-function gitCommit() {
-  try { return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return null; }
+/**
+ * The commit the fixture was generated on, and whether the inputs that shape its bytes (src/, package files, the
+ * generator and the fetch-stub) differed from it. Generated before committing, `dirty` is true and only distSha256
+ * pins the bytes; regenerated on the committed tree, `commit` rebuilds the exact fixture.
+ */
+function gitProvenance() {
+  const git = args => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  try {
+    const inputs = ['src', 'package.json', 'package-lock.json', 'tsconfig.json', 'tsup.config.ts', 'scripts/contract.mjs', 'test/fixtures/fetch-stub.mjs'];
+    return { commit: git(['rev-parse', 'HEAD']).trim(), dirty: git(['status', '--porcelain', '--', ...inputs]).trim() !== '' };
+  } catch {
+    return { commit: null, dirty: null };
+  }
 }
 
 /** Run one case in its own HOME/config dir with a clean environment; resolves the fixture bytes. */
@@ -188,7 +199,7 @@ export async function generate(outDir, { entry = 'dist', concurrency = 6 } = {})
   });
   const manifest = {
     v: 1,
-    ms365: { commit: gitCommit(), distSha256: entry === 'dist' ? distSha256() : null },
+    ms365: { ...gitProvenance(), distSha256: entry === 'dist' ? distSha256() : null },
     clock: NOW,
     profile: { name: 'chief', type: 'host', tenantId: TENANT, scopes: SCOPES },
     files,
@@ -199,7 +210,7 @@ export async function generate(outDir, { entry = 'dist', concurrency = 6 } = {})
 
 /**
  * Regenerate into a temp dir and compare with `fixtureDir`: every fixture file byte for byte, and the manifest
- * except its `ms365` block (the commit and dist digest it was generated from, which move with every change).
+ * except its `ms365` block (the commit, dirty flag and dist digest it was generated from, which move with every change).
  * Returns the list of differences (empty: the contract is unchanged).
  */
 export async function check({ entry = 'dist', fixtureDir = FIXTURE_DIR } = {}) {
