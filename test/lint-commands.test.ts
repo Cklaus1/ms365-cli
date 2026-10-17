@@ -53,7 +53,7 @@ const NO_CURSOR: Record<string, string> = {
 };
 const NO_CURSOR_PREFIX: Record<string, string> = {
   'workflow ': 'reports aggregate several reads; no collection to page',
-  'reports ': 'usage reports return one bounded response (at most 180 daily rows, or rolled-up departments); Graph does not page them',
+  'reports ': 'usage reports print one aggregated document (at most 180 daily rows, or rolled-up departments); every Graph page of a JSON report is read internally (AO-23), so there is no cursor to surface',
 };
 
 const twoPages = (call: RecordedCall) => call.path.includes('$skiptoken=')
