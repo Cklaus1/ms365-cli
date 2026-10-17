@@ -4,7 +4,8 @@ import { registerWorkflowCommands } from '../../src/commands/workflow.js';
 
 const TZ = 'America/Los_Angeles';
 const env = { MS365_CLI_TIMEZONE: TZ };
-const PREFER = `outlook.timezone="${TZ}"`;
+/** Calendar requests also ask for immutable ids (AH-3). */
+const PREFER = `outlook.timezone="${TZ}", IdType="ImmutableId"`;
 
 /** Graph returns UTC unless the Prefer header asks for the user's zone. */
 const at = (call: RecordedCall, laWall: string, utcWall: string) =>

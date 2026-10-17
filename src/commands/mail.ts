@@ -172,8 +172,9 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         endpoint = `/me/mailFolders/${encodeURIComponent(await resolve(client, 'mail-folder', opts.folder))}/messages`;
       }
 
+      // AH-3: a $search that returns its 250-item maximum says so in band (incompleteReason "search_cap").
       await printList(client, endpoint, { queryParams, headers: textBodyHeaders(opts.body) }, opts,
-        { transform: messageTransform(client, 'mail', contentOptions(opts)) });
+        { transform: messageTransform(client, 'mail', contentOptions(opts)), searchCap: opts.search ? 250 : undefined });
     }));
 
   addContentOptions(mail

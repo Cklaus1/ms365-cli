@@ -183,7 +183,7 @@ describe('mail get: --body, --unique, --max-chars, untrusted marking (§6)', () 
   it('default keeps the HTML body and marks the message untrusted with sender.external', async () => {
     const r = await run(['get', 'M1', '-o', 'json'], { routes: [me, ['GET', '/me/messages/M1', () => mailMsg('M1', 'bob@fabrikam.com')]] });
     expect(r.exitCode).toBe(0);
-    expect(r.calls[0].headers.Prefer).toBeUndefined();
+    expect(r.calls[0].headers.Prefer).toBe('IdType="ImmutableId"');
     const out = JSON.parse(r.stdout);
     expect(out.body.content).toBe('<p>Hello <b>there</b> friend</p>');
     expect(out.untrusted).toBe(true);
@@ -201,13 +201,13 @@ describe('mail get: --body, --unique, --max-chars, untrusted marking (§6)', () 
     const r = await run(['get', 'M1', '--body', 'text', '-o', 'json'], {
       routes: [me, ['GET', '/me/messages/M1', () => ({ ...mailMsg('M1', 'a@contoso.com'), body: { contentType: 'text', content: 'Hello there friend' } })]],
     });
-    expect(r.calls.find(c => c.path.startsWith('/me/messages/M1'))!.headers.Prefer).toBe('outlook.body-content-type="text"');
+    expect(r.calls.find(c => c.path.startsWith('/me/messages/M1'))!.headers.Prefer).toBe('outlook.body-content-type="text", IdType="ImmutableId"');
     expect(JSON.parse(r.stdout).body).toEqual({ contentType: 'text', content: 'Hello there friend' });
   });
 
   it('--body markdown converts the HTML body locally', async () => {
     const r = await run(['get', 'M1', '--body', 'markdown', '-o', 'json'], { routes: [me, ['GET', '/me/messages/M1', () => mailMsg('M1', 'a@contoso.com')]] });
-    expect(r.calls.find(c => c.path.startsWith('/me/messages/M1'))!.headers.Prefer).toBeUndefined();
+    expect(r.calls.find(c => c.path.startsWith('/me/messages/M1'))!.headers.Prefer).toBe('IdType="ImmutableId"');
     expect(JSON.parse(r.stdout).body).toEqual({ contentType: 'markdown', content: 'Hello **there** friend' });
   });
 
@@ -294,10 +294,11 @@ describe('mail list / triage: bodies and marking (§6)', () => {
     });
     expect(r.exitCode).toBe(0);
     const lines = r.stdout.trim().split('\n').map(l => JSON.parse(l));
+    expect(lines.pop()).toEqual({ _meta: { complete: true } });
     expect(lines.map(l => [l.id, l.untrusted, l.sender.external])).toEqual([['1', true, false], ['2', true, true]]);
     expect(lines[0].body.content).toBe('Hello there friend');
     const pageCalls = r.calls.filter(c => c.path.startsWith('/me/messages'));
-    expect(pageCalls.every(c => c.headers.Prefer === 'outlook.body-content-type="text"')).toBe(true);
+    expect(pageCalls.every(c => c.headers.Prefer === 'outlook.body-content-type="text", IdType="ImmutableId"')).toBe(true);
     expect(r.calls.filter(c => c.path.startsWith('/me?'))).toHaveLength(1);
   });
 

@@ -39,7 +39,7 @@ describe('planner list commands page (Q-8, AC-2)', () => {
       ],
     });
     expect(r.exitCode).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual({ value: [{ id: 'a' }, { id: 'b' }] });
+    expect(JSON.parse(r.stdout)).toEqual({ value: [{ id: 'a' }, { id: 'b' }], complete: true });
   });
 
   it.each(LISTS)('%j honours --cursor', async (argv, path) => {

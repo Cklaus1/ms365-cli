@@ -67,7 +67,7 @@ describe('meetings list (PM-4)', () => {
     expect(q.get('startDateTime')).toBe('2026-10-15T07:00:00.000Z');
     expect(q.get('endDateTime')).toBe('2026-10-16T07:00:00.000Z');
     expect(q.get('$select')).toContain('onlineMeeting');
-    expect(call.headers.Prefer).toBe(`outlook.timezone="${TZ}"`);
+    expect(call.headers.Prefer).toBe(`outlook.timezone="${TZ}", IdType="ImmutableId"`);
     expect(JSON.parse(r.stdout).value[0].onlineMeeting.joinUrl).toBe(JOIN);
   });
 
