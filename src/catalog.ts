@@ -303,6 +303,10 @@ const COMMANDS: Record<string, Entry> = {
   // audit-trail (AO-25): `mailbox` creates a saved audit query (a POST; no data is changed), so it is not `read`.
   'audit-trail mailbox': ['action', ['AuditLogsQuery-Exchange.Read.All']],
   'audit-trail changes': 'read',
+  // apps: every GET; Directory.Read.All is the least-privileged scope for listing grants (AO-28, OQ-9/E4) and also reads service principals.
+  'audit-trail apps': ['read', ['Directory.Read.All']],
+  // access: same saved-query POST as mailbox (AO-25); the target annotation's User.Read.All is already in ORG_SCOPES (AO-30).
+  'audit-trail access': ['action', ['AuditLogsQuery-Exchange.Read.All']],
   'meetings transcript': ['read', ['OnlineMeetings.Read', 'OnlineMeetingTranscript.Read.All']],
   'meetings recordings': ['read', ['OnlineMeetings.Read', 'OnlineMeetingRecording.Read.All']],
   'meetings recording': ['read', ['OnlineMeetings.Read', 'OnlineMeetingRecording.Read.All']],
