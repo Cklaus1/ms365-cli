@@ -17,7 +17,7 @@ import { registerWatchCommands } from '../src/commands/watch.js';
 import { registerDescribeCommand } from '../src/commands/describe.js';
 import { registerMcpCommands } from '../src/commands/mcp.js';
 import { registerAuditTrailCommands } from '../src/commands/audit-trail.js';
-import { buildTools, serve, spawnRunner, type Runner, type RunResult, type ServeOptions } from '../src/mcp-server.js';
+import { buildTools, readCallArgv, serve, spawnRunner, type Runner, type RunResult, type ServeOptions } from '../src/mcp-server.js';
 import { runCommand } from './helpers/cli.js';
 import type { GraphClient } from '../src/graph-client.js';
 import type { AuthManager } from '../src/auth.js';
@@ -257,6 +257,38 @@ describe('mcp tool shaping (X-6, X-15)', () => {
     const r = await spawnRunner(entry)([]);
     expect(r).toMatchObject({ exitCode: 0, stdout: '1' });
   });
+
+  it('a mail_send body never reaches the child command line: the argv travels in a 0600 file, removed afterwards (AH-11(3), AC25)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ms365-mcp-argv-'));
+    const entry = path.join(dir, 'echo-argv.mjs');
+    fs.writeFileSync(entry, [
+      "import fs from 'fs';",
+      'const file = process.env.MS365_CLI_MCP_ARGV;',
+      'const mode = (fs.statSync(file).mode & 0o777).toString(8);',
+      "process.stdout.write(JSON.stringify({ cmdline: process.argv.slice(2), file, mode, argv: JSON.parse(fs.readFileSync(file, 'utf8')) }));",
+    ].join('\n'));
+    const r = fakeRunner();
+    await session([call(1, 'mail_send', { to: 'a@contoso.com', subject: 's', body: 'SECRET BODY TEXT' })], { runner: r.run });
+    const argv = r.calls[0];
+    expect(argv).toContain('--body=SECRET BODY TEXT');
+    const res = await spawnRunner(entry)(argv);
+    const seen = JSON.parse(res.stdout);
+    expect(seen.cmdline).toEqual([]);
+    expect(seen.argv).toEqual(argv);
+    expect(seen.mode).toBe('600');
+    expect(fs.existsSync(seen.file)).toBe(false);
+  });
+
+  it('readCallArgv returns the list and deletes the file; anything else is a usage error', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ms365-mcp-argv-'));
+    const file = path.join(dir, 'argv.json');
+    fs.writeFileSync(file, JSON.stringify(['mail', 'list']));
+    expect(readCallArgv(file)).toEqual(['mail', 'list']);
+    expect(fs.existsSync(file)).toBe(false);
+    fs.writeFileSync(file, '{"argv":1}');
+    expect(() => readCallArgv(file)).toThrow(expect.objectContaining({ code: 'usage', exitCode: 2 }));
+    expect(() => readCallArgv(file)).toThrow(expect.objectContaining({ code: 'usage' }));
+  });
 });
 
 describe('mcp dry-run trace (core-1)', () => {
@@ -296,7 +328,7 @@ describe('mcp watch resources (X-8)', () => {
     const logs: string[] = [];
     const input = new PassThrough();
     const done = serve(input, (line) => out.push(JSON.parse(line)), {
-      tools: buildTools(program()), version: '0.1.0', runner, log: (l) => logs.push(l), watchIntervalMs: 60_000, ...extra,
+      tools: buildTools(program()), version: '0.1.0', runner, log: (l) => logs.push(l), watchIntervalMs: 60_000, hasCursor: () => false, ...extra,
     });
     const flush = async () => { for (let i = 0; i < 20; i++) await vi.advanceTimersByTimeAsync(0); };
     const send = async (msg: object) => { input.write(JSON.stringify(msg) + '\n'); await flush(); };
@@ -322,21 +354,35 @@ describe('mcp watch resources (X-8)', () => {
     expect(s.out[0].result.resources[0]).toMatchObject({ name: expect.any(String), mimeType: 'application/x-ndjson' });
   });
 
-  it('subscribe polls (first pass --reset), notifies on changes, read drains the buffer', async () => {
+  it('subscribe without a cursor polls with --reset (a no_checkpoint gap), notifies on changes, read drains the buffer', async () => {
     vi.useFakeTimers();
     const r = queued([{ stdout: '' }, { stdout: '{"id":"1","change":"created"}\n{"id":"2","change":"updated"}\n' }]);
-    const s = live(r.run);
+    const s = live(r.run, { hasCursor: () => false });
     await s.send(req(1, 'resources/subscribe', { uri: 'ms365://watch/mail' }));
     expect(s.out.find(m => m.id === 1).result).toEqual({});
     expect(r.calls).toEqual([['--error-format', 'json', 'watch', '--name=mcp-mail', '--reset', '--', 'mail']]);
-    expect(updated(s.out)).toHaveLength(0);
+    expect(updated(s.out)).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(60_000); await s.flush();
     expect(r.calls[1]).toEqual(['--error-format', 'json', 'watch', '--name=mcp-mail', '--', 'mail']);
-    expect(updated(s.out)).toEqual([{ jsonrpc: '2.0', method: 'notifications/resources/updated', params: { uri: 'ms365://watch/mail' } }]);
+    expect(updated(s.out)).toHaveLength(2);
     await s.send(req(2, 'resources/read', { uri: 'ms365://watch/mail' }));
-    expect(s.out.find(m => m.id === 2).result.contents).toEqual([{ uri: 'ms365://watch/mail', mimeType: 'application/x-ndjson', text: '{"id":"1","change":"created"}\n{"id":"2","change":"updated"}\n' }]);
+    expect(s.out.find(m => m.id === 2).result.contents).toEqual([{ uri: 'ms365://watch/mail', mimeType: 'application/x-ndjson',
+      text: '{"type":"gap","resource":"mail","reason":"no_checkpoint"}\n{"id":"1","change":"created"}\n{"id":"2","change":"updated"}\n' }]);
     await s.send(req(3, 'resources/read', { uri: 'ms365://watch/mail' }));
     expect(s.out.find(m => m.id === 3).result.contents[0].text).toBe('');
+    await s.end();
+  });
+
+  it('a restarted server with an mcp- cursor resumes it: no --reset, no gap (AH-11(2), AC25)', async () => {
+    vi.useFakeTimers();
+    const names: string[] = [];
+    const r = queued([{ stdout: '{"id":"7"}\n' }]);
+    const s = live(r.run, { hasCursor: (name) => { names.push(name); return true; } });
+    await s.send(req(1, 'resources/subscribe', { uri: 'ms365://watch/events' }));
+    expect(names).toEqual(['mcp-events']);
+    expect(r.calls).toEqual([['--error-format', 'json', 'watch', '--name=mcp-events', '--', 'events']]);
+    await s.send(req(2, 'resources/read', { uri: 'ms365://watch/events' }));
+    expect(s.out.find(m => m.id === 2).result.contents[0].text).toBe('{"id":"7"}\n');
     await s.end();
   });
 
@@ -356,7 +402,7 @@ describe('mcp watch resources (X-8)', () => {
   it('a failed pass logs to stderr, sends nothing and doubles the interval; success restores it', async () => {
     vi.useFakeTimers();
     const r = queued([{ stdout: '' }, { exitCode: 1, stderr: '{"error":{"code":"network","message":"down"}}\n' }, { stdout: '{"id":"9"}\n' }]);
-    const s = live(r.run);
+    const s = live(r.run, { hasCursor: () => true });
     await s.send(req(1, 'resources/subscribe', { uri: 'ms365://watch/events' }));
     await vi.advanceTimersByTimeAsync(60_000); await s.flush();
     expect(r.calls).toHaveLength(2);
@@ -392,15 +438,20 @@ describe('mcp watch resources (X-8)', () => {
     expect(r.calls).toHaveLength(1);
   });
 
-  it('the buffer keeps the newest 1000 changes', async () => {
+  it('a pass of 1001 changes leaves the newest 1000 behind one gap line with dropped: 1 (AH-11(1), AC25)', async () => {
     vi.useFakeTimers();
-    const many = Array.from({ length: 1005 }, (_, i) => `{"id":"${i}"}`).join('\n') + '\n';
-    const s = live(queued([{ stdout: many }]).run);
+    const many = Array.from({ length: 1001 }, (_, i) => `{"id":"${i}"}`).join('\n') + '\n';
+    const s = live(queued([{ stdout: many }, { stdout: '{"id":"x"}\n' }]).run, { hasCursor: () => true });
     await s.send(req(1, 'resources/subscribe', { uri: 'ms365://watch/mail' }));
     await s.send(req(2, 'resources/read', { uri: 'ms365://watch/mail' }));
     const lines = s.out.find(m => m.id === 2).result.contents[0].text.trim().split('\n');
-    expect(lines).toHaveLength(1000);
-    expect(lines[0]).toBe('{"id":"5"}');
+    expect(lines).toHaveLength(1001);
+    expect(JSON.parse(lines[0])).toEqual({ type: 'gap', resource: 'mail', reason: 'buffer_overflow', dropped: 1 });
+    expect(lines[1]).toBe('{"id":"1"}');
+    expect(lines[1000]).toBe('{"id":"1000"}');
+    await vi.advanceTimersByTimeAsync(60_000); await s.flush();
+    await s.send(req(3, 'resources/read', { uri: 'ms365://watch/mail' }));
+    expect(s.out.find(m => m.id === 3).result.contents[0].text).toBe('{"id":"x"}\n');
     await s.end();
   });
 

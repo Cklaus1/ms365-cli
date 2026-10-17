@@ -1,9 +1,11 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { AuthManager } from '../src/auth.js';
 import { childEnv } from '../src/child-env.js';
-import { checkExternalToken, EXPIRY_MARGIN_MS, externalTokenMode } from '../src/external-token.js';
+import { checkExternalToken, EXPIRY_MARGIN_MS, externalTokenMode, runTokenHelper } from '../src/external-token.js';
+import { helperTokenEnv, spawnRunner } from '../src/mcp-server.js';
 import { CliError, ExitCode, setErrorFormat, toCliError } from '../src/errors.js';
 import { GraphClient } from '../src/graph-client.js';
 import { registerAuthCommands } from '../src/commands/auth.js';
@@ -82,6 +84,79 @@ describe('external AuthManager (AH-2, AC 7)', () => {
     expect((e as CliError).fix).not.toContain('auth login');
     expect(fetches).toHaveLength(1);
     expect(toCliError(new Error('Authentication failed')).fix).not.toContain('auth login');
+  });
+});
+
+describe('token helper MS365_CLI_TOKEN_COMMAND (AH-2, AC 7)', () => {
+  /** An executable that counts its runs, writes to stderr, prints `out` and exits `code` (after `pre`). */
+  function helper(out: string, code = 0, pre = ''): { cmd: string; runs: () => number } {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ms365-helper-'));
+    const cmd = path.join(dir, 'token-helper');
+    const runs = path.join(dir, 'runs');
+    fs.writeFileSync(cmd, `#!/bin/sh\n${pre}echo run >> "${runs}"\necho "helper-stderr-secret" >&2\nprintf '%s\\n' '${out}'\nexit ${code}\n`, { mode: 0o755 });
+    return { cmd, runs: () => fs.existsSync(runs) ? fs.readFileSync(runs, 'utf8').split('\n').filter(Boolean).length : 0 };
+  }
+  const fresh = () => token({ exp: Math.floor(Date.now() / 1000) + 3600 });
+  const unauthorized = () => new Response('{"error":{"code":"InvalidAuthenticationToken","message":"expired"}}', { status: 401 });
+
+  beforeEach(() => { vi.stubEnv('MS365_CLI_CLIENT_ID', ''); vi.stubEnv('MS365_CLI_TOKEN', ''); });
+
+  it('a 401 re-runs the helper once and retries once; a 401 on the retry is token_rejected', async () => {
+    const h = helper(fresh());
+    vi.stubEnv('MS365_CLI_TOKEN_COMMAND', h.cmd);
+    expect(externalTokenMode({})).toBe(true);
+    let answers: Array<() => Response> = [unauthorized, () => Response.json({ id: 'me' })];
+    let fetches = 0;
+    vi.stubGlobal('fetch', async () => { fetches++; return (answers.shift() ?? unauthorized)(); });
+    const m = new AuthManager([]);
+    expect(m.tokenSource()).toBe('external');
+    const client = new GraphClient(m);
+    expect(await client.request('/me')).toMatchObject({ status: 200, data: { id: 'me' } });
+    expect([h.runs(), fetches]).toEqual([2, 2]);
+    answers = [() => Response.json({ id: 'me' })];
+    await client.request('/me');
+    expect([h.runs(), fetches]).toEqual([2, 3]);
+    answers = [];
+    const e = await client.request('/me').catch((err: unknown) => err as CliError);
+    expect(e).toMatchObject({ code: 'token_rejected', exitCode: ExitCode.AUTH, status: 401 });
+    expect([h.runs(), fetches]).toEqual([3, 5]);
+  });
+
+  it('a failing, silent, slow or relative helper is exit 3 token_helper_failed, and its stderr is never shown', async () => {
+    for (const [h, timeout] of [[helper(fresh(), 1), 30_000], [helper(''), 30_000], [helper(fresh(), 0, 'sleep 5\n'), 300]] as const) {
+      const e = await runTokenHelper(h.cmd, timeout).catch((err: unknown) => err as CliError);
+      expect(e).toMatchObject({ code: 'token_helper_failed', exitCode: ExitCode.AUTH });
+      expect(`${e.message} ${e.fix}`).not.toMatch(/helper-stderr-secret|auth login/);
+    }
+    await expect(runTokenHelper('token-helper')).rejects.toMatchObject({ code: 'token_helper_failed' });
+    vi.stubEnv('MS365_CLI_TOKEN_COMMAND', helper('', 2).cmd);
+    vi.stubGlobal('fetch', async () => { throw new Error('no request without a token'); });
+    const e = await new GraphClient(new AuthManager([])).request('/me').catch((err: unknown) => err as CliError);
+    expect(e).toMatchObject({ code: 'token_helper_failed', exitCode: ExitCode.AUTH });
+  });
+
+  it('mcp serve runs the helper once per token lifetime and hands its token to each call in MS365_CLI_TOKEN', async () => {
+    const h = helper(fresh());
+    const env = helperTokenEnv(h.cmd);
+    const first = await env();
+    expect(await env()).toEqual(first);
+    expect(await env()).toEqual(first);
+    expect(h.runs()).toBe(1);
+    const expiring = helper(token({ exp: Math.floor(Date.now() / 1000) + 60 }));
+    const shortEnv = helperTokenEnv(expiring.cmd);
+    await shortEnv();
+    await shortEnv();
+    expect(expiring.runs()).toBe(2);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ms365-mcp-tok-'));
+    const entry = path.join(dir, 'echo-token.mjs');
+    fs.writeFileSync(entry, 'process.stdout.write(String(process.env.MS365_CLI_TOKEN));\n');
+    const ok = await spawnRunner(entry, 30_000, env)([]);
+    expect(ok).toMatchObject({ exitCode: 0, stdout: first.MS365_CLI_TOKEN });
+    expect(h.runs()).toBe(1);
+    const failed = await spawnRunner(entry, 30_000, helperTokenEnv(helper('', 1).cmd))(['mail', 'list']);
+    expect(failed.exitCode).toBe(3);
+    expect(JSON.parse(failed.stderr.trim()).error).toMatchObject({ code: 'token_helper_failed', exitCode: 3 });
+    expect(failed.stdout).toBe('');
   });
 });
 

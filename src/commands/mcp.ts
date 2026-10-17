@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { CliError, ExitCode, handleErrors } from '../errors.js';
 import { info } from '../utils.js';
-import { buildTools, serve, spawnRunner } from '../mcp-server.js';
+import { buildTools, helperTokenEnv, serve, spawnRunner } from '../mcp-server.js';
 import { activeCeiling } from '../ceiling.js';
 
 /** Same floor as `watch --interval`. */
@@ -43,7 +43,8 @@ export function registerMcpCommands(program: Command): void {
       await serve(process.stdin, (line) => process.stdout.write(`${line}\n`), {
         tools,
         version: program.version() ?? '0.0.0',
-        runner: spawnRunner(),
+        // AH-2: with a token helper the server runs it once per token lifetime and hands the token to each call.
+        runner: spawnRunner(undefined, undefined, process.env.MS365_CLI_TOKEN_COMMAND ? helperTokenEnv(process.env.MS365_CLI_TOKEN_COMMAND) : undefined),
         readOnly,
         globals: forwardedGlobals(program),
         watchIntervalMs: watchInterval * 1000,

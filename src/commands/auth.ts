@@ -12,6 +12,7 @@ import { profileCeiling } from '../ceiling.js';
 import { openBrowserCommand } from './setup.js';
 import { GraphClient } from '../graph-client.js';
 import { adminConsentUrl, azGraphToken, CONSENT_REDIRECT_URI, grantScopes } from '../grant-scopes.js';
+import { holdDeviceLogin, startDeviceLogin, waitDeviceLogin } from '../device-login.js';
 
 /** Open the system browser at the sign-in URL; print it too, for machines where no browser opens. */
 async function openSystemBrowser(url: string): Promise<void> {
@@ -38,13 +39,47 @@ export function registerAuthCommands(program: Command, getAuth: () => AuthManage
 
   auth
     .command('login')
-    .description('Login (device code flow by default)')
+    .description('Login (device code flow by default; --start/--wait relay the code through a host)')
     .option('--browser', 'Sign in with the system browser instead (needs an http://localhost redirect URI on the app registration)')
+    .option('--start', 'Start a device-code sign-in in the background and return at once: user code, verification URI, expiry and a handle for --wait')
+    .option('--wait <handle>', 'Wait for a sign-in started with --start; prints its state: pending, done, expired, denied or failed')
+    .option('--timeout <seconds>', 'With --wait: stop waiting after this many seconds (state pending; default: until the code expires)')
+    .addOption(new Option('--hold <handle>', 'internal: the background half of --start').hideHelp())
+    .addOption(outputOption('text'))
     .action(handleErrors(async (opts) => {
       rejectExternal('login');
       rejectAdmin();
-      if (isDryRun()) return dryRunTrace('would sign in');
+      if ([opts.browser, opts.start, opts.wait, opts.hold].filter(Boolean).length > 1) {
+        throw new CliError('Use only one of --browser, --start and --wait.', { code: 'usage', exitCode: ExitCode.USAGE });
+      }
+      if (opts.timeout !== undefined && !opts.wait) throw new CliError('--timeout needs --wait.', { code: 'usage', exitCode: ExitCode.USAGE });
+      const format = opts.output as OutputFormat;
+      if (opts.wait) {
+        const seconds = opts.timeout === undefined ? undefined : Number(opts.timeout);
+        if (seconds !== undefined && !(Number.isFinite(seconds) && seconds >= 0)) {
+          throw new CliError('--timeout must be a number of seconds (0 or more).', { code: 'usage', exitCode: ExitCode.USAGE });
+        }
+        if (isDryRun()) return dryRunTrace(`would wait for the sign-in ${opts.wait}`);
+        const result = await waitDeviceLogin(opts.wait, seconds === undefined ? undefined : seconds * 1000);
+        console.log(format === 'text' ? `Sign-in ${result.state}${result.reason ? `: ${result.reason}` : ''}` : formatOutput(result, format));
+        if (result.state === 'expired' || result.state === 'denied' || result.state === 'failed') {
+          throw new CliError(`The device-code sign-in ${result.state === 'failed' ? 'failed' : `was ${result.state}`}.`,
+            { code: `login_${result.state}`, exitCode: ExitCode.AUTH, fix: 'ms365 auth login --start' });
+        }
+        return;
+      }
+      if (isDryRun()) return dryRunTrace(opts.start ? 'would start a device-code sign-in in the background' : 'would sign in');
       const authManager = getAuth();
+      if (opts.hold) return holdDeviceLogin(authManager, opts.hold);
+      if (opts.start) {
+        const o = program.opts();
+        const globals = [...(o.profile ? [`--profile=${o.profile}`] : []), ...(o.orgMode ? ['--org-mode'] : [])];
+        const s = await startDeviceLogin(`ms365 (app ID ${authManager.getClientId()})`, globals);
+        console.log(format === 'text'
+          ? `To sign in to ${s.app}, open ${s.verificationUri} and enter the code ${s.userCode} (expires ${s.expiresAt}).\nThen run: ms365 auth login --wait ${s.handle}`
+          : formatOutput(s, format));
+        return;
+      }
       await authManager.initialize();
       try {
         await authManager.login(opts.browser ? { openBrowser: openSystemBrowser } : {});
