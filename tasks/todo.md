@@ -6,7 +6,7 @@
 - [x] AHT-3 immutable ids, `--refs` `_ref`, `complete`/`_meta`, `--cursor` help
 - [x] AHT-4 `watch --checkpoint`, gap/backfill, window roll, change-line fields, `--select`
 - [x] AHT-5 `auth status -o json`, `auth scopes` renames, `health`, retry budget env, `retryAfterMs`
-- [ ] AHT-6a offline conformance pack (smoke host-mode checks, dist sha256)
+- [x] AHT-6a offline conformance pack (smoke host-mode checks, dist sha256)
 
 ## Tier G3
 - [ ] AHT-7 plan/apply core, If-Match, `--bcc`, `--body-file`, sha256 attachments
