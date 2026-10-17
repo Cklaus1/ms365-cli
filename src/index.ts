@@ -223,7 +223,7 @@ program.hook('preAction', async (_program, actionCommand) => {
   // AH-5: --plan records the command's writes instead of sending them; reads (the target's version) still run.
   if (o.plan !== undefined) {
     if (o.dryRun) throw usage('--plan cannot be combined with --dry-run: a plan reads the target\'s current version from Microsoft 365.');
-    beginPlan({ file: o.plan, command: commandPath, ttlMinutes: planTtl(o.planTtl), profile: profileName() ?? null, client: getClient });
+    beginPlan({ file: o.plan, command: commandPath, ttlMinutes: planTtl(o.planTtl), profile: profileName() ?? null, host: externalTokenMode(globalFlags().profile), client: getClient });
   } else if (o.planTtl !== undefined) {
     throw usage('--plan-ttl needs --plan.');
   }

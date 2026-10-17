@@ -43,7 +43,7 @@ export interface RunOptions {
   /** The access token the stub auth returns; default the opaque 'test-token'. */
   token?: string;
   /** Run as `--plan <file>` (AH-5): what index.ts preAction does for the command path given. */
-  plan?: { file: string; command: string; ttl?: number };
+  plan?: { file: string; command: string; ttl?: number; host?: boolean };
 }
 
 type Register = (program: Command, getClient: () => GraphClient) => void;
@@ -123,7 +123,7 @@ export async function runCommand(register: Register, argv: string[], opts: RunOp
   program.configureOutput({ writeOut: (s) => { stdout += s; }, writeErr: (s) => { stderr += s; } });
   register(program, () => client);
 
-  if (opts.plan) beginPlan({ file: opts.plan.file, command: opts.plan.command, ttlMinutes: opts.plan.ttl ?? 15, profile: null, client: () => client });
+  if (opts.plan) beginPlan({ file: opts.plan.file, command: opts.plan.command, ttlMinutes: opts.plan.ttl ?? 15, profile: null, host: opts.plan.host ?? false, client: () => client });
   try {
     await program.parseAsync(['node', 'ms365', ...argv]);
   } catch (err) {

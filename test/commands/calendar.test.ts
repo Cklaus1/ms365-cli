@@ -66,17 +66,20 @@ describe('cal update (M-9)', () => {
     expect((writes(r.calls)[0].body as Record<string, unknown>).end).toEqual({ dateTime: '2026-10-20T10:00', timeZone: 'Eastern Standard Time' });
   });
 
-  it('uses --timezone without reading the event', async () => {
-    const r = await runCommand(registerCalendarCommands, ['cal', 'update', 'E1', '--start', '2026-10-20T09:00', '--timezone', 'Europe/London'], { env });
+  it('with --timezone reads only the event checks, not its zone', async () => {
+    const r = await runCommand(registerCalendarCommands, ['cal', 'update', 'E1', '--start', '2026-10-20T09:00', '--timezone', 'Europe/London'], {
+      env, routes: [['GET', '/me/events/E1', () => ({ type: 'singleInstance', originalStartTimeZone: 'America/New_York' })]],
+    });
     expect(r.exitCode).toBe(0);
-    expect(r.calls).toHaveLength(1);
-    expect((r.calls[0].body as Record<string, unknown>).start).toEqual({ dateTime: '2026-10-20T09:00:00', timeZone: 'Europe/London' });
+    expect(r.calls.map(c => c.method)).toEqual(['GET', 'PATCH']);
+    expect((r.calls[1].body as Record<string, unknown>).start).toEqual({ dateTime: '2026-10-20T09:00:00', timeZone: 'Europe/London' });
   });
 
-  it('does not read the event when no time changes', async () => {
+  it('reads the event once before every update (AH-7(1))', async () => {
     const r = await runCommand(registerCalendarCommands, ['cal', 'update', 'E1', '--subject', 'New'], { env });
     expect(r.exitCode).toBe(0);
-    expect(r.calls.map(c => c.method)).toEqual(['PATCH']);
+    expect(r.calls.map(c => c.method)).toEqual(['GET', 'PATCH']);
+    expect(r.calls[0].url).toContain('$select=type%2CseriesMasterId%2CisOrganizer%2Cattendees%2CoriginalStartTimeZone%2CchangeKey');
   });
 });
 
@@ -302,16 +305,16 @@ describe('cal update --dry-run zone marker (DR-17, F5)', () => {
   it('previews the zone GET and marks the PATCH zone as <from GET>', async () => {
     const r = await runCommand(registerCalendarCommands, ['cal', 'update', 'E1', '--start', '2026-10-20T09:00', '--end', '2026-10-20T10:00', '-o', 'json'], { env, dryRun: true });
     expect(r.exitCode).toBe(0);
-    expect(r.stderr).toContain('GET https://graph.microsoft.com/v1.0/me/events/E1?$select=originalStartTimeZone');
+    expect(r.stderr).toContain('GET https://graph.microsoft.com/v1.0/me/events/E1?$select=type%2CseriesMasterId%2CisOrganizer%2Cattendees%2CoriginalStartTimeZone');
+    expect(r.stderr).toContain('[dry-run] scope: <from GET>; notifies: <from GET>');
     const body = JSON.parse(r.stdout).body as Record<string, { dateTime: string; timeZone: string }>;
     expect(body.start).toEqual({ dateTime: '2026-10-20T09:00:00', timeZone: '<from GET>' });
     expect(body.end.timeZone).toBe('<from GET>');
     expect(r.stdout).not.toContain(TZ);
   });
 
-  it('with --timezone there is no GET and no marker', async () => {
+  it('with --timezone the PATCH zone is the given one, not a marker', async () => {
     const r = await runCommand(registerCalendarCommands, ['cal', 'update', 'E1', '--start', '2026-10-20T09:00', '--timezone', 'Europe/London', '-o', 'json'], { env, dryRun: true });
-    expect(r.stderr).not.toContain('$select=originalStartTimeZone');
     expect(JSON.parse(r.stdout).body.start.timeZone).toBe('Europe/London');
   });
 });
@@ -329,7 +332,7 @@ describe('cal status lines under --dry-run (DR-1)', () => {
       const r = await runCommand(registerCalendarCommands, argv, { env, dryRun: true });
       expect(r.exitCode).toBe(0);
       expect(r.stderr).not.toMatch(/Event (deleted|accepted|declined)|Tentatively accepted/);
-      expect(r.stderr).toContain('request(s) previewed; nothing was sent.');
+      expect(r.stderr).toMatch(/request\(s\) previewed; nothing was sent/);
     });
   }
 

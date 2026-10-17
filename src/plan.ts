@@ -44,6 +44,16 @@ export const PLAN_COMMANDS: Record<string, true> = {
   'mail send': true,
   'mail reply': true,
   'mail forward': true,
+  'calendar create': true,
+  'calendar update': true,
+  'calendar delete': true,
+  'calendar cancel': true,
+};
+
+/** Plan commands that destroy or cancel: apply asks on a terminal first, and refuses without one (OQ-8 is open). */
+export const PLAN_CONFIRM: Record<string, true> = {
+  'calendar delete': true,
+  'calendar cancel': true,
 };
 
 export const PLAN_TTL_DEFAULT_MIN = 15;
@@ -55,6 +65,8 @@ interface Recording {
   attachments: PlanAttachment[];
   target: PlanTarget | null;
   payload: unknown;
+  /** Planned for an agent host (a supplied token or a `type: host` profile). */
+  host: boolean;
 }
 
 let recording: Recording | null = null;
@@ -62,6 +74,11 @@ let recording: Recording | null = null;
 /** True while a `--plan` run records its writes. */
 export function planning(): boolean {
   return recording !== null;
+}
+
+/** True while a `--plan` run records its writes for an agent host (AH-7(1): such a plan never takes --series). */
+export function hostPlanning(): boolean {
+  return recording?.host === true;
 }
 
 /** The stand-in for the id that request `index` returns; apply substitutes the real one. */
@@ -148,11 +165,11 @@ export function planTtl(raw: string | undefined): number {
  * Start recording for `command`; after the action succeeds the plan is written to `file` (0600) and a summary
  * `{plan, command, digest, expiresAt, requests}` goes to stdout. Refused for commands without plan support.
  */
-export function beginPlan(opts: { file: string; command: string; ttlMinutes: number; profile: string | null; client: () => GraphClient }): void {
+export function beginPlan(opts: { file: string; command: string; ttlMinutes: number; profile: string | null; host: boolean; client: () => GraphClient }): void {
   if (!PLAN_COMMANDS[opts.command]) {
     throw usage(`--plan is not supported by "${opts.command}". Plan-capable: ${Object.keys(PLAN_COMMANDS).join(', ')}.`);
   }
-  recording = { requests: [], attachments: [], target: null, payload: null };
+  recording = { requests: [], attachments: [], target: null, payload: null, host: opts.host };
   setAfterSuccess(async () => {
     const rec = recording!;
     endPlan();
