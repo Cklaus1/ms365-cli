@@ -6,10 +6,11 @@ import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import {
   truncate, parseRecipients, formatSize, addListOptions, outputOption, confirm, info, success,
-  kqlQuote, safeOutputPath, resolveTimeZone, parseTime, toGraphDateTime, fromGet,
+  kqlQuote, safeOutputPath, resolveTimeZone, parseTime, toGraphDateTime, fromGet, addBodyOptions, bodyText,
 } from '../utils.js';
 import { detectMimeType } from '../mime.js';
 import { idempotentSend, IDEMPOTENCY_HELP } from '../idempotency.js';
+import { attachmentDigests, ifMatchFor, planning, readVersion, setPlanPayload, setPlanTarget } from '../plan.js';
 import { resolve } from '../resolve.js';
 import { addContentOptions, contentOptions, messageTransform, transformData, type BodyMode } from '../content.js';
 
@@ -88,7 +89,22 @@ async function addAttachments(client: GraphClient, messageId: string, files: Fil
 async function createDraft(client: GraphClient, endpoint: string, body: unknown): Promise<Record<string, unknown>> {
   const response = await client.request(endpoint, { method: 'POST', body: JSON.stringify(body) });
   const draft = response.data as Record<string, unknown>;
-  return client.isPreview(response) ? { ...draft, id: 'DRAFT_ID' } : draft;
+  return client.isPreview(response) && client.isDryRun() ? { ...draft, id: 'DRAFT_ID' } : draft;
+}
+
+/**
+ * GET a message, refuse a non-draft, and return its version for If-Match. Editing the subject, body or recipients of a
+ * sent/received message needs Mail-Advanced.ReadWrite (admin consent) from 2026-12-31; refusing up front beats an
+ * unclear 403.
+ */
+async function draftVersion(client: GraphClient, messageId: string): Promise<string | undefined> {
+  const { item, version } = await readVersion(client, `/me/messages/${encodeURIComponent(messageId)}`, 'isDraft');
+  if (item && typeof item === 'object' && Reflect.get(item, 'isDraft') === false) {
+    throw new CliError(`Message ${messageId.substring(0, 16)}... is not a draft. Changing the subject, body or recipients ` +
+      'of a non-draft message requires the Mail-Advanced.ReadWrite permission (admin consent) from 2026-12-31.',
+      { code: 'not_a_draft', fix: 'create a new draft with `ms365 mail draft`, or use `mail forward`/`mail reply`' });
+  }
+  return version;
 }
 
 /**
@@ -135,9 +151,6 @@ async function sendViaDraft(
   }
   await client.request(`${draftPath}/send`, { method: 'POST' });
 }
-
-/** Attachments enter a send's fingerprint by name and size (their bytes are not re-read for hashing). */
-const attachmentKeys = (files: FileToAttach[]) => files.map(f => ({ name: f.name, size: f.size }));
 
 export function registerMailCommands(program: Command, getClient: () => GraphClient): void {
   const mail = program.command('mail').description('Outlook mail operations');
@@ -356,18 +369,18 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       }
     }));
 
-  mail
+  addBodyOptions(mail
     .command('send')
     .description('Send an email')
     .requiredOption('--to <addresses>', 'Comma-separated recipient email addresses')
     .option('--cc <addresses>', 'Comma-separated CC addresses')
     .option('--bcc <addresses>', 'Comma-separated BCC addresses')
-    .requiredOption('--subject <subject>', 'Email subject')
-    .requiredOption('--body <body>', 'Email body')
+    .requiredOption('--subject <subject>', 'Email subject'), 'Email body', true)
     .option('--html', 'Send body as HTML')
     .option('--attach <path>', 'Attach a file (repeatable; over 3 MB total goes via a draft + upload session)', collect, [])
     .option('--idempotency-key <key>', IDEMPOTENCY_HELP)
     .action(handleErrors(async (opts) => {
+      const content = bodyText(opts) ?? '';
       const files = prepareAttachments(opts.attach);
       const client = getClient();
       const toRecipients = parseRecipients(opts.to);
@@ -376,7 +389,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         subject: opts.subject,
         body: {
           contentType: opts.html ? 'HTML' : 'Text',
-          content: opts.body,
+          content,
         },
         toRecipients,
       };
@@ -389,7 +402,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         message.bccRecipients = parseRecipients(opts.bcc);
       }
 
-      const request = { message, attachments: attachmentKeys(files) };
+      const request = { message, attachments: attachmentDigests(files) };
       const sent = await idempotentSend(client, opts.idempotencyKey, 'mail send', request, async () => {
         if (needsUploadSession(files)) {
           await sendViaDraft(client, '/me/messages', message, files);
@@ -476,17 +489,18 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     }));
 
   // ── Drafts ────────────────────────────────────────────────────
-  mail
+  addBodyOptions(mail
     .command('draft')
     .description('Create a draft email')
     .requiredOption('--to <addresses>', 'Comma-separated recipient email addresses')
-    .requiredOption('--subject <subject>', 'Email subject')
-    .requiredOption('--body <body>', 'Email body')
+    .requiredOption('--subject <subject>', 'Email subject'), 'Email body', true)
     .option('--cc <addresses>', 'Comma-separated CC addresses')
+    .option('--bcc <addresses>', 'Comma-separated BCC addresses')
     .option('--html', 'Send body as HTML')
     .option('--attach <path>', 'Attach a file (repeatable; over 3 MB total goes via a draft + upload session)', collect, [])
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
+      const content = bodyText(opts) ?? '';
       const files = prepareAttachments(opts.attach);
       const client = getClient();
       const toRecipients = parseRecipients(opts.to);
@@ -495,7 +509,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         subject: opts.subject,
         body: {
           contentType: opts.html ? 'HTML' : 'Text',
-          content: opts.body,
+          content,
         },
         toRecipients,
       };
@@ -503,11 +517,16 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       if (opts.cc) {
         message.ccRecipients = parseRecipients(opts.cc);
       }
+      if (opts.bcc) {
+        message.bccRecipients = parseRecipients(opts.bcc);
+      }
+      setPlanPayload({ ...message, attachments: attachmentDigests(files).map(({ name, size, sha256 }) => ({ name, size, sha256 })) });
 
       const upload = needsUploadSession(files);
       if (!upload && files.length > 0) message.attachments = files.map(inlineAttachment);
       const created = await createDraft(client, '/me/messages', message);
       if (upload) await addAttachments(client, created.id as string, files);
+      if (planning()) return;
 
       if (opts.output !== 'json') {
         success(`Draft created. ID: ${created.id}`);
@@ -531,32 +550,25 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       }, opts, { transform: messageTransform(client, 'mail', {}) });
     }));
 
-  mail
+  addBodyOptions(mail
     .command('update-draft <messageId>')
     .description('Update an existing draft')
     .option('--to <addresses>', 'Comma-separated recipient emails')
     .option('--cc <addresses>', 'Comma-separated CC addresses')
-    .option('--subject <subject>', 'Email subject')
-    .option('--body <body>', 'Email body')
+    .option('--bcc <addresses>', 'Comma-separated BCC addresses')
+    .option('--subject <subject>', 'Email subject'), 'Email body')
     .option('--html', 'Body is HTML')
+    .option('--if-match <etag>', 'Only update if the draft is unchanged: an @odata.etag, or "auto" to read it first (412 → exit 4 version_changed)')
     .addOption(outputOption())
     .action(handleErrors(async (messageId: string, opts) => {
+      const content = bodyText(opts);
       const client = getClient();
-      // Editing subject/body/recipients of a sent/received message needs Mail-Advanced.ReadWrite
-      // (admin consent) from 2026-12-31; refuse up front instead of surfacing an unclear 403.
-      const current = await client.request(`/me/messages/${encodeURIComponent(messageId)}`, {
-        queryParams: { '$select': 'isDraft' },
-      });
-      if ((current.data as Record<string, unknown>).isDraft === false) {
-        throw new CliError(`Message ${messageId.substring(0, 16)}... is not a draft. Changing the subject, body or recipients ` +
-          'of a non-draft message requires the Mail-Advanced.ReadWrite permission (admin consent) from 2026-12-31.',
-          { code: 'not_a_draft', fix: 'create a new draft with `ms365 mail draft`, or use `mail forward`/`mail reply`' });
-      }
+      const version = await draftVersion(client, messageId);
       const patch: Record<string, unknown> = {};
 
       if (opts.subject) patch.subject = opts.subject;
-      if (opts.body) {
-        patch.body = { contentType: opts.html ? 'HTML' : 'Text', content: opts.body };
+      if (content !== undefined) {
+        patch.body = { contentType: opts.html ? 'HTML' : 'Text', content };
       }
       if (opts.to) {
         patch.toRecipients = parseRecipients(opts.to);
@@ -564,11 +576,19 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       if (opts.cc) {
         patch.ccRecipients = parseRecipients(opts.cc);
       }
+      if (opts.bcc) {
+        patch.bccRecipients = parseRecipients(opts.bcc);
+      }
+      setPlanPayload(patch);
+      const ifMatch = await ifMatchFor(opts.ifMatch, async () => version);
+      if (planning() && ifMatch) setPlanTarget({ id: messageId, version: ifMatch });
 
       const response = await client.request(`/me/messages/${encodeURIComponent(messageId)}`, {
         method: 'PATCH',
         body: JSON.stringify(patch),
+        ...(ifMatch && { headers: { 'If-Match': ifMatch } }),
       });
+      if (planning()) return;
 
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
@@ -579,12 +599,19 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .option('--idempotency-key <key>', IDEMPOTENCY_HELP)
     .action(handleErrors(async (messageId: string, opts) => {
       const client = getClient();
+      // Under --plan the draft's version is bound: apply sends If-Match, so an edited draft is not sent (AH-5).
+      const ifMatch = await ifMatchFor(undefined, () => draftVersion(client, messageId));
+      if (ifMatch) {
+        setPlanTarget({ id: messageId, version: ifMatch });
+        setPlanPayload({ messageId });
+      }
       const sent = await idempotentSend(client, opts.idempotencyKey, 'mail send-draft', { messageId }, async () => {
         await client.request(`/me/messages/${encodeURIComponent(messageId)}/send`, {
           method: 'POST',
+          ...(ifMatch && { headers: { 'If-Match': ifMatch } }),
         });
       });
-      if (sent) success('Draft sent.');
+      if (sent && !planning()) success('Draft sent.');
     }));
 
   addListOptions(mail
@@ -691,29 +718,29 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       success(`Saved to ${outPath} (${formatSize(bytes.length)})`);
     }));
 
-  mail
+  addBodyOptions(mail
     .command('reply <messageId>')
-    .description('Reply to a message')
-    .requiredOption('--body <body>', 'Reply body')
+    .description('Reply to a message'), 'Reply body', true)
     .option('--html', 'Send body as HTML (goes via a reply draft so the quoted thread is kept)')
     .option('--reply-all', 'Reply to all recipients')
     .option('--attach <path>', 'Attach a file (repeatable; over 3 MB total goes via a draft + upload session)', collect, [])
     .option('--idempotency-key <key>', IDEMPOTENCY_HELP)
     .action(handleErrors(async (messageId: string, opts) => {
+      const comment = bodyText(opts) ?? '';
       const files = prepareAttachments(opts.attach);
       const client = getClient();
       const base = `/me/messages/${encodeURIComponent(messageId)}`;
       const create = `${base}/${opts.replyAll ? 'createReplyAll' : 'createReply'}`;
       const html = !!opts.html;
-      const request = { messageId, replyAll: !!opts.replyAll, comment: opts.body, html, attachments: attachmentKeys(files) };
+      const request = { messageId, replyAll: !!opts.replyAll, comment, html, attachments: attachmentDigests(files) };
       const sent = await idempotentSend(client, opts.idempotencyKey, 'mail reply', request, async () => {
         if (html) {
           // Graph treats `comment` as text and rejects it together with message.body, so patch the draft's body.
-          await sendViaDraft(client, create, {}, files, opts.body);
+          await sendViaDraft(client, create, {}, files, comment);
         } else if (needsUploadSession(files)) {
-          await sendViaDraft(client, create, { comment: opts.body }, files);
+          await sendViaDraft(client, create, { comment }, files);
         } else {
-          const body: Record<string, unknown> = { comment: opts.body };
+          const body: Record<string, unknown> = { comment };
           if (files.length > 0) body.message = { attachments: files.map(inlineAttachment) };
           await client.request(`${base}/${opts.replyAll ? 'replyAll' : 'reply'}`, { method: 'POST', body: JSON.stringify(body) });
         }
@@ -737,7 +764,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       const base = `/me/messages/${encodeURIComponent(messageId)}`;
       const html = !!opts.html;
       const body: Record<string, unknown> = { comment: opts.comment || '', toRecipients };
-      const request = { messageId, ...body, html, attachments: attachmentKeys(files) };
+      const request = { messageId, ...body, html, attachments: attachmentDigests(files) };
       const sent = await idempotentSend(client, opts.idempotencyKey, 'mail forward', request, async () => {
         if (html) {
           await sendViaDraft(client, `${base}/createForward`, { toRecipients }, files, opts.comment || '');
@@ -878,19 +905,19 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       console.log(formatOutput(await transformData(response.data, messageTransform(client, 'mail', {})), opts.output as OutputFormat));
     }));
 
-  mail
+  addBodyOptions(mail
     .command('shared-send <userId>')
     .description('Send email from a shared mailbox (requires --org-mode)')
     .requiredOption('--to <addresses>', 'Comma-separated recipient emails')
-    .requiredOption('--subject <subject>', 'Email subject')
-    .requiredOption('--body <body>', 'Email body')
+    .requiredOption('--subject <subject>', 'Email subject'), 'Email body', true)
     .option('--html', 'Body as HTML')
     .option('--idempotency-key <key>', IDEMPOTENCY_HELP)
     .action(handleErrors(async (userId: string, opts) => {
+      const content = bodyText(opts) ?? '';
       const client = getClient();
       const message = {
         subject: opts.subject,
-        body: { contentType: opts.html ? 'HTML' : 'Text', content: opts.body },
+        body: { contentType: opts.html ? 'HTML' : 'Text', content },
         toRecipients: parseRecipients(opts.to),
       };
       const sent = await idempotentSend(client, opts.idempotencyKey, 'mail shared-send', { userId, message }, async () => {

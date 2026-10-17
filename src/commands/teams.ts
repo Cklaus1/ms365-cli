@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
-import { addListOptions, outputOption, success, odataQuote, validateEmail } from '../utils.js';
+import { addListOptions, outputOption, success, odataQuote, validateEmail, addBodyOptions, bodyText } from '../utils.js';
 import { idempotentSend, IDEMPOTENCY_HELP } from '../idempotency.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { resolve } from '../resolve.js';
@@ -85,21 +85,21 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       await printList(client, endpoint, { queryParams }, opts, { transform: messageTransform(client, 'teams', contentOptions(opts)) });
     }));
 
-  teams
+  addBodyOptions(teams
     .command('send-channel-message')
     .argument('<teamId>', 'Team ID or name')
     .argument('<channelId>', 'Channel ID or name')
-    .description('Send a message to a channel')
-    .requiredOption('--body <body>', 'Message body')
+    .description('Send a message to a channel'), 'Message body', true)
     .option('--html', 'Body is HTML')
     .option('--mention <upn>', '@mention a user by UPN/email (repeatable)', collect, [])
     .option('--idempotency-key <key>', IDEMPOTENCY_HELP)
     .action(handleErrors(async (teamArg: string, channelArg: string, opts) => {
+      const content = bodyText(opts) ?? '';
       const upns = mentionUpns(opts.mention);
       const client = getClient();
       const teamId = await resolve(client, 'team', teamArg);
       const channelId = await resolve(client, 'channel', channelArg, teamId);
-      const payload = await messagePayload(client, opts.body, !!opts.html, upns);
+      const payload = await messagePayload(client, content, !!opts.html, upns);
       const request = { team: teamArg, channel: channelArg, payload };
       const sent = await idempotentSend(client, opts.idempotencyKey, 'teams send-channel-message', request, async () => {
         await client.request(
@@ -110,20 +110,20 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       if (sent) success('Channel message sent.');
     }));
 
-  teams
+  addBodyOptions(teams
     .command('reply-channel-message')
     .argument('<teamId>', 'Team ID or name')
     .argument('<channelId>', 'Channel ID or name')
     .argument('<messageId>', 'Message ID')
-    .description('Reply to a channel message (threaded)')
-    .requiredOption('--body <body>', 'Reply body')
+    .description('Reply to a channel message (threaded)'), 'Reply body', true)
     .option('--html', 'Body is HTML')
     .option('--idempotency-key <key>', IDEMPOTENCY_HELP)
     .action(handleErrors(async (teamArg: string, channelArg: string, messageId: string, opts) => {
+      const content = bodyText(opts) ?? '';
       const client = getClient();
       const teamId = await resolve(client, 'team', teamArg);
       const channelId = await resolve(client, 'channel', channelArg, teamId);
-      const payload = { body: { contentType: opts.html ? 'html' : 'text', content: opts.body } };
+      const payload = { body: { contentType: opts.html ? 'html' : 'text', content } };
       const request = { team: teamArg, channel: channelArg, messageId, payload };
       const sent = await idempotentSend(client, opts.idempotencyKey, 'teams reply-channel-message', request, async () => {
         await client.request(
@@ -200,42 +200,42 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
-  chat
+  addBodyOptions(chat
     .command('send <chatId>')
-    .description('Send a chat message')
-    .requiredOption('--body <body>', 'Message body')
+    .description('Send a chat message'), 'Message body', true)
     .option('--html', 'Body is HTML')
     .option('--mention <upn>', '@mention a user by UPN/email (repeatable)', collect, [])
     .option('--idempotency-key <key>', IDEMPOTENCY_HELP)
     .action(handleErrors(async (chatId: string, opts) => {
+      const content = bodyText(opts) ?? '';
       const upns = mentionUpns(opts.mention);
       const client = getClient();
-      const payload = await messagePayload(client, opts.body, !!opts.html, upns);
+      const payload = await messagePayload(client, content, !!opts.html, upns);
       const sent = await idempotentSend(client, opts.idempotencyKey, 'chat send', { chat: chatId, payload }, async () => {
         await client.request(`/chats/${encodeURIComponent(chatId)}/messages`, { method: 'POST', body: JSON.stringify(payload) });
       });
       if (sent) success('Message sent.');
     }));
 
-  chat
+  addBodyOptions(chat
     .command('reply <chatId> <messageId>')
-    .description('Reply to a chat message')
-    .requiredOption('--body <body>', 'Reply body')
+    .description('Reply to a chat message'), 'Reply body', true)
     .option('--html', 'Body is HTML')
     .option('--idempotency-key <key>', IDEMPOTENCY_HELP)
     .action(handleErrors(async (chatId: string, messageId: string, opts) => {
+      const content = bodyText(opts) ?? '';
       const client = getClient();
       // Chats have no /replies endpoint; Graph's documented "reply with quote" is a new
       // message carrying a messageReference attachment to the original. The key covers the
       // caller's input, not the quoted preview read from Graph.
-      const request = { chat: chatId, messageId, body: opts.body, html: !!opts.html };
+      const request = { chat: chatId, messageId, body: content, html: !!opts.html };
       const sent = await idempotentSend(client, opts.idempotencyKey, 'chat reply', request, async () => {
         const messagesEndpoint = `/chats/${encodeURIComponent(chatId)}/messages`;
         const original = (await client.request(`${messagesEndpoint}/${encodeURIComponent(messageId)}`)).data as {
           body?: { content?: string };
           from?: unknown;
         };
-        const replyHtml = opts.html ? opts.body : escapeHtml(opts.body);
+        const replyHtml = opts.html ? content : escapeHtml(content);
         await client.request(messagesEndpoint, {
           method: 'POST',
           body: JSON.stringify({

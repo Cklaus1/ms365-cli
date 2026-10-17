@@ -43,6 +43,7 @@ import { registerReportsCommands } from './commands/reports.js';
 import { registerAuditTrailCommands } from './commands/audit-trail.js';
 import { registerWatchCommands } from './commands/watch.js';
 import { registerHealthCommand } from './commands/health.js';
+import { registerApplyCommand } from './commands/apply.js';
 import { registerAuditCommands } from './commands/audit.js';
 import { registerIdempotencyCommands } from './commands/idempotency.js';
 import { registerDescribeCommand } from './commands/describe.js';
@@ -53,6 +54,7 @@ import { registerNotesCommands } from './commands/notes.js';
 import { setActor, setCommandPath } from './audit.js';
 import { requiredScopes, usedScopes } from './catalog.js';
 import { activeCeiling, assertWithinCeiling } from './ceiling.js';
+import { beginPlan, planTtl, PLAN_COMMANDS, PLAN_TTL_DEFAULT_MIN, PLAN_TTL_MAX_MIN, usage } from './plan.js';
 import { externalTokenMode } from './external-token.js';
 import { assertConsented } from './preflight.js';
 import { profileType, readProfile, type Profile } from './profiles.js';
@@ -78,7 +80,9 @@ program
   .option('--cursor <token>', 'Fetch the next page of a previous call of the same command: its nextCursor (json/yaml: a field; ndjson: the _meta line; table/csv: stderr). A cursor from another command exits 2')
   .option('--refs', 'Add _ref (tenant, account, mailbox, id, version, link, observedAt) to every message and event read (env MS365_CLI_REFS=1)')
   .option('--account <upn|homeAccountId>', 'Use this cached account for this call only (env MS365_CLI_ACCOUNT)')
-  .option('--profile <name>', 'Apply a saved profile: client ID, tenant, scopes, org mode, account (env MS365_CLI_PROFILE)');
+  .option('--profile <name>', 'Apply a saved profile: client ID, tenant, scopes, org mode, account (env MS365_CLI_PROFILE)')
+  .option('--plan <file>', `Write a plan (0600) instead of writing to Microsoft 365: the exact requests, the target's version, attachment sha256s and a digest, for \`ms365 apply <file> --expect-digest <digest>\`. Plan-capable: ${Object.keys(PLAN_COMMANDS).join(', ')}`)
+  .option('--plan-ttl <minutes>', `With --plan: minutes until the plan expires (default ${PLAN_TTL_DEFAULT_MIN}, max ${PLAN_TTL_MAX_MIN})`);
 
 // Usage errors (unknown option, missing argument) exit 2; help/version exit 0.
 // Must be set before subcommands are registered so they inherit it.
@@ -178,6 +182,7 @@ registerReportsCommands(program, getClient);
 registerAuditTrailCommands(program, getClient);
 registerWatchCommands(program, getClient);
 registerHealthCommand(program, getClient);
+registerApplyCommand(program, getClient);
 registerAuditCommands(program);
 registerIdempotencyCommands(program);
 registerNotesCommands(program, getClient);
@@ -214,6 +219,14 @@ program.hook('preAction', async (_program, actionCommand) => {
   const uses = usedScopes(commandPath, actionCommand.opts(), actionCommand.processedArgs);
   const ceiling = uses.length ? activeCeiling(o.profile) : null;
   if (ceiling) assertWithinCeiling(commandPath, uses, ceiling.ceiling, ceiling.profile);
+
+  // AH-5: --plan records the command's writes instead of sending them; reads (the target's version) still run.
+  if (o.plan !== undefined) {
+    if (o.dryRun) throw usage('--plan cannot be combined with --dry-run: a plan reads the target\'s current version from Microsoft 365.');
+    beginPlan({ file: o.plan, command: commandPath, ttlMinutes: planTtl(o.planTtl), profile: profileName() ?? null, client: getClient });
+  } else if (o.planTtl !== undefined) {
+    throw usage('--plan-ttl needs --plan.');
+  }
 
   // Skip auth initialization for offline commands and dry-run
   if (OFFLINE_COMMANDS.has(commandChain[1]) || OFFLINE_COMMANDS.has(commandChain.slice(1, 3).join(' '))) return;

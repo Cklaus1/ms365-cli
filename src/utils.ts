@@ -16,6 +16,37 @@ export function outputOption(overrideDefault?: string): Option {
     .default(overrideDefault ?? defaultFormat);
 }
 
+/** What --body-file sets --body to, so a mandatory --body is satisfied by either flag. */
+const BODY_FROM_FILE = '\0--body-file';
+
+/**
+ * `--body <text>` plus `--body-file <path>` (AH-5(6)): a host passes content through a file ("-" = stdin), never argv.
+ * When `required`, --body is mandatory and --body-file satisfies it. Read the value with bodyText().
+ */
+export function addBodyOptions(cmd: Command, description: string, required = false, valueName = 'body'): Command {
+  const body = new Option(`--body <${valueName}>`, `${description} (or --body-file)`);
+  return cmd
+    .addOption(required ? body.makeOptionMandatory() : body)
+    .addOption(new Option('--body-file <path>', `${description}, read from a file ("-" for stdin) instead of --body`)
+      .implies({ body: BODY_FROM_FILE }));
+}
+
+/** The --body or --body-file text, byte for byte; undefined when neither was given (only when --body is optional). */
+export function bodyText(opts: { body?: string; bodyFile?: string }): string | undefined {
+  if (opts.bodyFile === undefined) return opts.body;
+  if (opts.body !== BODY_FROM_FILE) {
+    throw new CliError('--body and --body-file cannot be combined.', { code: 'usage', exitCode: ExitCode.USAGE });
+  }
+  if (opts.bodyFile === '-' && process.env.MS365_CLI_MCP === '1') {
+    throw new CliError('--body-file - cannot read stdin under MCP; pass a file path.', { code: 'usage', exitCode: ExitCode.USAGE });
+  }
+  try {
+    return fs.readFileSync(opts.bodyFile === '-' ? 0 : opts.bodyFile, 'utf8');
+  } catch (err) {
+    throw new CliError(`Cannot read --body-file ${opts.bodyFile}: ${err instanceof Error ? err.message : String(err)}`, { code: 'usage', exitCode: ExitCode.USAGE });
+  }
+}
+
 /** A commander parser for an integer in [min, max]; bad input is a usage error (exit 2, V-22). Keeps the value a string. */
 function intParser(min: number, max = Number.MAX_SAFE_INTEGER) {
   return (value: string): string => {
