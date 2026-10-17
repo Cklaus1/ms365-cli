@@ -114,6 +114,19 @@ No application permissions and no app-only sign-in are involved. **The audit sea
 
 Critical path: AOT-2 → AOT-3 → AOT-5 → AOT-6 → AOT-4 → AOT-7; AOT-1 runs beside AOT-2/AOT-3 and joins at AOT-6. Between tasks the suite stays green without `-u`: `vitest run` writes new snapshot entries and only warns on obsolete ones (do not set `CI=true` for intermediate runs).
 
+
+## Decisions (Step 2, 2026-10-17)
+
+| # | Decision | Why |
+|---|---|---|
+| E1 | OQ-2 → no new report types this run; listed for after AOT-7 confirms the current ones live. | Adding reports before the v1.0 format question (AO-4) is settled multiplies the risk. |
+| E2 | OQ-7 → **(a)**: format-agnostic reader, CSV on v1.0, JSON when returned; never beta. | Beta is unsupported in production. |
+| E3 | OQ-8 → **(a)**: facts only, no risk score. | The admin judges; an opaque score would invite false confidence. |
+| E4 | OQ-9 → **(a)** `Directory.Read.All` for the build (read-only, admin-consented, org-mode only); AOT-7 probes `DelegatedPermissionGrant.Read.All` and swaps it in if it works. | Learn lists (a) as least privileged; (b) is unverified. |
+| E5 | Build order: wave 1 AOT-1 ∥ AOT-2 (disjoint files) → AOT-3 → AOT-5 → AOT-6 → AOT-4. | AOT-2..6 share `catalog.ts`/`audit-trail.ts`; only AOT-1 is disjoint. |
+
+**needs-human:** AOT-7 (live tenant: granting the new scopes and running real queries). Excluded from this run.
+
 ## Review notes (Step 1, 2026-10-17)
 
 The v0.1 Step 1 review notes (sources, † list, sequencing, lint guards) apply unchanged to the carried items AO-2..AO-27; see `chief-of-staff-spec.v0.1.md` "Review notes (Step 1)". The carried items were re-read for scope consistency: only AO-10 (delegated grants "later"), AO-14 (`EXCLUDED` count) and AO-15 (`ORG_SCOPES`) needed inline updates.
