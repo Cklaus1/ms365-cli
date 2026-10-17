@@ -1,4 +1,4 @@
-# DRAFT — Chief-of-staff view and aggregate activity reports
+# DRAFT v0.1 (archived; superseded by admin-oversight-spec.md) — Chief-of-staff view and aggregate activity reports
 
 **Status:** DRAFT — Step 1 adversarial review applied 2026-10-15 (see "Review notes (Step 1)"). Prefix: CS- / CST-
 **As of:** 2026-10-15 · **Base:** branch `build/chief-of-staff` at `8618123` [REVISED: was "main at c8c9b53 + uncommitted"; the `reports`/`chief`/`grant-scopes` code is now committed in the baseline. `reports` has tests, `chief` has none, `audit-trail` is not built.]
