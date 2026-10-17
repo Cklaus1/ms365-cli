@@ -18,6 +18,9 @@
 
 ## needs-human (excluded)
 - [ ] AHT-6b live read evidence (Chief MSC-H3)
-- [ ] AHT-9 non-TTY apply of delete/cancel (OQ-8)
 - [ ] AHT-12 subscription helpers (OQ-14)
 - [ ] AHT-14 live write evidence (Gate 3)
+
+## Follow-up run 2026-10-17 (owner decisions OQ-8 b, D12)
+- [x] AHT-15 shared contract fixture (`test/fixtures/contract/`, `npm run contract:check`)
+- [ ] AHT-9 non-TTY apply of approved calendar delete/cancel under a `type: host` profile (OQ-8 b)

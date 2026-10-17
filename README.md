@@ -765,6 +765,14 @@ refuses. Applying a calendar delete or cancel asks on a terminal and exits 7 wit
 **7. MCP.** `ms365 mcp serve` exposes the same commands as tools (arguments passed in a 0600 file, never argv) and
 `ms365://watch/<resource>` resources that resume their cursor after a restart.
 
+**Contract fixture.** `test/fixtures/contract/` holds the exact bytes a host parses — `describe --json`, `auth status
+-o json`, `health`, one error line per exit code (incl. `scope_ceiling`, `token_rejected`, `cursor_mismatch`,
+`checkpoint_mismatch`), list pages (`complete`/`incompleteReason`/`nextCursor`/`_meta`/`_ref`) and every `watch` line
+kind — generated in host mode through the offline Graph double with a frozen clock. `manifest.json` names each file's
+argv, exit code and sha256, plus the commit and `dist/` sha256 it came from. `npm run contract:check` (and `npm test`)
+regenerates it and fails on any byte difference; after a deliberate contract change run `npm run contract` and commit
+the fixture with the change. A host vendors the directory and tests its parser against it.
+
 ---
 
 ## OData Query Parameters

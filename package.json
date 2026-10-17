@@ -15,7 +15,9 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "docs": "tsx scripts/gen-docs.ts",
-    "docs:check": "tsx scripts/gen-docs.ts --check"
+    "docs:check": "tsx scripts/gen-docs.ts --check",
+    "contract": "npm run -s build && node scripts/contract.mjs",
+    "contract:check": "npm run -s build && node scripts/contract.mjs --check"
   },
   "keywords": [
     "microsoft",

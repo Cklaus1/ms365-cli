@@ -1,0 +1,22 @@
+[
+  {
+    "resource": "mail",
+    "status": "RATE_LIMITED",
+    "reason": "throttled",
+    "checkedAt": "2026-10-17T12:00:00.000Z",
+    "lastSuccessAt": null,
+    "coverageStart": null,
+    "coverageEnd": null,
+    "checkpoint": null
+  },
+  {
+    "resource": "events",
+    "status": "AUTH_REQUIRED",
+    "reason": "access_denied",
+    "checkedAt": "2026-10-17T12:00:00.000Z",
+    "lastSuccessAt": null,
+    "coverageStart": null,
+    "coverageEnd": null,
+    "checkpoint": null
+  }
+]

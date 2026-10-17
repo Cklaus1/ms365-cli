@@ -1,0 +1,2 @@
+{"id":"e1","changeKey":"ck-e1","subject":"Board","start":{"dateTime":"2026-10-19T09:00:00","timeZone":"UTC"},"end":{"dateTime":"2026-10-19T10:00:00","timeZone":"UTC"},"_ref":{"provider":"microsoft-graph","tenantId":"11111111-2222-3333-4444-555555555555","accountId":"22222222-3333-4444-5555-666666666666","mailbox":"ceo@contoso.com","resource":"event","id":"e1","version":"ck-e1","lastModified":null,"webLink":null,"observedAt":"2026-10-17T12:00:00.000Z"}}
+{"_meta":{"complete":true}}

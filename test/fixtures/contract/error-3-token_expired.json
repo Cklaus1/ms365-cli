@@ -1,0 +1,1 @@
+{"error":{"code":"token_expired","exitCode":3,"message":"The supplied token expires at 1970-01-01T00:00:01.000Z, less than 5 minutes from now (or has expired).","fix":"get a fresh token from the host (the agent host sets MS365_CLI_TOKEN)"}}

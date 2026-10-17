@@ -1,0 +1,20 @@
+{
+  "source": "external",
+  "profile": "chief",
+  "type": "host",
+  "tenantId": "11111111-2222-3333-4444-555555555555",
+  "accountId": "22222222-3333-4444-5555-666666666666",
+  "upn": "ceo@contoso.com",
+  "expiresAt": "2100-01-01T00:00:00.000Z",
+  "scopes": [
+    "User.Read",
+    "Mail.Read",
+    "Calendars.Read"
+  ],
+  "ceiling": [
+    "User.Read",
+    "Mail.Read",
+    "Calendars.Read"
+  ],
+  "ok": true
+}

@@ -3,7 +3,18 @@
 // Answers come from MS365_TEST_FETCH_ROUTES: a JSON array of {method?, match, status?, body?, headers?, hang?},
 // `match` a regex tested against the full URL; the first match answers. Unmatched requests get 404 {}.
 // `hang: true` never answers (honours the request's abort signal), for timeout tests.
+// MS365_TEST_NOW (an ISO instant) freezes the clock: `Date.now()` and `new Date()` return it, so output that carries
+// timestamps (checkedAt, syncedAt, observedAt, windows) is byte-for-byte reproducible (AHT-15 contract fixture).
 import { writeSync } from 'node:fs';
+
+if (process.env.MS365_TEST_NOW) {
+  const fixed = Date.parse(process.env.MS365_TEST_NOW);
+  if (Number.isNaN(fixed)) throw new Error(`MS365_TEST_NOW is not a date: ${process.env.MS365_TEST_NOW}`);
+  globalThis.Date = class FixedDate extends Date {
+    constructor(...args) { if (args.length === 0) super(fixed); else super(...args); }
+    static now() { return fixed; }
+  };
+}
 
 const routes = JSON.parse(process.env.MS365_TEST_FETCH_ROUTES || '[]');
 

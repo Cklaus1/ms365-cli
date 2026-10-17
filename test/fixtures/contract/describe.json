@@ -1,0 +1,3441 @@
+{
+  "version": "0.1.0",
+  "globalOptions": [
+    {
+      "flags": "-V, --version",
+      "long": "--version",
+      "short": "-V",
+      "description": "output the version number",
+      "required": false,
+      "takesValue": false,
+      "choices": null,
+      "default": null
+    },
+    {
+      "flags": "--org-mode",
+      "long": "--org-mode",
+      "short": null,
+      "description": "Enable organization mode (Teams, SharePoint, shared mailboxes)",
+      "required": false,
+      "takesValue": false,
+      "choices": null,
+      "default": null
+    },
+    {
+      "flags": "--read-only",
+      "long": "--read-only",
+      "short": null,
+      "description": "Restrict to read-only operations",
+      "required": false,
+      "takesValue": false,
+      "choices": null,
+      "default": null
+    },
+    {
+      "flags": "--dry-run",
+      "long": "--dry-run",
+      "short": null,
+      "description": "Preview the API request without executing it",
+      "required": false,
+      "takesValue": false,
+      "choices": null,
+      "default": null
+    },
+    {
+      "flags": "--api-version <version>",
+      "long": "--api-version",
+      "short": null,
+      "description": "Graph API version",
+      "required": false,
+      "takesValue": true,
+      "choices": [
+        "v1.0",
+        "beta"
+      ],
+      "default": null
+    },
+    {
+      "flags": "-q, --quiet",
+      "long": "--quiet",
+      "short": "-q",
+      "description": "Suppress non-data output (confirmations, progress)",
+      "required": false,
+      "takesValue": false,
+      "choices": null,
+      "default": null
+    },
+    {
+      "flags": "--error-format <format>",
+      "long": "--error-format",
+      "short": null,
+      "description": "Error output on stderr (default: text)",
+      "required": false,
+      "takesValue": true,
+      "choices": [
+        "text",
+        "json"
+      ],
+      "default": null
+    },
+    {
+      "flags": "--fields <list>",
+      "long": "--fields",
+      "short": null,
+      "description": "Only output these comma-separated fields (dot paths allowed, e.g. id,from.emailAddress.address)",
+      "required": false,
+      "takesValue": true,
+      "choices": null,
+      "default": null
+    },
+    {
+      "flags": "--actor <name>",
+      "long": "--actor",
+      "short": null,
+      "description": "Name recorded as the actor in the audit log (default: MS365_CLI_ACTOR or \"cli\")",
+      "required": false,
+      "takesValue": true,
+      "choices": null,
+      "default": null
+    },
+    {
+      "flags": "--cursor <token>",
+      "long": "--cursor",
+      "short": null,
+      "description": "Fetch the next page of a previous call of the same command: its nextCursor (json/yaml: a field; ndjson: the _meta line; table/csv: stderr). A cursor from another command exits 2",
+      "required": false,
+      "takesValue": true,
+      "choices": null,
+      "default": null
+    },
+    {
+      "flags": "--refs",
+      "long": "--refs",
+      "short": null,
+      "description": "Add _ref (tenant, account, mailbox, id, version, link, observedAt) to every message and event read (env MS365_CLI_REFS=1)",
+      "required": false,
+      "takesValue": false,
+      "choices": null,
+      "default": null
+    },
+    {
+      "flags": "--account <upn|homeAccountId>",
+      "long": "--account",
+      "short": null,
+      "description": "Use this cached account for this call only (env MS365_CLI_ACCOUNT)",
+      "required": false,
+      "takesValue": true,
+      "choices": null,
+      "default": null
+    },
+    {
+      "flags": "--profile <name>",
+      "long": "--profile",
+      "short": null,
+      "description": "Apply a saved profile: client ID, tenant, scopes, org mode, account (env MS365_CLI_PROFILE)",
+      "required": false,
+      "takesValue": true,
+      "choices": null,
+      "default": null
+    },
+    {
+      "flags": "--plan <file>",
+      "long": "--plan",
+      "short": null,
+      "description": "Write a plan (0600) instead of writing to Microsoft 365: the exact requests, the target's version, attachment sha256s and a digest, for `ms365 apply <file> --expect-digest <digest>`. Plan-capable: mail draft, mail update-draft, mail send-draft, mail send, mail reply, mail forward, calendar create, calendar update, calendar delete, calendar cancel",
+      "required": false,
+      "takesValue": true,
+      "choices": null,
+      "default": null
+    },
+    {
+      "flags": "--plan-ttl <minutes>",
+      "long": "--plan-ttl",
+      "short": null,
+      "description": "With --plan: minutes until the plan expires (default 15, max 1440)",
+      "required": false,
+      "takesValue": true,
+      "choices": null,
+      "default": null
+    }
+  ],
+  "commands": [
+    {
+      "path": "auth login",
+      "description": "Login (device code flow by default; --start/--wait relay the code through a host)",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--browser",
+          "long": "--browser",
+          "short": null,
+          "description": "Sign in with the system browser instead (needs an http://localhost redirect URI on the app registration)",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--start",
+          "long": "--start",
+          "short": null,
+          "description": "Start a device-code sign-in in the background and return at once: user code, verification URI, expiry and a handle for --wait",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--wait <handle>",
+          "long": "--wait",
+          "short": null,
+          "description": "Wait for a sign-in started with --start; prints its state: pending, done, expired, denied or failed",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--timeout <seconds>",
+          "long": "--timeout",
+          "short": null,
+          "description": "With --wait: stop waiting after this many seconds (state pending; default: until the code expires)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--hold <handle>",
+          "long": "--hold",
+          "short": null,
+          "description": "internal: the background half of --start",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "text"
+        }
+      ],
+      "scopes": [
+        "User.Read"
+      ],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": false,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "auth logout",
+      "description": "Log out and clear saved credentials",
+      "arguments": [],
+      "options": [],
+      "scopes": [],
+      "scopesBy": null,
+      "destructive": true,
+      "idempotent": true,
+      "offline": true,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "auth status",
+      "description": "Verify current login status (-o json: token source, account, expiry, scopes and profile ceiling)",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "text"
+        }
+      ],
+      "scopes": [
+        "User.Read"
+      ],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "auth scopes",
+      "description": "Show the scopes granted to the current access token (plus audience, tenant, user, expiry)",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": true,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "auth refresh",
+      "description": "Fetch a fresh access token now (e.g. after an admin grants new permissions) and show which scopes changed",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": true,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "auth grant-scopes",
+      "description": "Add the scopes ms365 requests to its app registration and grant tenant-wide admin consent (uses the Azure CLI's admin sign-in; falls back to an admin-consent link)",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--link",
+          "long": "--link",
+          "short": null,
+          "description": "Only print the one-click admin-consent link (no Azure CLI needed)",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": true,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "auth accounts",
+      "description": "List all cached accounts",
+      "arguments": [],
+      "options": [],
+      "scopes": [],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": true,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "auth select",
+      "description": "Select an account by ID",
+      "arguments": [
+        {
+          "name": "accountId",
+          "required": true,
+          "variadic": false
+        }
+      ],
+      "options": [],
+      "scopes": [],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": true,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "auth remove",
+      "description": "Remove a cached account",
+      "arguments": [
+        {
+          "name": "accountId",
+          "required": true,
+          "variadic": false
+        }
+      ],
+      "options": [],
+      "scopes": [],
+      "scopesBy": null,
+      "destructive": true,
+      "idempotent": true,
+      "offline": true,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "auth storage show",
+      "description": "Show the storage setting, what it resolved to, keychain availability (live probe) and the credential files",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--no-probe",
+          "long": "--no-probe",
+          "short": null,
+          "description": "Skip the live keychain probe (write, read back and delete a probe item; at most 1.5 s)",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": true,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "auth storage use",
+      "description": "Switch credential storage and move every cached account to it (no re-login): auto, keychain or file",
+      "arguments": [
+        {
+          "name": "mode",
+          "required": true,
+          "variadic": false
+        }
+      ],
+      "options": [],
+      "scopes": [],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": true,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "auth profile list",
+      "description": "List saved profiles",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": true,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "auth profile show",
+      "description": "Show a saved profile",
+      "arguments": [
+        {
+          "name": "name",
+          "required": true,
+          "variadic": false
+        }
+      ],
+      "options": [
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": true,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "auth profile set",
+      "description": "Create a profile, or update the given fields of an existing one",
+      "arguments": [
+        {
+          "name": "name",
+          "required": true,
+          "variadic": false
+        }
+      ],
+      "options": [
+        {
+          "flags": "--type <type>",
+          "long": "--type",
+          "short": null,
+          "description": "Identity type: user (ms365 sign-in), admin (token borrowed from the Azure CLI, never stored) or host (token supplied by an agent host in MS365_CLI_TOKEN, never stored)",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "user",
+            "admin",
+            "host"
+          ],
+          "default": null
+        },
+        {
+          "flags": "--client-id <id>",
+          "long": "--client-id",
+          "short": null,
+          "description": "Application (client) ID",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--tenant-id <id>",
+          "long": "--tenant-id",
+          "short": null,
+          "description": "Tenant ID or domain",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--tenant <id>",
+          "long": "--tenant",
+          "short": null,
+          "description": "Same as --tenant-id",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--scopes <list>",
+          "long": "--scopes",
+          "short": null,
+          "description": "Comma-separated scopes: requested at login, and the ceiling of every command run under a user or host profile",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--org-mode",
+          "long": "--org-mode",
+          "short": null,
+          "description": "Enable organization mode",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--no-org-mode",
+          "long": "--no-org-mode",
+          "short": null,
+          "description": "Disable organization mode",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--account <upn|homeAccountId>",
+          "long": "--account",
+          "short": null,
+          "description": "Cached account to use",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        }
+      ],
+      "scopes": [],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": true,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "auth profile delete",
+      "description": "Delete a saved profile",
+      "arguments": [
+        {
+          "name": "name",
+          "required": true,
+          "variadic": false
+        }
+      ],
+      "options": [],
+      "scopes": [],
+      "scopesBy": null,
+      "destructive": true,
+      "idempotent": true,
+      "offline": true,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "auth setup",
+      "description": "Interactive setup wizard for Azure AD app registration",
+      "arguments": [],
+      "options": [],
+      "scopes": [
+        "User.Read"
+      ],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": false,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "mail list",
+      "description": "List inbox messages",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--filter <filter>",
+          "long": "--filter",
+          "short": null,
+          "description": "OData filter expression",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--select <fields>",
+          "long": "--select",
+          "short": null,
+          "description": "Comma-separated fields to return",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--search <query>",
+          "long": "--search",
+          "short": null,
+          "description": "Search query (cannot be combined with --filter; Graph returns at most 250 results)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--folder <name>",
+          "long": "--folder",
+          "short": null,
+          "description": "Folder name, path or ID (e.g. \"Drafts\", \"Sent Items\", \"Inbox/Projects\", or a folder ID)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--body <mode>",
+          "long": "--body",
+          "short": null,
+          "description": "Body format: html (as returned), text, markdown, or none (drop bodies)",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "html",
+            "text",
+            "markdown",
+            "none"
+          ],
+          "default": "html"
+        },
+        {
+          "flags": "--max-chars <n>",
+          "long": "--max-chars",
+          "short": null,
+          "description": "Truncate body content and bodyPreview to n characters",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--wrap-untrusted",
+          "long": "--wrap-untrusted",
+          "short": null,
+          "description": "Wrap body content in <<<UNTRUSTED_CONTENT … UNTRUSTED_CONTENT>>> delimiters",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--top <n>",
+          "long": "--top",
+          "short": null,
+          "description": "Number of messages to return",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": "10"
+        },
+        {
+          "flags": "--all",
+          "long": "--all",
+          "short": null,
+          "description": "Fetch all pages",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--page-limit <n>",
+          "long": "--page-limit",
+          "short": null,
+          "description": "Max pages when using --all",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--page-delay <ms>",
+          "long": "--page-delay",
+          "short": null,
+          "description": "Delay between pages in ms",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--mailbox <upn>",
+          "long": "--mailbox",
+          "short": null,
+          "description": "Read this mailbox (UPN or user id) through your delegate access; needs Mail.Read.Shared",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [
+        "Mail.Read",
+        "Mail.Read.Shared"
+      ],
+      "scopesBy": {
+        "base": [
+          "Mail.Read"
+        ],
+        "withOption": {
+          "option": "--mailbox",
+          "scopes": [
+            "Mail.Read.Shared"
+          ]
+        }
+      },
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "mail get",
+      "description": "Get a specific message (marked untrusted; see --body, --unique, --wrap-untrusted)",
+      "arguments": [
+        {
+          "name": "messageId",
+          "required": true,
+          "variadic": false
+        }
+      ],
+      "options": [
+        {
+          "flags": "--select <fields>",
+          "long": "--select",
+          "short": null,
+          "description": "Comma-separated fields to return",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--unique",
+          "long": "--unique",
+          "short": null,
+          "description": "Return uniqueBody (the new part of a thread reply, without quoted history) instead of body",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--body <mode>",
+          "long": "--body",
+          "short": null,
+          "description": "Body format: html (as returned), text, markdown, or none (drop bodies)",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "html",
+            "text",
+            "markdown",
+            "none"
+          ],
+          "default": "html"
+        },
+        {
+          "flags": "--max-chars <n>",
+          "long": "--max-chars",
+          "short": null,
+          "description": "Truncate body content and bodyPreview to n characters",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--wrap-untrusted",
+          "long": "--wrap-untrusted",
+          "short": null,
+          "description": "Wrap body content in <<<UNTRUSTED_CONTENT … UNTRUSTED_CONTENT>>> delimiters",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--mailbox <upn>",
+          "long": "--mailbox",
+          "short": null,
+          "description": "Read this mailbox (UPN or user id) through your delegate access; needs Mail.Read.Shared",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [
+        "Mail.Read",
+        "Mail.Read.Shared"
+      ],
+      "scopesBy": {
+        "base": [
+          "Mail.Read"
+        ],
+        "withOption": {
+          "option": "--mailbox",
+          "scopes": [
+            "Mail.Read.Shared"
+          ]
+        }
+      },
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "mail read",
+      "description": "Read a message with full body, attachments info, and metadata",
+      "arguments": [
+        {
+          "name": "messageId",
+          "required": true,
+          "variadic": false
+        }
+      ],
+      "options": [
+        {
+          "flags": "--text",
+          "long": "--text",
+          "short": null,
+          "description": "Prefer plain text body over HTML",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [
+        "Mail.Read"
+      ],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "mail triage",
+      "description": "Show inbox summary — unread messages with key metadata",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--top <n>",
+          "long": "--top",
+          "short": null,
+          "description": "Number of messages",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": "20"
+        },
+        {
+          "flags": "--filter <filter>",
+          "long": "--filter",
+          "short": null,
+          "description": "OData filter (default: unread)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": "isRead eq false"
+        },
+        {
+          "flags": "--folder <name>",
+          "long": "--folder",
+          "short": null,
+          "description": "Folder name, path (Inbox/Projects) or ID",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--include-read",
+          "long": "--include-read",
+          "short": null,
+          "description": "Include read messages too",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--max-chars <n>",
+          "long": "--max-chars",
+          "short": null,
+          "description": "Truncate body content and bodyPreview to n characters",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--wrap-untrusted",
+          "long": "--wrap-untrusted",
+          "short": null,
+          "description": "Wrap body content in <<<UNTRUSTED_CONTENT … UNTRUSTED_CONTENT>>> delimiters",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "table"
+        }
+      ],
+      "scopes": [
+        "Mail.Read"
+      ],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "mail folders",
+      "description": "List mail folders",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--parent <name>",
+          "long": "--parent",
+          "short": null,
+          "description": "List child folders of this folder (name, path (inbox/projects) or id)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--all",
+          "long": "--all",
+          "short": null,
+          "description": "Fetch all pages",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--page-limit <n>",
+          "long": "--page-limit",
+          "short": null,
+          "description": "Max pages when using --all",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--page-delay <ms>",
+          "long": "--page-delay",
+          "short": null,
+          "description": "Delay between pages in ms",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [
+        "Mail.Read"
+      ],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "mail folder",
+      "description": "Find a folder by display name or path (e.g. \"Drafts\", \"Sent Items\", \"Inbox/Projects\")",
+      "arguments": [
+        {
+          "name": "name",
+          "required": true,
+          "variadic": false
+        }
+      ],
+      "options": [
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [
+        "Mail.Read"
+      ],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "mail drafts",
+      "description": "List draft emails",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--top <n>",
+          "long": "--top",
+          "short": null,
+          "description": "Number of drafts",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": "10"
+        },
+        {
+          "flags": "--all",
+          "long": "--all",
+          "short": null,
+          "description": "Fetch all pages",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--page-limit <n>",
+          "long": "--page-limit",
+          "short": null,
+          "description": "Max pages when using --all",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--page-delay <ms>",
+          "long": "--page-delay",
+          "short": null,
+          "description": "Delay between pages in ms",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [
+        "Mail.Read"
+      ],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "mail reconcile",
+      "description": "Find out what became of a send: SENT (in Sent Items), STILL_DRAFT or NOT_FOUND_YET (never \"not sent\")",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--idempotency-key <key>",
+          "long": "--idempotency-key",
+          "short": null,
+          "description": "The send's --idempotency-key (its ledger entry holds the internetMessageId)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--internet-message-id <id>",
+          "long": "--internet-message-id",
+          "short": null,
+          "description": "The internetMessageId from the send result or its outcome_unknown error",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [
+        "Mail.Read"
+      ],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "mail attachments",
+      "description": "List attachments for a message",
+      "arguments": [
+        {
+          "name": "messageId",
+          "required": true,
+          "variadic": false
+        }
+      ],
+      "options": [
+        {
+          "flags": "--all",
+          "long": "--all",
+          "short": null,
+          "description": "Fetch all pages",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--page-limit <n>",
+          "long": "--page-limit",
+          "short": null,
+          "description": "Max pages when using --all",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--page-delay <ms>",
+          "long": "--page-delay",
+          "short": null,
+          "description": "Delay between pages in ms",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [
+        "Mail.Read"
+      ],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "mail attachment",
+      "description": "Get a specific attachment",
+      "arguments": [
+        {
+          "name": "messageId",
+          "required": true,
+          "variadic": false
+        },
+        {
+          "name": "attachmentId",
+          "required": true,
+          "variadic": false
+        }
+      ],
+      "options": [
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [
+        "Mail.Read"
+      ],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "mail download-attachment",
+      "description": "Download an attachment to a file",
+      "arguments": [
+        {
+          "name": "messageId",
+          "required": true,
+          "variadic": false
+        },
+        {
+          "name": "attachmentId",
+          "required": true,
+          "variadic": false
+        }
+      ],
+      "options": [
+        {
+          "flags": "--out <path>",
+          "long": "--out",
+          "short": null,
+          "description": "Output file path (default: attachment name in the current directory)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--force",
+          "long": "--force",
+          "short": null,
+          "description": "Overwrite an existing file",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        }
+      ],
+      "scopes": [
+        "Mail.Read"
+      ],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "calendar list",
+      "description": "List calendars",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--all",
+          "long": "--all",
+          "short": null,
+          "description": "Fetch all pages",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--page-limit <n>",
+          "long": "--page-limit",
+          "short": null,
+          "description": "Max pages when using --all",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--page-delay <ms>",
+          "long": "--page-delay",
+          "short": null,
+          "description": "Delay between pages in ms",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [
+        "Calendars.Read"
+      ],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "calendar events",
+      "description": "List calendar events",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--filter <filter>",
+          "long": "--filter",
+          "short": null,
+          "description": "OData filter",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--select <fields>",
+          "long": "--select",
+          "short": null,
+          "description": "Fields to return",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--orderby <field>",
+          "long": "--orderby",
+          "short": null,
+          "description": "Order by field",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--calendar <calendarId>",
+          "long": "--calendar",
+          "short": null,
+          "description": "Specific calendar ID",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--timezone <tz>",
+          "long": "--timezone",
+          "short": null,
+          "description": "Zone for returned times; IANA time zone (default: MS365_CLI_TIMEZONE or the local zone)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--top <n>",
+          "long": "--top",
+          "short": null,
+          "description": "Number of events",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": "10"
+        },
+        {
+          "flags": "--all",
+          "long": "--all",
+          "short": null,
+          "description": "Fetch all pages",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--page-limit <n>",
+          "long": "--page-limit",
+          "short": null,
+          "description": "Max pages when using --all",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--page-delay <ms>",
+          "long": "--page-delay",
+          "short": null,
+          "description": "Delay between pages in ms",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [
+        "Calendars.Read"
+      ],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "calendar get",
+      "description": "Get a specific event",
+      "arguments": [
+        {
+          "name": "eventId",
+          "required": true,
+          "variadic": false
+        }
+      ],
+      "options": [
+        {
+          "flags": "--calendar <calendarId>",
+          "long": "--calendar",
+          "short": null,
+          "description": "Specific calendar ID",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--select <fields>",
+          "long": "--select",
+          "short": null,
+          "description": "Fields to return",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--timezone <tz>",
+          "long": "--timezone",
+          "short": null,
+          "description": "Zone for returned times; IANA time zone (default: MS365_CLI_TIMEZONE or the local zone)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--mailbox <upn>",
+          "long": "--mailbox",
+          "short": null,
+          "description": "Read this mailbox (UPN or user id) through your delegate access; needs Calendars.Read.Shared",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [
+        "Calendars.Read",
+        "Calendars.Read.Shared"
+      ],
+      "scopesBy": {
+        "base": [
+          "Calendars.Read"
+        ],
+        "withOption": {
+          "option": "--mailbox",
+          "scopes": [
+            "Calendars.Read.Shared"
+          ]
+        }
+      },
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "calendar instances",
+      "description": "List the occurrences of a recurring series in a time range (paged)",
+      "arguments": [
+        {
+          "name": "seriesId",
+          "required": true,
+          "variadic": false
+        }
+      ],
+      "options": [
+        {
+          "flags": "--start <datetime>",
+          "long": "--start",
+          "short": null,
+          "description": "Start: ISO 8601 or natural (\"tomorrow 15:00\", \"next mon 9:30\", \"+2h\")",
+          "required": true,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--end <datetime>",
+          "long": "--end",
+          "short": null,
+          "description": "End: ISO 8601 or natural (\"tomorrow 15:00\", \"next mon 9:30\", \"+2h\")",
+          "required": true,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--calendar <calendarId>",
+          "long": "--calendar",
+          "short": null,
+          "description": "Specific calendar ID",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--timezone <tz>",
+          "long": "--timezone",
+          "short": null,
+          "description": "Zone for --start/--end and returned times; IANA time zone (default: MS365_CLI_TIMEZONE or the local zone)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--all",
+          "long": "--all",
+          "short": null,
+          "description": "Fetch all pages",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--page-limit <n>",
+          "long": "--page-limit",
+          "short": null,
+          "description": "Max pages when using --all",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--page-delay <ms>",
+          "long": "--page-delay",
+          "short": null,
+          "description": "Delay between pages in ms",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--mailbox <upn>",
+          "long": "--mailbox",
+          "short": null,
+          "description": "Read this mailbox (UPN or user id) through your delegate access; needs Calendars.Read.Shared",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [
+        "Calendars.Read",
+        "Calendars.Read.Shared"
+      ],
+      "scopesBy": {
+        "base": [
+          "Calendars.Read"
+        ],
+        "withOption": {
+          "option": "--mailbox",
+          "scopes": [
+            "Calendars.Read.Shared"
+          ]
+        }
+      },
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "calendar view",
+      "description": "Get calendar view (time range)",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--start <datetime>",
+          "long": "--start",
+          "short": null,
+          "description": "Start: ISO 8601 or natural (\"tomorrow 15:00\", \"next mon 9:30\", \"+2h\")",
+          "required": true,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--end <datetime>",
+          "long": "--end",
+          "short": null,
+          "description": "End: ISO 8601 or natural (\"tomorrow 15:00\", \"next mon 9:30\", \"+2h\")",
+          "required": true,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--select <fields>",
+          "long": "--select",
+          "short": null,
+          "description": "Fields to return",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--timezone <tz>",
+          "long": "--timezone",
+          "short": null,
+          "description": "Zone for --start/--end and returned times; IANA time zone (default: MS365_CLI_TIMEZONE or the local zone)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--all",
+          "long": "--all",
+          "short": null,
+          "description": "Fetch all pages",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--page-limit <n>",
+          "long": "--page-limit",
+          "short": null,
+          "description": "Max pages when using --all",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--page-delay <ms>",
+          "long": "--page-delay",
+          "short": null,
+          "description": "Delay between pages in ms",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--mailbox <upn>",
+          "long": "--mailbox",
+          "short": null,
+          "description": "Read this mailbox (UPN or user id) through your delegate access; needs Calendars.Read.Shared",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [
+        "Calendars.Read",
+        "Calendars.Read.Shared"
+      ],
+      "scopesBy": {
+        "base": [
+          "Calendars.Read"
+        ],
+        "withOption": {
+          "option": "--mailbox",
+          "scopes": [
+            "Calendars.Read.Shared"
+          ]
+        }
+      },
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "calendar free-busy",
+      "description": "Get free/busy schedule for one or more users",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--emails <addresses>",
+          "long": "--emails",
+          "short": null,
+          "description": "Comma-separated email addresses to check",
+          "required": true,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--start <datetime>",
+          "long": "--start",
+          "short": null,
+          "description": "Start: ISO 8601 or natural (\"tomorrow 15:00\", \"next mon 9:30\", \"+2h\")",
+          "required": true,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--end <datetime>",
+          "long": "--end",
+          "short": null,
+          "description": "End: ISO 8601 or natural (\"tomorrow 15:00\", \"next mon 9:30\", \"+2h\")",
+          "required": true,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--timezone <tz>",
+          "long": "--timezone",
+          "short": null,
+          "description": "IANA time zone (default: MS365_CLI_TIMEZONE or the local zone)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--interval <min>",
+          "long": "--interval",
+          "short": null,
+          "description": "Time slot interval in minutes (5-1440)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": "30"
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [
+        "Calendars.Read"
+      ],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "search query",
+      "description": "Search mail, events, chats, files, sites and list items in one query (hits merged into one list)",
+      "arguments": [
+        {
+          "name": "query",
+          "required": true,
+          "variadic": false
+        }
+      ],
+      "options": [
+        {
+          "flags": "--entity <types>",
+          "long": "--entity",
+          "short": null,
+          "description": "Comma-separated entity types: message, event, chatMessage, driveItem, listItem, site",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": "message,event,driveItem"
+        },
+        {
+          "flags": "--size <n>",
+          "long": "--size",
+          "short": null,
+          "description": "Number of hits per request",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": "10"
+        },
+        {
+          "flags": "--from <n>",
+          "long": "--from",
+          "short": null,
+          "description": "Zero-based offset of the first hit, per request",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": "0"
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [
+        "Files.Read.All",
+        "Sites.Read.All",
+        "Mail.Read",
+        "Calendars.Read",
+        "Chat.Read"
+      ],
+      "scopesBy": {
+        "option": "--entity",
+        "map": {
+          "driveItem": [
+            "Files.Read.All",
+            "Sites.Read.All"
+          ],
+          "listItem": [
+            "Sites.Read.All"
+          ],
+          "site": [
+            "Sites.Read.All"
+          ],
+          "message": [
+            "Mail.Read"
+          ],
+          "event": [
+            "Calendars.Read"
+          ],
+          "chatMessage": [
+            "Chat.Read"
+          ]
+        }
+      },
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "user me",
+      "description": "Get current user profile",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--select <fields>",
+          "long": "--select",
+          "short": null,
+          "description": "Fields to return",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [
+        "User.Read"
+      ],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "user photo",
+      "description": "Get profile photo metadata",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [
+        "User.Read"
+      ],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "user download-photo",
+      "description": "Download profile photo",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--out <path>",
+          "long": "--out",
+          "short": null,
+          "description": "Output file path",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": "profile-photo.jpg"
+        },
+        {
+          "flags": "--force",
+          "long": "--force",
+          "short": null,
+          "description": "Overwrite --out if it already exists",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        }
+      ],
+      "scopes": [
+        "User.Read"
+      ],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "workflow standup",
+      "description": "Today's standup: calendar events + open tasks + unread email count",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--timezone <tz>",
+          "long": "--timezone",
+          "short": null,
+          "description": "IANA time zone (default: MS365_CLI_TIMEZONE or system zone)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "text"
+        }
+      ],
+      "scopes": [
+        "Calendars.Read",
+        "Mail.Read"
+      ],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "workflow meeting-prep",
+      "description": "Get details for the next upcoming meeting: attendees, agenda, location",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--event-id <id>",
+          "long": "--event-id",
+          "short": null,
+          "description": "Specific event ID (default: next upcoming event)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--timezone <tz>",
+          "long": "--timezone",
+          "short": null,
+          "description": "IANA time zone (default: MS365_CLI_TIMEZONE or system zone)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "text"
+        }
+      ],
+      "scopes": [
+        "Calendars.Read"
+      ],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "workflow focus-time",
+      "description": "Find gaps in your calendar today for focus time",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--work-start <time>",
+          "long": "--work-start",
+          "short": null,
+          "description": "Work day start, 24h hour or HH:MM",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": "9"
+        },
+        {
+          "flags": "--work-end <time>",
+          "long": "--work-end",
+          "short": null,
+          "description": "Work day end, 24h hour or HH:MM",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": "17"
+        },
+        {
+          "flags": "--timezone <tz>",
+          "long": "--timezone",
+          "short": null,
+          "description": "IANA time zone (default: MS365_CLI_TIMEZONE or system zone)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "text"
+        }
+      ],
+      "scopes": [
+        "Calendars.Read"
+      ],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "schema",
+      "description": "Introspect API schema for an endpoint (e.g. mail.list, calendar.create)",
+      "arguments": [
+        {
+          "name": "endpoint",
+          "required": false,
+          "variadic": false
+        }
+      ],
+      "options": [
+        {
+          "flags": "--list",
+          "long": "--list",
+          "short": null,
+          "description": "List all available endpoint schemas",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        }
+      ],
+      "scopes": [],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": true,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "generate-skills",
+      "description": "Generate SKILL.md files for AI agent integration",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--output-dir <dir>",
+          "long": "--output-dir",
+          "short": null,
+          "description": "Output directory",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": "./skills"
+        },
+        {
+          "flags": "--filter <pattern>",
+          "long": "--filter",
+          "short": null,
+          "description": "Only generate skills for command groups matching this regular expression",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--force",
+          "long": "--force",
+          "short": null,
+          "description": "Overwrite existing skill files",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        }
+      ],
+      "scopes": [],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": true,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "meetings list",
+      "description": "List your online meetings in a time window (calendar events with a Teams link)",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--start <datetime>",
+          "long": "--start",
+          "short": null,
+          "description": "Window start (default: now): ISO 8601 or natural (\"tomorrow 15:00\", \"next mon 9:30\", \"+2h\")",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--end <datetime>",
+          "long": "--end",
+          "short": null,
+          "description": "Window end (default: 7 days after the start): ISO 8601 or natural (\"tomorrow 15:00\", \"next mon 9:30\", \"+2h\")",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--timezone <tz>",
+          "long": "--timezone",
+          "short": null,
+          "description": "Zone for the window and returned times; IANA time zone (default: MS365_CLI_TIMEZONE or the local zone)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--all",
+          "long": "--all",
+          "short": null,
+          "description": "Fetch all pages",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--page-limit <n>",
+          "long": "--page-limit",
+          "short": null,
+          "description": "Max pages when using --all",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--page-delay <ms>",
+          "long": "--page-delay",
+          "short": null,
+          "description": "Delay between pages in ms",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [
+        "Calendars.Read"
+      ],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "audit-trail import",
+      "description": "Offline analysis of a Purview audit-log export (CSV): which mailboxes an app or person opened, who opened a mailbox, or all non-owner mailbox access; aggregated per actor, mailbox and logon type, own-mailbox events omitted. No sign-in, no network.",
+      "arguments": [
+        {
+          "name": "file.csv",
+          "required": true,
+          "variadic": false
+        }
+      ],
+      "options": [
+        {
+          "flags": "--app <appId>",
+          "long": "--app",
+          "short": null,
+          "description": "Only access by this application (client) ID (GUID)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--by <upn>",
+          "long": "--by",
+          "short": null,
+          "description": "Only access by this person (one exact UPN)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--mailbox <upn>",
+          "long": "--mailbox",
+          "short": null,
+          "description": "Only access to this mailbox (owner UPN), by anyone but its owner",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--cross-mailbox",
+          "long": "--cross-mailbox",
+          "short": null,
+          "description": "All non-owner mailbox access in the file",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": true,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "watch",
+      "description": "Print changes since the last run as NDJSON (delta queries; cursor saved per --name, or held by the caller with --checkpoint)",
+      "arguments": [
+        {
+          "name": "resource",
+          "required": true,
+          "variadic": false
+        }
+      ],
+      "options": [
+        {
+          "flags": "--folder <folder>",
+          "long": "--folder",
+          "short": null,
+          "description": "mail: folder id or well-known name (default: inbox)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--start <time>",
+          "long": "--start",
+          "short": null,
+          "description": "events: window start (default: now)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--end <time>",
+          "long": "--end",
+          "short": null,
+          "description": "events: window end (default: +30d)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--timezone <tz>",
+          "long": "--timezone",
+          "short": null,
+          "description": "events: IANA zone for --start/--end and returned times",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--name <name>",
+          "long": "--name",
+          "short": null,
+          "description": "Cursor name (default: the resource, or mail-<folder>; @<mailbox> appended with --mailbox)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--mailbox <upn>",
+          "long": "--mailbox",
+          "short": null,
+          "description": "Read this mailbox (UPN or user id) through your delegate access; needs Mail.Read.Shared (mail) or Calendars.Read.Shared (events)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--reset",
+          "long": "--reset",
+          "short": null,
+          "description": "Discard the saved cursor and start a new baseline",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--checkpoint <blob|@file|@->",
+          "long": "--checkpoint",
+          "short": null,
+          "description": "Resume from a checkpoint the caller holds (the blob, a file, or stdin); \"new\" or \"\" starts a baseline. No cursor file is read or written",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--select <fields>",
+          "long": "--select",
+          "short": null,
+          "description": "mail, events: keep only these item fields (id, changeKey and lastModifiedDateTime are always kept)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--include-existing",
+          "long": "--include-existing",
+          "short": null,
+          "description": "On a baseline, print existing items (type \"backfill\") instead of only saving the cursor",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--strict",
+          "long": "--strict",
+          "short": null,
+          "description": "Exit 1 when the cursor has expired instead of emitting a gap and a backfill",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--follow",
+          "long": "--follow",
+          "short": null,
+          "description": "Keep watching, one pass per --interval, until Ctrl-C",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--interval <seconds>",
+          "long": "--interval",
+          "short": null,
+          "description": "Seconds between passes with --follow (min 15)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": "60"
+        },
+        {
+          "flags": "--max-failures <n>",
+          "long": "--max-failures",
+          "short": null,
+          "description": "With --follow, exit after this many consecutive failed passes",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": "10"
+        },
+        {
+          "flags": "--max-passes <n>",
+          "long": "--max-passes",
+          "short": null,
+          "description": "",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        }
+      ],
+      "scopes": [
+        "Mail.Read",
+        "Calendars.Read",
+        "Files.Read",
+        "Contacts.Read",
+        "Mail.Read.Shared",
+        "Calendars.Read.Shared"
+      ],
+      "scopesBy": {
+        "argument": "resource",
+        "map": {
+          "mail": [
+            "Mail.Read"
+          ],
+          "events": [
+            "Calendars.Read"
+          ],
+          "files": [
+            "Files.Read"
+          ],
+          "contacts": [
+            "Contacts.Read"
+          ]
+        },
+        "withOption": {
+          "option": "--mailbox",
+          "map": {
+            "mail": [
+              "Mail.Read.Shared"
+            ],
+            "events": [
+              "Calendars.Read.Shared"
+            ]
+          }
+        }
+      },
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "health",
+      "description": "Report each resource's health for an agent host (HEALTHY, PARTIAL, STALE, AUTH_REQUIRED, RATE_LIMITED, UNSUPPORTED)",
+      "arguments": [
+        {
+          "name": "resources",
+          "required": false,
+          "variadic": true
+        }
+      ],
+      "options": [
+        {
+          "flags": "--checkpoint <blob|@file|@->",
+          "long": "--checkpoint",
+          "short": null,
+          "description": "A checkpoint printed by watch; its coverage replaces the saved cursor's for its resource",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [
+        "User.Read"
+      ],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "apply",
+      "description": "Send exactly the requests of a plan written by --plan, after checking its digest, the profile ceiling, expiry, attachment bytes and token identity; If-Match is part of the plan (412 → exit 4 version_changed)",
+      "arguments": [
+        {
+          "name": "planFile",
+          "required": true,
+          "variadic": false
+        }
+      ],
+      "options": [
+        {
+          "flags": "--expect-digest <sha256>",
+          "long": "--expect-digest",
+          "short": null,
+          "description": "The plan digest that was approved; any other plan is refused",
+          "required": true,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [],
+      "scopesBy": null,
+      "destructive": true,
+      "idempotent": true,
+      "offline": true,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "audit tail",
+      "description": "Print the most recent audit entries",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "-n, --lines <n>",
+          "long": "--lines",
+          "short": "-n",
+          "description": "Number of entries",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": "20"
+        },
+        {
+          "flags": "--follow",
+          "long": "--follow",
+          "short": null,
+          "description": "Keep printing new entries as they are written (Ctrl+C to stop)",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": true,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "audit path",
+      "description": "Print the audit log path",
+      "arguments": [],
+      "options": [],
+      "scopes": [],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": true,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "idempotency list",
+      "description": "Print the idempotency keys recorded in the last 24 h (pending, done or unknown)",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": true,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "idempotency release",
+      "description": "Forget an idempotency key so the next send with it runs again (check first that it did not take effect)",
+      "arguments": [
+        {
+          "name": "key",
+          "required": true,
+          "variadic": false
+        }
+      ],
+      "options": [],
+      "scopes": [],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": false,
+      "offline": true,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "resolve",
+      "description": "Resolve a name to its ID (exact, then unique prefix/substring match; mail-folder: exact name or path like Inbox/Projects)",
+      "arguments": [
+        {
+          "name": "type",
+          "required": true,
+          "variadic": false
+        },
+        {
+          "name": "name",
+          "required": true,
+          "variadic": false
+        }
+      ],
+      "options": [
+        {
+          "flags": "--team <team>",
+          "long": "--team",
+          "short": null,
+          "description": "Team ID or name (for type channel)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--plan <plan>",
+          "long": "--plan",
+          "short": null,
+          "description": "Plan ID or name (for type bucket)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--user <user>",
+          "long": "--user",
+          "short": null,
+          "description": "Mailbox user ID or UPN (for type mail-folder; default: your own)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [
+        "Tasks.Read",
+        "Team.ReadBasic.All",
+        "Channel.ReadBasic.All",
+        "Mail.Read",
+        "Mail.Read.Shared"
+      ],
+      "scopesBy": {
+        "argument": "type",
+        "map": {
+          "todo-list": [
+            "Tasks.Read"
+          ],
+          "team": [
+            "Team.ReadBasic.All"
+          ],
+          "channel": [
+            "Channel.ReadBasic.All"
+          ],
+          "plan": [
+            "Tasks.Read"
+          ],
+          "bucket": [
+            "Tasks.Read"
+          ],
+          "mail-folder": [
+            "Mail.Read"
+          ]
+        },
+        "withOption": {
+          "option": "--user",
+          "map": {
+            "mail-folder": [
+              "Mail.Read.Shared"
+            ]
+          }
+        }
+      },
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "describe",
+      "description": "Describe every command (arguments, options, Graph scopes, safety) as a machine-readable catalogue",
+      "arguments": [
+        {
+          "name": "command",
+          "required": false,
+          "variadic": true
+        }
+      ],
+      "options": [
+        {
+          "flags": "--json",
+          "long": "--json",
+          "short": null,
+          "description": "Print the catalogue as JSON",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--all",
+          "long": "--all",
+          "short": null,
+          "description": "Under a profile scope ceiling, also list the commands it does not allow (marked allowed: false)",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        }
+      ],
+      "scopes": [],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": true,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "mcp serve",
+      "description": "Serve every command as an MCP tool over stdio (JSON-RPC; each call runs the CLI)",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--allow <patterns>",
+          "long": "--allow",
+          "short": null,
+          "description": "Expose only tools matching these comma-separated patterns (e.g. \"mail_*,calendar_list\")",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--read-only",
+          "long": "--read-only",
+          "short": null,
+          "description": "Expose only read tools and run every call with --read-only",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--watch-interval <seconds>",
+          "long": "--watch-interval",
+          "short": null,
+          "description": "Seconds between passes for subscribed watch resources (min 15)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": "60"
+        }
+      ],
+      "scopes": [],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": true,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    },
+    {
+      "path": "completion",
+      "description": "Print a shell completion script (bash, zsh, fish, powershell)",
+      "arguments": [
+        {
+          "name": "shell",
+          "required": true,
+          "variadic": false
+        }
+      ],
+      "options": [],
+      "scopes": [],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": true,
+      "plan": false,
+      "providerIdempotency": null,
+      "allowed": true
+    }
+  ]
+}

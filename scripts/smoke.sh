@@ -204,5 +204,9 @@ check "MAX_RETRIES=0 503" 1 env HOME="$H/home" MS365_CLI_CONFIG_DIR="$H/cfg" MS3
   [ "$(errcode)" = graph_error ] && [ "$(fetches)" = 1 ] && ok "MAX_RETRIES=0 503" || bad "MAX_RETRIES=0 503 (code $(errcode), $(fetches) fetches)"; }
 check "budget out of range" 2 env MS365_CLI_REQUEST_TIMEOUT_MS=10 $CLI --error-format json describe --json && ok "budget out of range"
 
+# 23. AHT-15 contract fixture: regenerating test/fixtures/contract/ from this dist/ (host mode, fetch-stub, frozen
+#     clock) gives the committed bytes; any contract change must regenerate the fixture in the same commit
+check "contract fixture" 0 node scripts/contract.mjs --check && ok "contract fixture"
+
 echo "smoke: pass=$pass fail=$fail skip=$skip"
 [ "$fail" = 0 ]

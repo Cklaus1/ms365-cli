@@ -1,0 +1,399 @@
+{
+  "v": 1,
+  "ms365": {
+    "commit": "8a438f44d842292a98c54afbda5a654d5f4529e1",
+    "distSha256": "58f4c44fb0fbd5066dc4dc41650fb9fd7c93f1fe1742b985b2f5235ec689282e"
+  },
+  "clock": "2026-10-17T12:00:00.000Z",
+  "profile": {
+    "name": "chief",
+    "type": "host",
+    "tenantId": "11111111-2222-3333-4444-555555555555",
+    "scopes": [
+      "User.Read",
+      "Mail.Read",
+      "Calendars.Read"
+    ]
+  },
+  "files": {
+    "describe.json": {
+      "argv": [
+        "--profile",
+        "chief",
+        "--error-format",
+        "json",
+        "describe",
+        "--json"
+      ],
+      "exitCode": 0,
+      "capture": "stdout",
+      "sha256": "8fe3c5fd864bab6f6c2a41b40b9939c26f7da64eeba1fce14405caa9d8e0abe1"
+    },
+    "auth-status.json": {
+      "argv": [
+        "--profile",
+        "chief",
+        "--error-format",
+        "json",
+        "auth",
+        "status",
+        "-o",
+        "json"
+      ],
+      "exitCode": 0,
+      "capture": "stdout",
+      "sha256": "eebec1f328db9777b0489b044c75421795b7f917dd2a6feb20dfe19210de931f"
+    },
+    "health-healthy.json": {
+      "argv": [
+        "--profile",
+        "chief",
+        "--error-format",
+        "json",
+        "health"
+      ],
+      "exitCode": 0,
+      "capture": "stdout",
+      "sha256": "889021b4dc5a7cd8cfe96b9ae9aefec888cda39d78d7db2337b44f1ffe6af555"
+    },
+    "health-degraded.json": {
+      "argv": [
+        "--profile",
+        "chief",
+        "--error-format",
+        "json",
+        "health"
+      ],
+      "exitCode": 0,
+      "capture": "stdout",
+      "sha256": "5723b692491513a7e5f00e3e091fa3becf3c99d9ce861a79a98768d28e1d9a91"
+    },
+    "health-stale.json": {
+      "argv": [
+        "--profile",
+        "chief",
+        "--error-format",
+        "json",
+        "health"
+      ],
+      "exitCode": 0,
+      "capture": "stdout",
+      "sha256": "51584933ad22038bffed3d803e7bff24a4ce93d7b444d9fcb8179ddc91408930"
+    },
+    "error-1-graph_error.json": {
+      "argv": [
+        "--profile",
+        "chief",
+        "--error-format",
+        "json",
+        "user",
+        "me"
+      ],
+      "exitCode": 1,
+      "capture": "error",
+      "sha256": "a5bd1a22a3b9334e3c89cbfb1c95baa81b8bbe1bc1ed213e78a28314bef6657c"
+    },
+    "error-2-cursor_mismatch.json": {
+      "argv": [
+        "--profile",
+        "chief",
+        "--error-format",
+        "json",
+        "mail",
+        "list",
+        "--cursor",
+        "aHR0cHM6Ly9ncmFwaC5taWNyb3NvZnQuY29tL3YxLjAvbWUvZHJpdmUvcm9vdC9jaGlsZHJlbj8kc2tpcHRva2VuPXg"
+      ],
+      "exitCode": 2,
+      "capture": "error",
+      "sha256": "4d96c6e91a48ee84db63246e4b265d15e2908ff07d5020595b8c8afce69bca62"
+    },
+    "error-2-checkpoint_mismatch.json": {
+      "argv": [
+        "--profile",
+        "chief",
+        "--error-format",
+        "json",
+        "watch",
+        "mail",
+        "--checkpoint",
+        "eyJ2IjoxLCJyZXNvdXJjZSI6ImV2ZW50cyIsImVuZHBvaW50IjoiL21lL2NhbGVuZGFyVmlldy9kZWx0YSIsImRlbHRhTGluayI6Imh0dHBzOi8vZ3JhcGgubWljcm9zb2Z0LmNvbS92MS4wL21lL2NhbGVuZGFyVmlldy9kZWx0YT8kZGVsdGF0b2tlbj1lMSIsInN5bmNlZEF0IjoiMjAyNi0xMC0xN1QxMTowMDowMC4wMDBaIiwiY292ZXJhZ2VTdGFydCI6IjIwMjYtMDktMjBUMDA6MDA6MDAuMDAwWiIsIndpbmRvdyI6eyJzdGFydCI6IjIwMjYtMDktMjBUMDA6MDA6MDAuMDAwWiIsImVuZCI6IjIwMjYtMTAtMjBUMDA6MDA6MDAuMDAwWiJ9fQ"
+      ],
+      "exitCode": 2,
+      "capture": "error",
+      "sha256": "942c74ecc1062756edfb7ca1773c0661925253347a724ffdac87f54a24cb8f54"
+    },
+    "error-3-token_missing.json": {
+      "argv": [
+        "--profile",
+        "chief",
+        "--error-format",
+        "json",
+        "user",
+        "me"
+      ],
+      "exitCode": 3,
+      "capture": "error",
+      "sha256": "176bd09ba6cf82acc3c5df905f063d8a8f59993be54a791f1f209b676c7fb9fe"
+    },
+    "error-3-token_expired.json": {
+      "argv": [
+        "--profile",
+        "chief",
+        "--error-format",
+        "json",
+        "user",
+        "me"
+      ],
+      "exitCode": 3,
+      "capture": "error",
+      "sha256": "49ae94e43537fc3fab875243d397255e167d81c74ebacbaf0af2cfd31c65a8f8"
+    },
+    "error-3-token_identity_mismatch.json": {
+      "argv": [
+        "--profile",
+        "chief",
+        "--error-format",
+        "json",
+        "user",
+        "me"
+      ],
+      "exitCode": 3,
+      "capture": "error",
+      "sha256": "bced897db2032dee6f06b27e5be1c5afe2bd9aee1f628dfb7284f1c712a31ba6"
+    },
+    "error-3-token_rejected.json": {
+      "argv": [
+        "--profile",
+        "chief",
+        "--error-format",
+        "json",
+        "user",
+        "me"
+      ],
+      "exitCode": 3,
+      "capture": "error",
+      "sha256": "3d1e0764857c52c372a4a964f7d80362a9c1f7b8e6c718140f75254e41d1317b"
+    },
+    "error-4-scope_ceiling.json": {
+      "argv": [
+        "--profile",
+        "chief",
+        "--error-format",
+        "json",
+        "mail",
+        "send",
+        "--to",
+        "cfo@contoso.com",
+        "--subject",
+        "s",
+        "--body",
+        "b"
+      ],
+      "exitCode": 4,
+      "capture": "error",
+      "sha256": "8d688ef37a7156436307e73ee4959350241209ac7fc93698db8bc5a447346a79"
+    },
+    "error-5-not_found.json": {
+      "argv": [
+        "--profile",
+        "chief",
+        "--error-format",
+        "json",
+        "mail",
+        "get",
+        "M404"
+      ],
+      "exitCode": 5,
+      "capture": "error",
+      "sha256": "097666ef04a7faa232a0aae4eb1b39fb66ac1122777d1d5c19ed03697165ca04"
+    },
+    "error-6-throttled.json": {
+      "argv": [
+        "--profile",
+        "chief",
+        "--error-format",
+        "json",
+        "mail",
+        "list"
+      ],
+      "exitCode": 6,
+      "capture": "error",
+      "sha256": "2b1420d9f15c21014d12f779f96256ec0e561ddcc9d878ea0deda32f397d0159"
+    },
+    "error-7-confirmation_refused.json": {
+      "argv": [
+        "--error-format",
+        "json",
+        "todo",
+        "delete",
+        "L1",
+        "T1"
+      ],
+      "exitCode": 7,
+      "capture": "error",
+      "sha256": "b326c255851f97190e0b6b4533ff00d35f3d9b1fe84e3504707290e1d2c9849a"
+    },
+    "list-next-cursor.json": {
+      "argv": [
+        "--profile",
+        "chief",
+        "--error-format",
+        "json",
+        "--refs",
+        "mail",
+        "list",
+        "--top",
+        "2",
+        "-o",
+        "json"
+      ],
+      "exitCode": 0,
+      "capture": "stdout",
+      "sha256": "ae7fab1a368bd588ac67d0df5869c13b30a69b83f778d28065727c99bae27c74"
+    },
+    "list-next-cursor.ndjson": {
+      "argv": [
+        "--profile",
+        "chief",
+        "--error-format",
+        "json",
+        "--refs",
+        "mail",
+        "list",
+        "--top",
+        "2",
+        "-o",
+        "ndjson"
+      ],
+      "exitCode": 0,
+      "capture": "stdout",
+      "sha256": "a6b9e1d3954b17dee9755bbf8eceea675b59169f0abbe93001b2ed2c40d6a678"
+    },
+    "list-page-limit.json": {
+      "argv": [
+        "--profile",
+        "chief",
+        "--error-format",
+        "json",
+        "--refs",
+        "mail",
+        "list",
+        "--all",
+        "--page-limit",
+        "1",
+        "-o",
+        "json"
+      ],
+      "exitCode": 0,
+      "capture": "stdout",
+      "sha256": "49979e27cdbc30f04a53a5d8aca2afa5b981c7226701d635ad71f9605d3becf2"
+    },
+    "list-search-cap.json": {
+      "argv": [
+        "--profile",
+        "chief",
+        "--error-format",
+        "json",
+        "mail",
+        "list",
+        "--search",
+        "budget",
+        "--top",
+        "250",
+        "--select",
+        "id",
+        "-o",
+        "json"
+      ],
+      "exitCode": 0,
+      "capture": "stdout",
+      "sha256": "ef73bdb3689c555fbc87a1b747c6b74f606aed24794f606493de5ad1eba654f6"
+    },
+    "list-complete.ndjson": {
+      "argv": [
+        "--profile",
+        "chief",
+        "--error-format",
+        "json",
+        "--refs",
+        "calendar",
+        "view",
+        "--start",
+        "2026-10-19T00:00:00Z",
+        "--end",
+        "2026-10-20T00:00:00Z",
+        "-o",
+        "ndjson"
+      ],
+      "exitCode": 0,
+      "capture": "stdout",
+      "sha256": "1918a4a0c91b4312e2b838fe11ae02be4ed0004413e7fa3154b17994319c4073"
+    },
+    "watch-mail-baseline.ndjson": {
+      "argv": [
+        "--profile",
+        "chief",
+        "--error-format",
+        "json",
+        "--refs",
+        "watch",
+        "mail",
+        "--checkpoint",
+        "new",
+        "--include-existing"
+      ],
+      "exitCode": 0,
+      "capture": "stdout",
+      "sha256": "d03ccfbfe03ef4b105017b7863466d9feb1e5d703315f7c3ae254f976546c0ba"
+    },
+    "watch-mail-changes.ndjson": {
+      "argv": [
+        "--profile",
+        "chief",
+        "--error-format",
+        "json",
+        "--refs",
+        "watch",
+        "mail",
+        "--checkpoint",
+        "eyJ2IjoxLCJyZXNvdXJjZSI6Im1haWwiLCJlbmRwb2ludCI6Ii9tZS9tYWlsRm9sZGVycy9pbmJveC9tZXNzYWdlcy9kZWx0YSIsImRlbHRhTGluayI6Imh0dHBzOi8vZ3JhcGgubWljcm9zb2Z0LmNvbS92MS4wL21lL21haWxGb2xkZXJzL2luYm94L21lc3NhZ2VzL2RlbHRhPyRkZWx0YXRva2VuPW0xIiwic3luY2VkQXQiOiIyMDI2LTEwLTE3VDExOjAwOjAwLjAwMFoiLCJjb3ZlcmFnZVN0YXJ0IjoiMjAyNi0xMC0wMVQwMDowMDowMC4wMDBaIiwiZm9sZGVyIjoiaW5ib3gifQ"
+      ],
+      "exitCode": 0,
+      "capture": "stdout",
+      "sha256": "150a82eb0b40f35f471d47efa3dda88ac886e18fce824dadabd5570f95fa7e21"
+    },
+    "watch-mail-expired.ndjson": {
+      "argv": [
+        "--profile",
+        "chief",
+        "--error-format",
+        "json",
+        "--refs",
+        "watch",
+        "mail",
+        "--checkpoint",
+        "eyJ2IjoxLCJyZXNvdXJjZSI6Im1haWwiLCJlbmRwb2ludCI6Ii9tZS9tYWlsRm9sZGVycy9pbmJveC9tZXNzYWdlcy9kZWx0YSIsImRlbHRhTGluayI6Imh0dHBzOi8vZ3JhcGgubWljcm9zb2Z0LmNvbS92MS4wL21lL21haWxGb2xkZXJzL2luYm94L21lc3NhZ2VzL2RlbHRhPyRkZWx0YXRva2VuPW0xIiwic3luY2VkQXQiOiIyMDI2LTEwLTE3VDExOjAwOjAwLjAwMFoiLCJjb3ZlcmFnZVN0YXJ0IjoiMjAyNi0xMC0wMVQwMDowMDowMC4wMDBaIiwiZm9sZGVyIjoiaW5ib3gifQ"
+      ],
+      "exitCode": 0,
+      "capture": "stdout",
+      "sha256": "250a9eccc7e8748b361e404eedd2b3e473d823b8cac7f113e1da4cf788faabc8"
+    },
+    "watch-events-window-rolled.ndjson": {
+      "argv": [
+        "--profile",
+        "chief",
+        "--error-format",
+        "json",
+        "--refs",
+        "watch",
+        "events",
+        "--checkpoint",
+        "eyJ2IjoxLCJyZXNvdXJjZSI6ImV2ZW50cyIsImVuZHBvaW50IjoiL21lL2NhbGVuZGFyVmlldy9kZWx0YSIsImRlbHRhTGluayI6Imh0dHBzOi8vZ3JhcGgubWljcm9zb2Z0LmNvbS92MS4wL21lL2NhbGVuZGFyVmlldy9kZWx0YT8kZGVsdGF0b2tlbj1lMSIsInN5bmNlZEF0IjoiMjAyNi0xMC0xN1QxMTowMDowMC4wMDBaIiwiY292ZXJhZ2VTdGFydCI6IjIwMjYtMDktMjBUMDA6MDA6MDAuMDAwWiIsIndpbmRvdyI6eyJzdGFydCI6IjIwMjYtMDktMjBUMDA6MDA6MDAuMDAwWiIsImVuZCI6IjIwMjYtMTAtMjBUMDA6MDA6MDAuMDAwWiJ9fQ"
+      ],
+      "exitCode": 0,
+      "capture": "stdout",
+      "sha256": "eb8fb24eedde715ecd75893afbe851a2c384bd620acd7dd3f804488be57af62d"
+    }
+  }
+}
