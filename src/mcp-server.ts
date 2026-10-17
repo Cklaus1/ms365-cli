@@ -230,9 +230,10 @@ export function buildArgv(tool: Tool, args: Record<string, unknown>, globals: st
  * Spawn the CLI (`node [loader flags] <entry>`) with stdin closed, killed after 120 s. The call's argv travels in a
  * 0600 file named by MS365_CLI_MCP_ARGV, never on the child's command line, which other local users can read
  * (AH-11(3): mail bodies, long values). MS365_CLI_MCP=1 tells the child it serves MCP (watch's `mcp-` cursor names,
- * no stdin reads; X-6, X-15). `env` adds variables per call (the token from a parent-held helper, AH-2).
+ * no stdin reads; X-6, X-15). `env` adds variables per call (the token from a parent-held helper, AH-2); a call that
+ * fails `token_rejected` drops that token from it.
  */
-export function spawnRunner(entry: string = process.argv[1], timeoutMs = CALL_TIMEOUT_MS, env?: () => Promise<NodeJS.ProcessEnv>): Runner {
+export function spawnRunner(entry: string = process.argv[1], timeoutMs = CALL_TIMEOUT_MS, env?: CallEnv): Runner {
   return async (argv) => {
     let extra: NodeJS.ProcessEnv;
     try {
@@ -264,7 +265,10 @@ export function spawnRunner(entry: string = process.argv[1], timeoutMs = CALL_TI
         resolve(result);
       };
       child.on('error', (err) => done({ exitCode: 1, stdout, stderr: `${stderr}${err.message}` }));
-      child.on('close', (code) => done({ exitCode: code ?? 1, stdout, stderr }));
+      child.on('close', (code) => {
+        if (code === ExitCode.AUTH && extra.MS365_CLI_TOKEN && errorText(stderr).includes('"code":"token_rejected"')) env?.drop?.(extra.MS365_CLI_TOKEN);
+        done({ exitCode: code ?? 1, stdout, stderr });
+      });
     });
   };
 }
@@ -284,20 +288,26 @@ export function readCallArgv(file: string): string[] {
   return parsed;
 }
 
+/** Per-call variables for spawnRunner; `drop` forgets a token Graph rejected so the next call fetches a new one. */
+export type CallEnv = (() => Promise<NodeJS.ProcessEnv>) & { drop?: (token: string) => void };
+
 /**
- * `mcp serve` with MS365_CLI_TOKEN_COMMAND: the server runs the helper (cached until `exp − 5 min`; an opaque token
- * until a call fails) and hands the token to each call in MS365_CLI_TOKEN, so N calls do not run it N times (AH-2).
- * A child that gets a 401 still re-runs the helper itself once.
+ * `mcp serve` with MS365_CLI_TOKEN_COMMAND: the server runs the helper (cached until `exp − 5 min`, or until a call
+ * fails `token_rejected` with it) and hands the token to each call in MS365_CLI_TOKEN, so N calls do not run it N
+ * times (AH-2). A child that gets a 401 still re-runs the helper itself once.
  */
-export function helperTokenEnv(command: string): () => Promise<NodeJS.ProcessEnv> {
+export function helperTokenEnv(command: string): CallEnv {
   let token: Promise<string> | null = null;
-  return async () => {
+  let current: string | null = null;
+  const env = async (): Promise<NodeJS.ProcessEnv> => {
     if (!token || expiresSoon(await token)) {
       token = runTokenHelper(command);
       token.catch(() => { token = null; });
     }
-    return { MS365_CLI_TOKEN: await token };
+    current = await token;
+    return { MS365_CLI_TOKEN: current };
   };
+  return Object.assign(env, { drop: (rejected: string) => { if (rejected === current) token = null; } });
 }
 
 function errorText(stderr: string): string {

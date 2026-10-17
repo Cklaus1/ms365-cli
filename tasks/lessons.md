@@ -20,3 +20,15 @@ Mistake → rule. Added only after a correction or failure.
 ## 12. Fixtures written from the spec share the spec's blind spots — smoke against one real record
 **Mistake:** every audit-trail fixture put the calling app in `AppId`; real Exchange records put the resource (Microsoft Graph) there and the caller in `ClientAppId`. 1,781 tests passed while `--app` matched nothing on a real export.
 **Rule:** when a feature parses an external record format, run it once against a real sample (or a fixture copied field-for-field from one, content scrubbed) before calling the task done.
+
+## 13. A request-shape change must re-run the smoke check that asserts the old shape
+**Mistake:** AHT-8 moved `mail send` to the draft path; the suite was updated, but `scripts/smoke.sh` still asserted `POST /me/sendMail` and stayed red for five tasks because smoke ran only once per tier.
+**Rule:** when a task changes the requests a command sends, grep `scripts/smoke.sh` for that command and run smoke in that task's gate, whatever the tier cadence says.
+
+## 14. "Nothing you call changed" must be checked field by field against what the peer parses
+**Mistake:** I told BuildMsc AHT-11 changed nothing it calls; `describe --json` flat `scopes` for `mail list|get` gained `Mail.Read.Shared`, and Chief's scope check (which read the flat list) would have refused every session.
+**Rule:** before announcing a cross-spec change as no-op, list every output field the peer reads (its parser, not the spec prose) and diff those fields on the built CLI.
+
+## 15. A signed file's self-description is not a capability
+**Mistake:** `apply` took the scope ceiling and the delete/cancel confirmation from the plan's `command` label, but the digest is computed over the file, so whoever writes the file chooses the label.
+**Rule:** derive every safety decision from the bytes that will be acted on (the requests), and treat labels as claims to be checked against them.

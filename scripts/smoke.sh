@@ -29,11 +29,12 @@ check "version" 0 $CLI --version && { grep -qx "0.1.0" "$TMP/out" && ok "version
 # 2. schema --list works offline (no auth)
 check "schema --list" 0 env MS365_CLI_CLIENT_ID=  $CLI schema --list && ok "schema --list"
 
-# 3. dry-run send exits 0 and prints the request
+# 3. dry-run send exits 0 and prints the requests (AH-6: always the draft path, create then /send)
 check "dry-run mail send" 0 $CLI --dry-run mail send --to a@b.com --subject s --body b && {
   # F1: the dry-run trace goes to stderr; stdout carries only the command's output
   if grep -q "\[dry-run\]" "$TMP/out"; then bad "dry-run trace leaked to stdout";
-  elif grep -q "\[dry-run\] POST https://graph.microsoft.com/v1.0/me/sendMail" "$TMP/err"; then ok "dry-run mail send";
+  elif grep -q "\[dry-run\] POST https://graph.microsoft.com/v1.0/me/messages$" "$TMP/err" \
+    && grep -q "\[dry-run\] POST https://graph.microsoft.com/v1.0/me/messages/DRAFT_ID/send" "$TMP/err"; then ok "dry-run mail send";
   else bad "dry-run mail send trace"; fi; }
 
 # 4. dry-run large upload targets the correct upload-session URL

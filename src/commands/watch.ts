@@ -188,10 +188,11 @@ export function decodeCheckpoint(text: string): Checkpoint | undefined {
   let parsed: unknown;
   try { parsed = JSON.parse(Buffer.from(text, 'base64url').toString('utf8')); } catch { /* reported below */ }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw usage('--checkpoint is not a checkpoint printed by ms365 watch.');
-  const cp = parsed as Record<string, unknown>;
-  if (cp.v !== CHECKPOINT_VERSION) throw usage(`--checkpoint version ${String(cp.v)} is not supported (expected ${CHECKPOINT_VERSION}).`);
+  const obj: object = parsed;
+  const field = (key: string): unknown => Reflect.get(obj, key);
+  if (field('v') !== CHECKPOINT_VERSION) throw usage(`--checkpoint version ${String(field('v'))} is not supported (expected ${CHECKPOINT_VERSION}).`);
   for (const key of ['resource', 'endpoint', 'deltaLink', 'syncedAt', 'coverageStart']) {
-    if (typeof cp[key] !== 'string') throw usage(`--checkpoint lacks ${key}.`);
+    if (typeof field(key) !== 'string') throw usage(`--checkpoint lacks ${key}.`);
   }
   return parsed as Checkpoint;
 }
@@ -379,10 +380,12 @@ the watch. Ctrl-C during a pass exits 130 without saving it; Ctrl-C between pass
           if (end - now < (end - start) / 2) {
             const rolled = { start: new Date(now).toISOString(), end: new Date(now + end - start).toISOString() };
             gap('window_rolled', window.end, rolled.end, { window: rolled });
+            // Adopt the rolled window only once its backfill succeeded: a failed pass under --follow rolls again.
+            const rolledFeed = buildFeed(resource, opts, folder, rolled);
+            next = await sync(client, rolledFeed, undefined, true, stop.signal);
             window = rolled;
-            feed = buildFeed(resource, opts, folder, window);
+            feed = rolledFeed;
             cursor = undefined;
-            next = await sync(client, feed, undefined, true, stop.signal);
           }
         }
         if (!next) {
