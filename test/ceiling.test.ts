@@ -20,7 +20,9 @@ import { fakeJwt, runEntry, entryHome } from './helpers/entry.js';
 import type { GraphClient } from '../src/graph-client.js';
 
 const GATE2 = ['User.Read', 'Mail.Read', 'Calendars.Read', 'offline_access'];
-const ceiling = profileCeiling({ type: 'host', tenantId: 't', scopes: GATE2 })!;
+/** A synthetic tenant GUID (never a real one). */
+const TENANT = '11111111-2222-3333-4444-555555555555';
+const ceiling = profileCeiling({ type: 'host', tenantId: TENANT, scopes: GATE2 })!;
 
 function refusal(fn: () => void): CliError {
   try { fn(); } catch (e) { return e as CliError; }
@@ -95,7 +97,7 @@ describe('profile ceiling (AH-1, AC 1-2)', () => {
   });
 
   it('activeCeiling reads --profile, else MS365_CLI_PROFILE', () => {
-    saveProfile('cap', { type: 'host', tenantId: 'tenant-a', scopes: GATE2 });
+    saveProfile('cap', { type: 'host', tenantId: TENANT, scopes: GATE2 });
     expect(activeCeiling('cap')?.profile).toBe('cap');
     process.env.MS365_CLI_PROFILE = 'cap';
     expect([...activeCeiling(undefined)!.ceiling]).toEqual(['User.Read', 'Mail.Read', 'Calendars.Read']);
@@ -104,16 +106,17 @@ describe('profile ceiling (AH-1, AC 1-2)', () => {
 });
 
 describe('host profile (AH-2 type, AHT-1)', () => {
-  it('needs a real tenant and scopes; account is allowed', () => {
+  it('needs the tenant GUID and scopes; account is allowed', () => {
     expect(refusal(() => validateProfile('h', { type: 'host', scopes: ['Mail.Read'] })).code).toBe('invalid_profile');
     expect(refusal(() => validateProfile('h', { type: 'host', tenantId: 'common', scopes: ['Mail.Read'] })).code).toBe('invalid_profile');
-    expect(refusal(() => validateProfile('h', { type: 'host', tenantId: 'tenant-a' })).message).toContain('ceiling');
-    expect(() => validateProfile('h', { type: 'host', tenantId: 'tenant-a', scopes: ['Mail.Read'], account: 'ceo@contoso.com' })).not.toThrow();
+    expect(refusal(() => validateProfile('h', { type: 'host', tenantId: 'contoso.com', scopes: ['Mail.Read'] })).message).toContain('GUID');
+    expect(refusal(() => validateProfile('h', { type: 'host', tenantId: TENANT })).message).toContain('ceiling');
+    expect(() => validateProfile('h', { type: 'host', tenantId: TENANT, scopes: ['Mail.Read'], account: 'ceo@contoso.com' })).not.toThrow();
   });
 
   it('round-trips through the profile file', () => {
-    saveProfile('h2', { type: 'host', tenantId: 'tenant-a', scopes: ['Mail.Read'] });
-    expect(readProfile('h2')).toEqual({ type: 'host', tenantId: 'tenant-a', scopes: ['Mail.Read'] });
+    saveProfile('h2', { type: 'host', tenantId: TENANT, scopes: ['Mail.Read'] });
+    expect(readProfile('h2')).toEqual({ type: 'host', tenantId: TENANT, scopes: ['Mail.Read'] });
   });
 });
 
@@ -145,7 +148,7 @@ describe('effective surface: MCP and describe (AH-1(4)-(5), AC 3)', () => {
   });
 
   it('describe --json lists only allowed commands; --all marks the others allowed: false', async () => {
-    saveProfile('g2', { type: 'host', tenantId: 'tenant-a', scopes: GATE2 });
+    saveProfile('g2', { type: 'host', tenantId: TENANT, scopes: GATE2 });
     const register = (p: Command) => { p.option('--profile <name>'); registerMailCommands(p, noClient); registerWatchCommands(p, noClient); registerDescribeCommand(p); };
     const narrow = JSON.parse((await runCommand(register, ['--profile', 'g2', 'describe', '--json'])).stdout).commands;
     expect(narrow.map((c: { path: string }) => c.path)).toContain('mail list');

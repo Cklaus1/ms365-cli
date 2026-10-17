@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import fs from 'fs';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { AuthManager, buildScopes, configFilePath, writeFileAtomic } from '../auth.js';
+import { childEnv } from '../child-env.js';
 import { info, createPrompter, type Prompter } from '../utils.js';
 
 /** Ask one wizard question; answers are trimmed. */
@@ -142,7 +143,7 @@ async function runWizard(p: Prompter, getAuth: () => AuthManager): Promise<void>
   const openBrowser = await promptYN(p, '  Open Azure Portal in browser?');
   if (openBrowser) {
     const { exec } = await import('child_process');
-    exec(openBrowserCommand(AZURE_PORTAL_APP_REG));
+    exec(openBrowserCommand(AZURE_PORTAL_APP_REG), { env: childEnv() });
   }
 
   info('');

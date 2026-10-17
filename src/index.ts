@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import './load-env.js';
 
 // Exit immediately on broken pipe — prevents zombie processes when piped to head/tail/etc.
 process.stdout.on('error', (err) => {
@@ -52,6 +52,7 @@ import { registerNotesCommands } from './commands/notes.js';
 import { setActor, setCommandPath } from './audit.js';
 import { requiredScopes, usedScopes } from './catalog.js';
 import { activeCeiling, assertWithinCeiling } from './ceiling.js';
+import { externalTokenMode } from './external-token.js';
 import { assertConsented } from './preflight.js';
 import { profileType, readProfile, type Profile } from './profiles.js';
 import logger from './logger.js';
@@ -129,10 +130,13 @@ function getAuth(): AuthManager {
   if (!authManager) {
     const { orgMode, account, profile } = globalFlags();
     const admin = adminProfileName();
+    // AH-2: a supplied token (MS365_CLI_TOKEN) or a host profile → the external source: no client ID, no MSAL, no cache.
     // Admin profiles (ID-8): the token is borrowed from the Azure CLI per call; the profile's clientId/orgMode are ignored.
-    authManager = admin
-      ? new AuthManager(buildScopes(!!program.opts().orgMode || envTrue('MS365_CLI_ORG_MODE')), { source: 'az', tenantId: profile.tenantId, profileName: admin })
-      : new AuthManager(profile.scopes ?? buildScopes(orgMode), { clientId: profile.clientId, tenantId: profile.tenantId, account, profileName: profileName() });
+    authManager = externalTokenMode(profile)
+      ? new AuthManager([], { source: 'external', host: profileType(profile) === 'host', tenantId: profile.tenantId, account, profileName: profileName() })
+      : admin
+        ? new AuthManager(buildScopes(!!program.opts().orgMode || envTrue('MS365_CLI_ORG_MODE')), { source: 'az', tenantId: profile.tenantId, profileName: admin })
+        : new AuthManager(profile.scopes ?? buildScopes(orgMode), { clientId: profile.clientId, tenantId: profile.tenantId, account, profileName: profileName() });
   }
   return authManager;
 }

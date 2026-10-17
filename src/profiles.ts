@@ -74,16 +74,20 @@ function parseProfile(name: string, data: string): Profile {
   return profile;
 }
 
+const TENANT_GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * The type rules (ID-7): an `admin` profile needs a real tenant (`az --tenant` needs one) and takes no
- * `account` or `scopes` (the identity and scopes are whatever az's sign-in has). Throws `invalid_profile`.
+ * `account` or `scopes` (the identity and scopes are whatever az's sign-in has); a `host` profile needs the tenant
+ * GUID and `scopes` (AH-1/AH-2). Throws `invalid_profile`.
  */
 export function validateProfile(name: string, profile: Profile, exitCode: ExitCode = ExitCode.GENERIC): void {
   if (profileType(profile) === 'host') {
-    // AH-2: the token's tid is checked against the pinned tenant, and `scopes` is the ceiling (AH-1).
+    // AH-2: the token's tid is checked against the pinned tenant, so it must be the tenant GUID (a domain cannot be
+    // compared with tid); `scopes` is the ceiling (AH-1).
     const bad = (why: string) => new CliError(`Host profile "${name}" ${why}.`,
-      { code: 'invalid_profile', exitCode, fix: `ms365 auth profile set ${name} --type host --tenant <tenant-id> --scopes <list>` });
-    if (!profile.tenantId || MULTI_TENANT.has(profile.tenantId.toLowerCase())) throw bad('needs the tenant ID its tokens come from (not common/organizations/consumers)');
+      { code: 'invalid_profile', exitCode, fix: `ms365 auth profile set ${name} --type host --tenant <tenant-guid> --scopes <list>` });
+    if (!profile.tenantId || !TENANT_GUID.test(profile.tenantId)) throw bad('needs the tenant ID (a GUID) its tokens come from, so each token\'s tid can be checked');
     if (!profile.scopes?.length) throw bad('needs scopes: they are the ceiling of every command run under it');
     return;
   }

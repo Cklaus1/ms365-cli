@@ -1,8 +1,8 @@
 # todo: agent-host integration build (derived from commits)
 
 ## Tier G2 (Gate-2 subset)
-- [ ] AHT-1 ceiling: `type: host`, catalog `uses`, preAction check, cursor binding, MCP + describe surface [critical path]
-- [ ] AHT-2 external token source, `.env` exclusion, JWT checks, auth refusals, `childEnv()` [critical path]
+- [x] AHT-1 ceiling: `type: host`, catalog `uses`, preAction check, cursor binding, MCP + describe surface [critical path] (8c7cba5)
+- [x] AHT-2 external token source, `.env` exclusion, JWT checks, auth refusals, `childEnv()` [critical path]
 - [ ] AHT-3 immutable ids, `--refs` `_ref`, `complete`/`_meta`, `--cursor` help
 - [ ] AHT-4 `watch --checkpoint`, gap/backfill, window roll, change-line fields, `--select`
 - [ ] AHT-5 `auth status -o json`, `auth scopes` renames, `health`, retry budget env, `retryAfterMs`

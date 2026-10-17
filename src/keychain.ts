@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { CliError, ExitCode } from './errors.js';
+import { childEnv } from './child-env.js';
 import { CorruptItemError, ensurePrivateMode, KEY_RE, TOKEN_CACHE_KEY, type CredentialStore } from './credential-store.js';
 
 /**
@@ -60,7 +61,7 @@ export function runTool(file: string, args: string[], opts: RunOptions): ToolRes
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
     maxBuffer: 16 * 1024 * 1024,
-    env: opts.env ?? process.env,
+    env: childEnv(opts.env ?? process.env),
   });
   const ms = Date.now() - start;
   const code = (r.error as NodeJS.ErrnoException | undefined)?.code;

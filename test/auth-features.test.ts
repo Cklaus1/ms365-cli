@@ -295,7 +295,7 @@ describe('T41: auth login --browser (PM-2)', () => {
     expect(req.scopes).toEqual(['User.Read', 'Mail.ReadWrite']);
     expect(req.successTemplate).toMatch(/<html/i);
     expect(req.errorTemplate).toMatch(/<html/i);
-    expect(execMock).toHaveBeenCalledWith(openBrowserCommand(AUTH_URL), expect.any(Function));
+    expect(execMock).toHaveBeenCalledWith(openBrowserCommand(AUTH_URL), { env: expect.any(Object) }, expect.any(Function));
     expect(r.stderr).toContain(AUTH_URL);
     expect(r.stderr).toContain('Logged in as Ada');
   });
@@ -406,12 +406,13 @@ describe('login error hints and auth refresh', () => {
     expect(out.scopes).toBe(3);
   });
 
-  it('auth refresh with MS365_CLI_TOKEN set is a usage error', async () => {
+  it('auth refresh with MS365_CLI_TOKEN set exits 2 external_token_mode (AH-2)', async () => {
     const { runCommand } = await import('./helpers/cli.js');
     const { registerAuthCommands } = await import('../src/commands/auth.js');
     const r = await runCommand((p) => registerAuthCommands(p, () => { throw new Error('should not build'); }), ['auth', 'refresh'],
       { env: { MS365_CLI_TOKEN: 'x' } });
     expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain('supplied by the host');
   });
 
   it('auth login maps an expired device code to the actionable hint', async () => {

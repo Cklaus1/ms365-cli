@@ -4,6 +4,7 @@ import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
 import { CliError, ExitCode } from './errors.js';
+import { checkExternalToken, requireExternalToken, tokenRejectedError } from './external-token.js';
 import {
   cacheAccounts, cachedStore, createFileStore, ensurePrivateMode, itemKey, migrateFileToItems, migrateItemsToFile,
   MigrationVerifyError, SplitTokenCache, TOKEN_CACHE_KEY,
@@ -627,15 +628,19 @@ export interface AuthManagerOptions {
   /** Use this cached account (username, case-insensitive, or homeAccountId) for this process only. */
   account?: string;
   /**
-   * Where access tokens come from (ID-8): `msal` (default; ms365's own sign-in, refresh tokens cached) or `az`
-   * (an admin profile: borrowed from `az account get-access-token --tenant <tenantId>` on demand, held in memory only).
+   * Where access tokens come from: `msal` (ms365's own sign-in, refresh tokens cached), `az` (ID-8: an admin
+   * profile borrows `az account get-access-token --tenant <tenantId>` on demand, held in memory only) or `external`
+   * (AH-2: the host supplies MS365_CLI_TOKEN; nothing is cached and MSAL is never loaded). Default: `external` when
+   * MS365_CLI_TOKEN is set, else `msal`.
    */
   source?: TokenSource;
+  /** A `type: host` profile is in effect: external mode is mandatory and the token must be a verifiable JWT. */
+  host?: boolean;
   /** The --profile name in effect, for messages. */
   profileName?: string;
 }
 
-export type TokenSource = 'msal' | 'az';
+export type TokenSource = 'msal' | 'az' | 'external';
 
 /**
  * A silent token request MSAL cannot satisfy without the user: `InteractionRequiredAuthError` (interaction_required,
@@ -665,22 +670,25 @@ export class AuthManager {
   private accountOverride: string | null;
   private source: TokenSource;
   private profileName: string | null;
+  private readonly host: boolean;
+  /** The pinned tenant (profile, else MS365_CLI_TENANT_ID), compared with an external token's `tid`. */
+  private readonly pinnedTenant: string | undefined;
 
   /** @param scopes scopes requested (and consented) at login */
   constructor(scopes: string[], options: AuthManagerOptions = {}) {
     this.scopes = scopes;
-    this.source = options.source ?? 'msal';
+    this.host = !!options.host;
+    this.source = options.source ?? (process.env.MS365_CLI_TOKEN || this.host ? 'external' : 'msal');
     this.profileName = options.profileName ?? null;
-    // An az-backed manager has no cached accounts to pick from.
+    // An az-backed manager has no cached accounts to pick from; an external one checks the token against it.
     this.accountOverride = this.source === 'az' ? null : options.account || null;
-    // An az-backed manager signs nothing in itself, so it needs no client ID (only grant-scopes asks for one).
+    this.pinnedTenant = options.tenantId || process.env.MS365_CLI_TENANT_ID || undefined;
+    // Only an msal-backed manager signs anything in itself, so only it needs a client ID (grant-scopes asks for one too).
     const clientId = options.clientId
       || process.env.MS365_CLI_CLIENT_ID
       || '';
-    if (!clientId && this.source !== 'az') throw noClientIdError();
-    const tenantId = options.tenantId
-      || process.env.MS365_CLI_TENANT_ID
-      || 'common';
+    if (!clientId && this.source === 'msal') throw noClientIdError();
+    const tenantId = this.pinnedTenant || 'common';
     this.msalConfig = {
       auth: {
         clientId,
@@ -697,11 +705,11 @@ export class AuthManager {
   }
 
   async initialize(): Promise<void> {
-    if (this.source === 'az') return;
+    if (this.source !== 'msal') return;
     await this.loadSelectedAccount();
   }
 
-  /** `msal` (ms365's own sign-in) or `az` (an admin profile's borrowed Azure CLI token). */
+  /** `msal` (ms365's own sign-in), `az` (an admin profile's borrowed Azure CLI token) or `external` (supplied by a host). */
   tokenSource(): TokenSource {
     return this.source;
   }
@@ -735,9 +743,14 @@ export class AuthManager {
   }
 
   async getToken(forceRefresh = false): Promise<string> {
-    // A token supplied via env (e.g. from another tool) bypasses the cache
-    const envToken = process.env.MS365_CLI_TOKEN;
-    if (envToken) return envToken;
+    // AH-2: a supplied token is checked on every use (a long run can outlive it) and never refreshed: a 401 asks for
+    // a fresh one (forceRefresh comes only from GraphClient's 401 retry; cache-touching auth commands refuse earlier).
+    if (this.source === 'external') {
+      if (forceRefresh) throw tokenRejectedError();
+      const token = requireExternalToken(this.profileName);
+      checkExternalToken(token, { host: this.host, tenantId: this.pinnedTenant, account: this.accountOverride ?? undefined, profileName: this.profileName });
+      return token;
+    }
 
     if (!forceRefresh && this.accessToken && this.tokenExpiry && this.tokenExpiry - EXPIRY_SKEW_MS > Date.now()) {
       return this.accessToken;

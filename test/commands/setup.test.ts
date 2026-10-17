@@ -165,7 +165,7 @@ describe('auth setup existing login (M-28)', () => {
 
 describe('auth status / logout (M-28)', () => {
   it('auth status exits 3 when not logged in', async () => {
-    const fake = { initialize: async () => {}, verifyLogin: async () => ({ success: false }) };
+    const fake = { initialize: async () => {}, tokenSource: () => 'msal', verifyLogin: async () => ({ success: false }) };
     const r = await runCommand(registerAuth(() => fake as never), ['auth', 'status']);
     expect(r.exitCode).toBe(3);
   });
