@@ -280,6 +280,8 @@ function sharedSkill(catalog: Catalog, version: string): string {
     '',
     'The host adds its own `workspace_id`, `scope_id`, `sensitivity`, `acl_ref`, `content_digest`, `valid_until`, `schema_version`, `id`, `status` and `source`.',
     '',
+    '`watch <resource> --checkpoint <blob|@file|@->` lets the host hold the change-feed state: no cursor file is read or written, and every pass ends with one `{"type":"checkpoint","checkpoint":"<blob>","coverageStart","coverageEnd","syncedAt","folder"|"window"}` line. Persist the records and that checkpoint together, then pass it on the next run (`new` or an empty value starts a baseline; `--include-existing` prints the existing items as `backfill`). A checkpoint for another resource, folder, endpoint or window exits 2 `checkpoint_mismatch` before any request. Change lines carry `id`, `version` and `lastModified` (dedupe on `id` + `version`), mail lines `untrusted: true`, deletes `removedReason`. An expired delta token prints a `gap` line (`reason: sync_state_expired`), then `backfill` lines, then the new checkpoint (`--strict` exits instead); an events window with less than half left rolls forward the same way (`reason: window_rolled`). `--select <fields>` keeps only those item fields plus `id`, `changeKey`, `lastModifiedDateTime`.',
+    '',
     '## Environment variables',
     '',
     '| Variable | Description |',

@@ -49,20 +49,18 @@ describe('watch: first run (baseline)', () => {
     expect(r.exitCode).toBe(0);
     expect(r.calls).toHaveLength(2);
     expect(r.calls[0].path.split('?')[0]).toBe(MAIL);
-    expect(query(r.calls[0]).get('$select')).toBe('id,subject,from,receivedDateTime,createdDateTime,isRead,hasAttachments,bodyPreview');
+    expect(query(r.calls[0]).get('$select')).toBe('id,subject,from,receivedDateTime,createdDateTime,lastModifiedDateTime,changeKey,isRead,hasAttachments,bodyPreview');
     expect(r.calls[1].url).toBe(`${GRAPH}${MAIL}?$skiptoken=P2`);
     expect(r.stdout).toBe('');
-    expect(readCursor('mail')).toEqual({ resource: 'mail', endpoint: MAIL, deltaLink: `${GRAPH}${MAIL}?$deltatoken=D1`, syncedAt: '2026-10-14T17:00:00.000Z' });
+    expect(readCursor('mail')).toEqual({ resource: 'mail', endpoint: MAIL, deltaLink: `${GRAPH}${MAIL}?$deltatoken=D1`, syncedAt: '2026-10-14T17:00:00.000Z', coverageStart: '2026-10-14T17:00:00.000Z' });
     expect(fs.statSync(cursorPath('mail')).mode & 0o777).toBe(0o600);
   });
 
-  it('--include-existing emits the initial items as created', async () => {
+  it('--include-existing emits the initial items as backfill (AH-4(3))', async () => {
     const r = await run(['mail', '--include-existing'], mailPages);
     expect(r.exitCode).toBe(0);
-    expect(lines(r.stdout)).toEqual([
-      { type: 'created', resource: 'mail', id: 'M1', item: { id: 'M1', subject: 'a' } },
-      { type: 'created', resource: 'mail', id: 'M2', item: { id: 'M2', subject: 'b' } },
-    ]);
+    const line = (id: string, subject: string) => ({ type: 'backfill', resource: 'mail', id, version: null, lastModified: null, untrusted: true, item: { id, subject } });
+    expect(lines(r.stdout)).toEqual([line('M1', 'a'), line('M2', 'b')]);
   });
 
   it('--folder with a well-known name targets it without a lookup and names the cursor after it', async () => {
@@ -249,12 +247,15 @@ describe('watch: expired delta token', () => {
   });
 
   for (const [code, status] of [['syncStateNotFound', 410], ['resyncRequired', 410], ['SyncStateInvalid', 400]] as const) {
-    it(`${code} (${status}) warns, resets and baselines again`, async () => {
+    it(`${code} (${status}) emits a gap, backfills existing items and baselines again (AH-4(3))`, async () => {
       writeCursor('mail', MAIL_CURSOR);
       const r = await run(['mail'], expired(code, status));
       expect(r.exitCode).toBe(0);
       expect(r.stderr).toMatch(/expired/i);
-      expect(r.stdout).toBe('');
+      expect(lines(r.stdout)).toEqual([
+        { type: 'gap', resource: 'mail', reason: 'sync_state_expired', from: MAIL_CURSOR.syncedAt, to: '2026-10-14T17:00:00.000Z' },
+        expect.objectContaining({ type: 'backfill', id: 'M1' }),
+      ]);
       expect(r.calls).toHaveLength(2);
       expect(r.calls[1].url).not.toContain('deltatoken');
       expect(readCursor('mail').deltaLink).toBe(`${GRAPH}${MAIL}?$deltatoken=FRESH`);

@@ -4090,13 +4090,10 @@ exports[`dry-run endpoint snapshot (every command) > user working-hours 1`] = `
 
 exports[`dry-run endpoint snapshot (every command) > watch [optional flags] 1`] = `
 {
-  "argv": "watch mail --folder x --start 2026-10-20T10:00 --end 2026-10-20T10:00 --timezone America/Los_Angeles --name x --interval 15 --max-failures 5 --max-passes 5",
-  "error": "",
-  "exitCode": 0,
-  "requests": [
-    "[dry-run] GET https://graph.microsoft.com/v1.0/me/mailFolders?$select=id%2CdisplayName%2CchildFolderCount&$top=100",
-    "[dry-run] GET https://graph.microsoft.com/v1.0/me/mailFolders/x/messages/delta?$select=id%2Csubject%2Cfrom%2CreceivedDateTime%2CcreatedDateTime%2CisRead%2ChasAttachments%2CbodyPreview",
-  ],
+  "argv": "watch mail --folder x --start 2026-10-20T10:00 --end 2026-10-20T10:00 --timezone America/Los_Angeles --name x --checkpoint x --select x --interval 15 --max-failures 5 --max-passes 5",
+  "error": "Error: --checkpoint cannot be combined with --name or --reset.",
+  "exitCode": 2,
+  "requests": [],
 }
 `;
 
@@ -4106,7 +4103,7 @@ exports[`dry-run endpoint snapshot (every command) > watch 1`] = `
   "error": "",
   "exitCode": 0,
   "requests": [
-    "[dry-run] GET https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?$select=id%2Csubject%2Cfrom%2CreceivedDateTime%2CcreatedDateTime%2CisRead%2ChasAttachments%2CbodyPreview",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?$select=id%2Csubject%2Cfrom%2CreceivedDateTime%2CcreatedDateTime%2ClastModifiedDateTime%2CchangeKey%2CisRead%2ChasAttachments%2CbodyPreview",
   ],
 }
 `;
