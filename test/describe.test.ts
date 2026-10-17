@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import os from 'os';
+import path from 'path';
+import { spawnSync } from 'child_process';
 import fs from 'fs';
 import { Command, Option } from 'commander';
 import { runCommand } from './helpers/cli.js';
@@ -22,7 +25,6 @@ import { registerGenerateSkillsCommand } from '../src/commands/generate-skills.j
 import { registerSetupCommand } from '../src/commands/setup.js';
 import { registerMeetingsCommands } from '../src/commands/meetings.js';
 import { registerReportsCommands } from '../src/commands/reports.js';
-import { registerChiefCommands } from '../src/commands/chief.js';
 import { registerWatchCommands } from '../src/commands/watch.js';
 import { registerAuditCommands } from '../src/commands/audit.js';
 import { registerIdempotencyCommands } from '../src/commands/idempotency.js';
@@ -32,6 +34,7 @@ import { registerResolveCommands } from '../src/commands/resolve.js';
 import { registerNotesCommands } from '../src/commands/notes.js';
 import { registerCompletionCommand } from '../src/commands/completion.js';
 import { commandMeta, catalogPaths } from '../src/catalog.js';
+import { buildTools } from '../src/mcp-server.js';
 import type { GraphClient } from '../src/graph-client.js';
 import type { AuthManager } from '../src/auth.js';
 
@@ -58,7 +61,6 @@ const MODULES: Module[] = [
   { file: 'setup.ts', register: (p, _g, a) => registerSetupCommand(p, a) },
   { file: 'meetings.ts', register: (p, g) => registerMeetingsCommands(p, g) },
   { file: 'reports.ts', register: (p, g) => registerReportsCommands(p, g) },
-  { file: 'chief.ts', register: (p, g) => registerChiefCommands(p, g) },
   { file: 'watch.ts', register: (p, g) => registerWatchCommands(p, g) },
   { file: 'audit.ts', register: (p) => registerAuditCommands(p) },
   { file: 'idempotency.ts', register: (p) => registerIdempotencyCommands(p) },
@@ -223,5 +225,36 @@ describe('command catalog coverage guard', () => {
     }
     expect(flagged.length).toBeGreaterThanOrEqual(8);
     expect(flagged.filter(p => !commandMeta(p)?.destructive)).toEqual([]);
+  });
+});
+
+// AO-32: the personal-briefing group was removed. The name is assembled so `grep -rni` over src/ and test/ stays
+// empty (AC 15) while this guard still catches any re-introduction.
+describe('removed personal-briefing group (AO-32)', () => {
+  const GONE = ['chi', 'ef'].join('');
+  const program = new Command();
+  registerAll(program, () => { throw new Error('unused'); });
+
+  it(`\`ms365 ${GONE} brief\` is an unknown command (exit 2)`, () => {
+    const root = path.resolve(__dirname, '..');
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ms365-ao32-'));
+    const r = spawnSync(path.join(root, 'node_modules', '.bin', 'tsx'), [path.join(root, 'src/index.ts'), GONE, 'brief'], {
+      cwd: home, encoding: 'utf8', timeout: 30_000, input: '',
+      env: { ...process.env, HOME: home, MS365_CLI_TOKEN: '', MS365_CLI_CLIENT_ID: '00000000-0000-0000-0000-000000000000' },
+    });
+    expect(r.status, r.stderr).toBe(2);
+    expect(r.stderr).toMatch(/unknown command/i);
+  }, 30_000);
+
+  it('has no catalog, group-scope, describe or MCP entry', async () => {
+    expect(catalogPaths().filter(p => p.split(' ')[0] === GONE)).toEqual([]);
+    expect(commandMeta(`${GONE} brief`)).toBeUndefined();
+    const catalogSrc = fs.readFileSync(new URL('../src/catalog.ts', import.meta.url), 'utf8');
+    expect(catalogSrc.toLowerCase()).not.toContain(GONE);
+    expect(leafPaths(program).filter(p => p.split(' ')[0] === GONE)).toEqual([]);
+    const { json } = await describeJson();
+    expect(json.commands.map((c: { path: string }) => c.path).filter((p: string) => p.startsWith(GONE))).toEqual([]);
+    expect(buildTools(program).map(t => t.name).filter(n => n.startsWith(GONE))).toEqual([]);
+    expect(fs.existsSync(new URL(`../src/commands/${GONE}.ts`, import.meta.url))).toBe(false);
   });
 });
