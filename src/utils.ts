@@ -16,6 +16,21 @@ export function outputOption(overrideDefault?: string): Option {
     .default(overrideDefault ?? defaultFormat);
 }
 
+/**
+ * `--mailbox <upn>` (AH-10): read another user's mailbox through Exchange delegate access, which needs the
+ * `.Shared` scope (`scope`) as well. Reads only; the catalog adds the scope clause when the option is given.
+ */
+export function mailboxOption(scope: string): Option {
+  return new Option('--mailbox <upn>', `Read this mailbox (UPN or user id) through your delegate access; needs ${scope}`)
+    .argParser((value: string) => {
+      if (!value.trim() || value.includes('/')) throw new InvalidArgumentError('expected a UPN or user id.');
+      return value.trim();
+    });
+}
+
+/** The owner segment of an Outlook path: `/me`, or `/users/{upn}` for a delegate read (`--mailbox`). */
+export const userPath = (mailbox: string | undefined) => (mailbox ? `/users/${encodeURIComponent(mailbox)}` : '/me');
+
 /** What --body-file sets --body to, so a mandatory --body is satisfied by either flag. */
 const BODY_FROM_FILE = '\0--body-file';
 

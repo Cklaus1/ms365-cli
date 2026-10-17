@@ -310,11 +310,11 @@ exports[`dry-run endpoint snapshot (every command) > calendar free-busy 1`] = `
 
 exports[`dry-run endpoint snapshot (every command) > calendar get [optional flags] 1`] = `
 {
-  "argv": "calendar get EVENTID --calendar 2026-10-20T10:00 --select x --timezone America/Los_Angeles --output json",
+  "argv": "calendar get EVENTID --calendar 2026-10-20T10:00 --select x --timezone America/Los_Angeles --mailbox a@contoso.com --output json",
   "error": "",
   "exitCode": 0,
   "requests": [
-    "[dry-run] GET https://graph.microsoft.com/v1.0/me/calendars/2026-10-20T10%3A00/events/EVENTID?$select=x",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/users/a%40contoso.com/calendars/2026-10-20T10%3A00/events/EVENTID?$select=x",
   ],
 }
 `;
@@ -332,11 +332,11 @@ exports[`dry-run endpoint snapshot (every command) > calendar get 1`] = `
 
 exports[`dry-run endpoint snapshot (every command) > calendar instances [optional flags] 1`] = `
 {
-  "argv": "calendar instances SERIESID --start 2026-10-20T10:00 --end 2026-10-20T10:00 --calendar 2026-10-20T10:00 --timezone America/Los_Angeles --page-limit 5 --page-delay 5 --output json",
+  "argv": "calendar instances SERIESID --start 2026-10-20T10:00 --end 2026-10-20T10:00 --calendar 2026-10-20T10:00 --timezone America/Los_Angeles --page-limit 5 --page-delay 5 --mailbox a@contoso.com --output json",
   "error": "",
   "exitCode": 0,
   "requests": [
-    "[dry-run] GET https://graph.microsoft.com/v1.0/me/calendars/2026-10-20T10%3A00/events/SERIESID/instances?startDateTime=2026-10-20T17%3A00%3A00.000Z&endDateTime=2026-10-20T17%3A00%3A00.000Z",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/users/a%40contoso.com/calendars/2026-10-20T10%3A00/events/SERIESID/instances?startDateTime=2026-10-20T17%3A00%3A00.000Z&endDateTime=2026-10-20T17%3A00%3A00.000Z",
   ],
 }
 `;
@@ -490,11 +490,11 @@ exports[`dry-run endpoint snapshot (every command) > calendar update-calendar 1`
 
 exports[`dry-run endpoint snapshot (every command) > calendar view [optional flags] 1`] = `
 {
-  "argv": "calendar view --start 2026-10-20T10:00 --end 2026-10-20T10:00 --select x --timezone America/Los_Angeles --page-limit 5 --page-delay 5 --output json",
+  "argv": "calendar view --start 2026-10-20T10:00 --end 2026-10-20T10:00 --select x --timezone America/Los_Angeles --page-limit 5 --page-delay 5 --mailbox a@contoso.com --output json",
   "error": "",
   "exitCode": 0,
   "requests": [
-    "[dry-run] GET https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=2026-10-20T17%3A00%3A00.000Z&endDateTime=2026-10-20T17%3A00%3A00.000Z&$select=x",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/users/a%40contoso.com/calendarView?startDateTime=2026-10-20T17%3A00%3A00.000Z&endDateTime=2026-10-20T17%3A00%3A00.000Z&$select=x",
   ],
 }
 `;
@@ -1843,11 +1843,11 @@ exports[`dry-run endpoint snapshot (every command) > mail forward 1`] = `
 
 exports[`dry-run endpoint snapshot (every command) > mail get [optional flags] 1`] = `
 {
-  "argv": "mail get MESSAGEID --select x --body html --max-chars 5 --output json",
+  "argv": "mail get MESSAGEID --select x --body html --max-chars 5 --mailbox a@contoso.com --output json",
   "error": "",
   "exitCode": 0,
   "requests": [
-    "[dry-run] GET https://graph.microsoft.com/v1.0/me/messages/MESSAGEID?$select=x",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/users/a%40contoso.com/messages/MESSAGEID?$select=x",
   ],
 }
 `;
@@ -1865,7 +1865,7 @@ exports[`dry-run endpoint snapshot (every command) > mail get 1`] = `
 
 exports[`dry-run endpoint snapshot (every command) > mail list [optional flags] 1`] = `
 {
-  "argv": "mail list --filter x --select x --search x --folder x --body html --max-chars 5 --top 5 --page-limit 5 --page-delay 5 --output json",
+  "argv": "mail list --filter x --select x --search x --folder x --body html --max-chars 5 --top 5 --page-limit 5 --page-delay 5 --mailbox a@contoso.com --output json",
   "error": "Error: --search cannot be combined with --filter: Outlook $search does not support $filter or $orderby. (fix: drop --filter, or filter the --search results client-side (e.g. with jq))",
   "exitCode": 2,
   "requests": [],
@@ -2065,51 +2065,6 @@ exports[`dry-run endpoint snapshot (every command) > mail send-draft 1`] = `
   "exitCode": 0,
   "requests": [
     "[dry-run] POST https://graph.microsoft.com/v1.0/me/messages/MESSAGEID/send",
-  ],
-}
-`;
-
-exports[`dry-run endpoint snapshot (every command) > mail shared-get [optional flags] 1`] = `
-{
-  "argv": "mail shared-get USERID MESSAGEID --select x --output json",
-  "error": "",
-  "exitCode": 0,
-  "requests": [
-    "[dry-run] GET https://graph.microsoft.com/v1.0/users/USERID/messages/MESSAGEID?$select=x",
-  ],
-}
-`;
-
-exports[`dry-run endpoint snapshot (every command) > mail shared-get 1`] = `
-{
-  "argv": "mail shared-get USERID MESSAGEID",
-  "error": "",
-  "exitCode": 0,
-  "requests": [
-    "[dry-run] GET https://graph.microsoft.com/v1.0/users/USERID/messages/MESSAGEID",
-  ],
-}
-`;
-
-exports[`dry-run endpoint snapshot (every command) > mail shared-list [optional flags] 1`] = `
-{
-  "argv": "mail shared-list USERID --filter x --select x --folder x --top 5 --page-limit 5 --page-delay 5 --output json",
-  "error": "",
-  "exitCode": 0,
-  "requests": [
-    "[dry-run] GET https://graph.microsoft.com/v1.0/users/USERID/mailFolders?$select=id%2CdisplayName%2CchildFolderCount&$top=100",
-    "[dry-run] GET https://graph.microsoft.com/v1.0/users/USERID/mailFolders/x/messages?$top=5&$filter=x&$select=x",
-  ],
-}
-`;
-
-exports[`dry-run endpoint snapshot (every command) > mail shared-list 1`] = `
-{
-  "argv": "mail shared-list USERID",
-  "error": "",
-  "exitCode": 0,
-  "requests": [
-    "[dry-run] GET https://graph.microsoft.com/v1.0/users/USERID/messages?$top=10",
   ],
 }
 `;
@@ -4166,7 +4121,7 @@ exports[`dry-run endpoint snapshot (every command) > user working-hours 1`] = `
 
 exports[`dry-run endpoint snapshot (every command) > watch [optional flags] 1`] = `
 {
-  "argv": "watch mail --folder x --start 2026-10-20T10:00 --end 2026-10-20T10:00 --timezone America/Los_Angeles --name x --checkpoint x --select x --interval 15 --max-failures 5 --max-passes 5",
+  "argv": "watch mail --folder x --start 2026-10-20T10:00 --end 2026-10-20T10:00 --timezone America/Los_Angeles --name x --mailbox a@contoso.com --checkpoint x --select x --interval 15 --max-failures 5 --max-passes 5",
   "error": "Error: --checkpoint cannot be combined with --name or --reset.",
   "exitCode": 2,
   "requests": [],

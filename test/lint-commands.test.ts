@@ -24,7 +24,6 @@ const NO_CURSOR: Record<string, string> = {
   'mail get': SINGLE,
   'mail read': SINGLE,
   'mail attachment': SINGLE,
-  'mail shared-get': SINGLE,
   'mail rule': SINGLE,
   'calendar get': SINGLE,
   'drive root': SINGLE,

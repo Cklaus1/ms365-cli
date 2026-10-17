@@ -6,7 +6,7 @@ import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import {
   truncate, parseRecipients, formatSize, addListOptions, outputOption, confirm, info, success,
-  kqlQuote, odataQuote, safeOutputPath, resolveTimeZone, parseTime, toGraphDateTime, fromGet, addBodyOptions, bodyText,
+  kqlQuote, odataQuote, safeOutputPath, resolveTimeZone, parseTime, toGraphDateTime, fromGet, addBodyOptions, bodyText, mailboxOption, userPath,
 } from '../utils.js';
 import { detectMimeType } from '../mime.js';
 import { idempotentSend, IDEMPOTENCY_HELP, listEntries, settleKey, type Entry } from '../idempotency.js';
@@ -203,6 +203,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .option('--select <fields>', 'Comma-separated fields to return')
     .option('--search <query>', 'Search query (cannot be combined with --filter; Graph returns at most 250 results)')
     .option('--folder <name>', 'Folder name, path or ID (e.g. "Drafts", "Sent Items", "Inbox/Projects", or a folder ID)')), { description: 'Number of messages to return', default: '10' })
+    .addOption(mailboxOption('Mail.Read.Shared'))
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();
@@ -221,10 +222,10 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         }
       }
 
-      let endpoint = '/me/messages';
-      if (opts.folder) {
-        endpoint = `/me/mailFolders/${encodeURIComponent(await resolve(client, 'mail-folder', opts.folder))}/messages`;
-      }
+      const owner = userPath(opts.mailbox);
+      const endpoint = opts.folder
+        ? `${owner}/mailFolders/${encodeURIComponent(await resolve(client, 'mail-folder', opts.folder, opts.mailbox))}/messages`
+        : `${owner}/messages`;
 
       // AH-3: a $search that returns its 250-item maximum says so in band (incompleteReason "search_cap").
       await printList(client, endpoint, { queryParams, headers: textBodyHeaders(opts.body) }, opts,
@@ -236,6 +237,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .description('Get a specific message (marked untrusted; see --body, --unique, --wrap-untrusted)')
     .option('--select <fields>', 'Comma-separated fields to return')
     .option('--unique', 'Return uniqueBody (the new part of a thread reply, without quoted history) instead of body'))
+    .addOption(mailboxOption('Mail.Read.Shared'))
     .addOption(outputOption())
     .action(handleErrors(async (messageId: string, opts) => {
       const client = getClient();
@@ -248,7 +250,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         queryParams['$select'] = opts.select;
       }
 
-      const response = await client.request(`/me/messages/${encodeURIComponent(messageId)}`, {
+      const response = await client.request(`${userPath(opts.mailbox)}/messages/${encodeURIComponent(messageId)}`, {
         queryParams, headers: textBodyHeaders(opts.body),
       });
       const data = await transformData(response.data, messageTransform(client, 'mail', contentOptions(opts)));
@@ -968,45 +970,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       success(`Categories set: ${categories.join(', ')}`);
     }));
 
-  // Shared mailbox commands (require --org-mode)
-  addListOptions(mail
-    .command('shared-list <userId>')
-    .description('List shared mailbox messages (requires --org-mode)')
-    .option('--filter <filter>', 'OData filter')
-    .option('--select <fields>', 'Fields to return')
-    .option('--folder <name>', 'Folder name, path or ID in that mailbox'), { description: 'Number of messages', default: '10' })
-    .addOption(outputOption())
-    .action(handleErrors(async (userId: string, opts) => {
-      const client = getClient();
-      const queryParams: Record<string, string> = {};
-      if (opts.top) queryParams['$top'] = opts.top;
-      if (opts.filter) queryParams['$filter'] = opts.filter;
-      if (opts.select) queryParams['$select'] = opts.select;
-
-      const endpoint = opts.folder
-        ? `/users/${encodeURIComponent(userId)}/mailFolders/${encodeURIComponent(await resolve(client, 'mail-folder', opts.folder, userId))}/messages`
-        : `/users/${encodeURIComponent(userId)}/messages`;
-
-      await printList(client, endpoint, { queryParams }, opts, { transform: messageTransform(client, 'mail', {}) });
-    }));
-
-  mail
-    .command('shared-get <userId> <messageId>')
-    .description('Get a shared mailbox message (requires --org-mode)')
-    .option('--select <fields>', 'Fields to return')
-    .addOption(outputOption())
-    .action(handleErrors(async (userId: string, messageId: string, opts) => {
-      const client = getClient();
-      const queryParams: Record<string, string> = {};
-      if (opts.select) queryParams['$select'] = opts.select;
-
-      const response = await client.request(
-        `/users/${encodeURIComponent(userId)}/messages/${encodeURIComponent(messageId)}`,
-        { queryParams }
-      );
-      console.log(formatOutput(await transformData(response.data, messageTransform(client, 'mail', {})), opts.output as OutputFormat));
-    }));
-
+  // Shared mailbox send (requires --org-mode); delegate reads are `mail list/get --mailbox` (AH-10).
   addBodyOptions(mail
     .command('shared-send <userId>')
     .description('Send email from a shared mailbox (requires --org-mode)')

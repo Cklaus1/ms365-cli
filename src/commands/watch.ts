@@ -5,7 +5,7 @@ import { setTimeout as delay } from 'timers/promises';
 import { GraphClient } from '../graph-client.js';
 import { configDir, writeFileAtomic } from '../auth.js';
 import { CliError, ExitCode, handleErrors, toCliError } from '../errors.js';
-import { info, isDryRun, parseTime, resolveTimeZone, preferTimeZone } from '../utils.js';
+import { info, isDryRun, mailboxOption, parseTime, resolveTimeZone, preferTimeZone, userPath } from '../utils.js';
 import { resolve } from '../resolve.js';
 
 const RESOURCES = ['mail', 'events', 'files', 'contacts'] as const;
@@ -45,6 +45,8 @@ export interface Checkpoint extends Cursor {
   coverageStart: string;
   folder?: string;
   window?: Window;
+  /** The delegate mailbox read (`--mailbox`, AH-10); absent for the signed-in user's own. */
+  mailbox?: string;
 }
 
 /** One delta feed: the initial endpoint, its first-request params and the headers every request needs. */
@@ -91,12 +93,12 @@ function buildFeed(resource: Resource, opts: Record<string, string | boolean | u
   const select = typeof opts.select === 'string' ? [...new Set([...opts.select.split(',').map(s => s.trim()).filter(Boolean), ...SELECT_BASE])] : undefined;
   switch (resource) {
     case 'mail':
-      return { resource, endpoint: `/me/mailFolders/${encodeURIComponent(folder)}/messages/delta`, initialParams: { $select: select?.join(',') ?? MAIL_SELECT }, headers: {}, select };
+      return { resource, endpoint: `${userPath(opts.mailbox as string | undefined)}/mailFolders/${encodeURIComponent(folder)}/messages/delta`, initialParams: { $select: select?.join(',') ?? MAIL_SELECT }, headers: {}, select };
     case 'events':
       // calendarView/delta may ignore $select †; the fields are projected locally instead (AH-4(6)).
       return {
         resource,
-        endpoint: '/me/calendarView/delta',
+        endpoint: `${userPath(opts.mailbox as string | undefined)}/calendarView/delta`,
         initialParams: { startDateTime: window!.start, endDateTime: window!.end },
         headers: preferTimeZone(resolveTimeZone(opts.timezone as string | undefined)),
         window,
@@ -112,8 +114,8 @@ function buildFeed(resource: Resource, opts: Record<string, string | boolean | u
 
 /**
  * --name, or a default from the resource and the resolved folder (Q-13), so `Inbox`, `inbox` and
- * no --folder share one cursor. Under MCP (MS365_CLI_MCP=1) the default gets an `mcp-` prefix so
- * agent calls never consume the user's own cursors (X-6).
+ * no --folder share one cursor; a delegate read adds `@<mailbox>` (AH-10). Under MCP (MS365_CLI_MCP=1)
+ * the default gets an `mcp-` prefix so agent calls never consume the user's own cursors (X-6).
  */
 function cursorName(resource: Resource, opts: Record<string, string | boolean | undefined>, folder: string): string {
   if (opts.name !== undefined) {
@@ -121,7 +123,8 @@ function cursorName(resource: Resource, opts: Record<string, string | boolean | 
     if (!NAME_PATTERN.test(name)) throw usage(`Invalid --name "${name}": use letters, digits, ".", "_" or "-".`);
     return name;
   }
-  const base = resource === 'mail' && folder !== 'inbox' ? `mail-${folder.replace(/[^A-Za-z0-9._-]/g, '_')}` : resource;
+  const folderBase = resource === 'mail' && folder !== 'inbox' ? `mail-${folder.replace(/[^A-Za-z0-9._-]/g, '_')}` : resource;
+  const base = typeof opts.mailbox === 'string' ? `${folderBase}@${opts.mailbox.replace(/[^A-Za-z0-9.@_-]/g, '_')}` : folderBase;
   return process.env.MS365_CLI_MCP === '1' ? `mcp-${base}` : base;
 }
 
@@ -305,7 +308,8 @@ export function registerWatchCommands(program: Command, getClient: () => GraphCl
     .option('--start <time>', 'events: window start (default: now)')
     .option('--end <time>', 'events: window end (default: +30d)')
     .option('--timezone <tz>', 'events: IANA zone for --start/--end and returned times')
-    .option('--name <name>', 'Cursor name (default: the resource, or mail-<folder>)')
+    .option('--name <name>', 'Cursor name (default: the resource, or mail-<folder>; @<mailbox> appended with --mailbox)')
+    .addOption(mailboxOption('Mail.Read.Shared (mail) or Calendars.Read.Shared (events)'))
     .option('--reset', 'Discard the saved cursor and start a new baseline')
     .option('--checkpoint <blob|@file|@->', 'Resume from a checkpoint the caller holds (the blob, a file, or stdin); "new" or "" starts a baseline. No cursor file is read or written')
     .option('--select <fields>', 'mail, events: keep only these item fields (id, changeKey and lastModifiedDateTime are always kept)')
@@ -339,13 +343,17 @@ the watch. Ctrl-C during a pass exits 130 without saving it; Ctrl-C between pass
       const held = opts.checkpoint !== undefined;
       if (held && (opts.name !== undefined || opts.reset)) throw usage('--checkpoint cannot be combined with --name or --reset.');
       if (opts.select !== undefined && resource !== 'mail' && resource !== 'events') throw usage('--select applies to watch mail and watch events.');
+      if (opts.mailbox !== undefined && resource !== 'mail' && resource !== 'events') throw usage('--mailbox applies to watch mail and watch events.');
       if (opts.name !== undefined) cursorName(resource, opts, ''); // reject a bad --name before any request
       const client = getClient();
       const checkpoint = held ? decodeCheckpoint(checkpointText(String(opts.checkpoint))) : undefined;
       if (checkpoint) checkCheckpoint(checkpoint, client, resource, opts);
+      if (checkpoint && checkpoint.mailbox !== opts.mailbox) {
+        throw mismatch(`--checkpoint reads mailbox ${checkpoint.mailbox ?? '(your own)'}, not ${opts.mailbox ?? '(your own)'}.`);
+      }
       const folder = resource !== 'mail' ? ''
         : opts.folder === undefined && checkpoint?.folder !== undefined ? checkpoint.folder
-          : await resolve(client, 'mail-folder', (opts.folder as string | undefined) ?? 'inbox');
+          : await resolve(client, 'mail-folder', (opts.folder as string | undefined) ?? 'inbox', opts.mailbox as string | undefined);
       if (checkpoint && resource === 'mail' && checkpoint.folder !== folder) throw mismatch(`--checkpoint follows folder ${String(checkpoint.folder)}, not ${folder}.`);
       let window = resource === 'events' ? checkpoint?.window ?? eventsWindow(opts) : undefined;
       let feed = buildFeed(resource, opts, folder, window);
@@ -401,7 +409,7 @@ the watch. Ctrl-C during a pass exits 130 without saving it; Ctrl-C between pass
         }
         const blob: Checkpoint = {
           v: CHECKPOINT_VERSION, ...next, coverageStart: next.coverageStart ?? next.syncedAt,
-          ...(resource === 'mail' && { folder }), ...(window && { window }),
+          ...(resource === 'mail' && { folder }), ...(window && { window }), ...(opts.mailbox !== undefined && { mailbox: opts.mailbox as string }),
         };
         console.log(JSON.stringify({
           type: 'checkpoint', resource, checkpoint: encodeCheckpoint(blob), coverageStart: blob.coverageStart, coverageEnd: next.syncedAt,

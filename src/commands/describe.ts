@@ -27,6 +27,7 @@ export function describeOption(o: Option): CatalogOption {
 export function describeSelector(cmd: Command, sel: ScopeSelector | null | undefined) {
   if (!sel) return null;
   if ('option' in sel) return { option: sel.option, map: sel.map };
+  if ('base' in sel) return { base: sel.base, withOption: sel.withOption };
   return { argument: cmd.registeredArguments[sel.arg]?.name() ?? String(sel.arg), map: sel.map, ...(sel.withOption ? { withOption: sel.withOption } : {}) };
 }
 
@@ -59,7 +60,7 @@ function leafCommands(program: Command): Array<{ cmd: Command; path: string }> {
 }
 
 function summaryLine(c: CatalogCommand & { usage: string }, width: number): string {
-  const by = c.scopesBy && ('option' in c.scopesBy ? c.scopesBy.option : `<${c.scopesBy.argument}>`);
+  const by = c.scopesBy && ('option' in c.scopesBy ? c.scopesBy.option : 'base' in c.scopesBy ? Reflect.get(Object(c.scopesBy.withOption), 'option') : `<${c.scopesBy.argument}>`);
   const scopes = c.scopes?.join(' ') + (by ? ` (by ${by})` : '');
   const tags = [c.destructive && 'destructive', c.offline ? 'offline' : scopes].filter(Boolean).join(', ');
   return `${c.usage.padEnd(width)}  ${c.description}${tags ? `  (${tags})` : ''}`;

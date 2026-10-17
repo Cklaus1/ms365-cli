@@ -3,7 +3,7 @@ import { GraphClient } from '../graph-client.js';
 import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import {
   addListOptions, outputOption, confirm, info, success, validateEmail, resolveTimeZone, preferTimeZone, parseTime, parseGraphDateTime, toIsoWithOffset, fromGet,
-  addBodyOptions, bodyText, dryRunTrace,
+  addBodyOptions, bodyText, dryRunTrace, mailboxOption, userPath,
 } from '../utils.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { fingerprint, isDryRun, withIdempotency } from '../idempotency.js';
@@ -14,10 +14,10 @@ const TIME_HELP = 'ISO 8601 or natural ("tomorrow 15:00", "next mon 9:30", "+2h"
 const IF_MATCH_HELP = 'Only change the event if it is unchanged: an @odata.etag, or "auto" to read it first (412 → exit 4 version_changed)';
 const SERIES_HELP = 'The event is a recurring series and the change is meant for every occurrence (refused in a host plan)';
 
-/** An event's path, in the given calendar or the default one. */
-const eventPath = (calendar: string | undefined, eventId: string): string => (calendar
-  ? `/me/calendars/${encodeURIComponent(calendar)}/events/${encodeURIComponent(eventId)}`
-  : `/me/events/${encodeURIComponent(eventId)}`);
+/** An event's path, in the given calendar or the default one, of the signed-in user or of `mailbox` (AH-10). */
+const eventPath = (calendar: string | undefined, eventId: string, mailbox?: string): string => (calendar
+  ? `${userPath(mailbox)}/calendars/${encodeURIComponent(calendar)}/events/${encodeURIComponent(eventId)}`
+  : `${userPath(mailbox)}/events/${encodeURIComponent(eventId)}`);
 
 /** A CLI time expression as a Graph dateTimeTimeZone in `tz`. */
 function graphTime(input: string, tz: string): { dateTime: string; timeZone: string } {
@@ -185,6 +185,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     .option('--calendar <calendarId>', 'Specific calendar ID')
     .option('--select <fields>', 'Fields to return')
     .option('--timezone <tz>', `Zone for returned times; ${TZ_HELP}`)
+    .addOption(mailboxOption('Calendars.Read.Shared'))
     .addOption(outputOption())
     .action(handleErrors(async (eventId: string, opts) => {
       const client = getClient();
@@ -192,11 +193,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
       const queryParams: Record<string, string> = {};
       if (opts.select) queryParams['$select'] = opts.select;
 
-      const endpoint = opts.calendar
-        ? `/me/calendars/${encodeURIComponent(opts.calendar)}/events/${encodeURIComponent(eventId)}`
-        : `/me/events/${encodeURIComponent(eventId)}`;
-
-      const response = await client.request(endpoint, { queryParams, headers });
+      const response = await client.request(eventPath(opts.calendar, eventId, opts.mailbox), { queryParams, headers });
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
@@ -370,6 +367,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     .requiredOption('--end <datetime>', `End: ${TIME_HELP}`)
     .option('--calendar <calendarId>', 'Specific calendar ID')
     .option('--timezone <tz>', `Zone for --start/--end and returned times; ${TZ_HELP}`))
+    .addOption(mailboxOption('Calendars.Read.Shared'))
     .addOption(outputOption())
     .action(handleErrors(async (seriesId: string, opts) => {
       const tz = resolveTimeZone(opts.timezone);
@@ -377,7 +375,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
         startDateTime: parseTime(opts.start, { tz }).date.toISOString(),
         endDateTime: parseTime(opts.end, { tz }).date.toISOString(),
       };
-      await printList(getClient(), `${eventPath(opts.calendar, seriesId)}/instances`, { queryParams, headers: preferTimeZone(tz) }, opts);
+      await printList(getClient(), `${eventPath(opts.calendar, seriesId, opts.mailbox)}/instances`, { queryParams, headers: preferTimeZone(tz) }, opts);
     }));
 
   addListOptions(cal
@@ -387,6 +385,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     .requiredOption('--end <datetime>', `End: ${TIME_HELP}`)
     .option('--select <fields>', 'Fields to return')
     .option('--timezone <tz>', `Zone for --start/--end and returned times; ${TZ_HELP}`))
+    .addOption(mailboxOption('Calendars.Read.Shared'))
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const tz = resolveTimeZone(opts.timezone);
@@ -398,7 +397,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
       const headers = preferTimeZone(tz);
 
       const client = getClient();
-      await printList(client, '/me/calendarView', { queryParams, headers }, opts);
+      await printList(client, `${userPath(opts.mailbox)}/calendarView`, { queryParams, headers }, opts);
     }));
 
   // ── Respond to event (accept/decline/tentative) ─────────────

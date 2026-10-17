@@ -241,8 +241,8 @@ describe('QP-8: every folder option resolves through resolve.ts (Q-10..Q-15)', (
     expect(seq(list).at(-1)).toBe('GET /me/mailFolders/F9/childFolders');
   });
 
-  it('shared-list --folder resolves against the other mailbox', async () => {
-    const r = await run(['shared-list', 'u@contoso.com', '--folder', 'Receipts', '-o', 'json'], {
+  it('list --mailbox --folder resolves against the other mailbox (AH-10)', async () => {
+    const r = await run(['list', '--mailbox', 'u@contoso.com', '--folder', 'Receipts', '-o', 'json'], {
       routes: [['GET', '/users/u@contoso.com/mailFolders?', () => ({ value: [{ id: 'S9', displayName: 'Receipts' }] })]],
     });
     expect(r.exitCode).toBe(0);
