@@ -1,0 +1,25 @@
+#!/bin/bash
+# Stub of PowerShell (pwsh / powershell.exe) running the DPAPI scripts, for tests. "Encryption" is a reversible
+# prefix: STUBDPAPI:<base64 plaintext>; anything else fails to "decrypt" (exit 3, like a foreign DPAPI blob).
+db="${STUB_DB:?STUB_DB not set}"
+echo "powershell $*" >> "$db/argv.log"
+case "$STUB_MODE" in
+  hang) exec sleep 30 ;;
+  fail) echo "Add-Type: Cannot find path System.Security" >&2; exit 1 ;;
+esac
+enc=""
+while [ $# -gt 0 ]; do
+  case "$1" in -EncodedCommand) enc="$2"; shift 2 ;; *) shift ;; esac
+done
+script="$(printf '%s' "$enc" | base64 -d | tr -d '\0')"
+[ -n "$STUB_PS_START_S" ] && sleep "$STUB_PS_START_S"
+input="$(cat)"
+case "$script" in
+  *'::Unprotect('*)
+    plain="$(printf '%s' "$input" | base64 -d 2>/dev/null)" || { echo "The data is invalid." >&2; exit 3; }
+    case "$plain" in STUBDPAPI:*) printf '%s' "${plain#STUBDPAPI:}" ;; *) echo "Key not valid for use in specified state." >&2; exit 3 ;; esac ;;
+  *'::Protect('*)
+    printf '%s' "STUBDPAPI:$input" | base64 -w0 ;;
+  'exit 0') exit 0 ;;
+  *) echo "stub powershell: unexpected script" >&2; exit 1 ;;
+esac

@@ -7,7 +7,7 @@ import { PassThrough } from 'stream';
 import type { Command } from 'commander';
 import { runCommand } from '../helpers/cli.js';
 import { registerAuthCommands } from '../../src/commands/auth.js';
-import { registerSetupCommand, openBrowserCommand } from '../../src/commands/setup.js';
+import { registerSetupCommand, openBrowserCommand, PERMISSION_GROUPS } from '../../src/commands/setup.js';
 import { registerMailCommands } from '../../src/commands/mail.js';
 import { registerGenerateSkillsCommand } from '../../src/commands/generate-skills.js';
 import { AuthManager, buildScopes } from '../../src/auth.js';
@@ -126,7 +126,7 @@ function pipeStdin(text: string) {
 describe('auth setup with piped stdin (V-15, F27)', () => {
   it('completes the wizard when every answer arrives in one chunk', async () => {
     const login = stubLogin();
-    const groups = 21; // one answer per permission group, then Enter for step 5
+    const groups = Object.keys(PERMISSION_GROUPS).length; // one answer per permission group, then Enter for step 5
     pipeStdin(['2', 'n', 'client-123', ...Array(groups).fill(''), ''].join('\n') + '\n');
     const r = await runCommand(registerAuth(realGetAuth), ['auth', 'setup']);
     expect(r.exitCode).toBe(0);

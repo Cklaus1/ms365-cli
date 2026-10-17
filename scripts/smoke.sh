@@ -89,5 +89,23 @@ check "dry-run password redacted" 0 sh -c "printf 's3cret' | $CLI --dry-run driv
   elif grep -q "<redacted>" "$TMP/out" "$TMP/err"; then ok "dry-run password redacted";
   else bad "dry-run password not shown as <redacted>"; fi; }
 
+# 13. default credential storage is the 0600 file (ID AC 2, E1): MS365_CLI_STORAGE unset, fresh config dir
+mkdir -p "$TMP/store-cfg"
+check "storage default is file" 0 env -u MS365_CLI_STORAGE MS365_CLI_CONFIG_DIR="$TMP/store-cfg" $CLI auth storage show -o json && {
+  node -e 'const s=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); if(s.configured!=="auto"||s.resolved!=="file"||s.backend!=="file") process.exit(1)' "$TMP/out" \
+    && ok "storage default is file" || bad "storage default shape (want configured auto, resolved file)"; }
+
+# 14. a hanging keychain tool never hangs the CLI (ID AC 3, lesson 6): stub secret-tool sleeps, the CLI kills it and exits 3
+mkdir -p "$TMP/stub-bin" "$TMP/hang-cfg"
+printf '#!/bin/sh\nexec sleep 47\n' > "$TMP/stub-bin/secret-tool"; chmod +x "$TMP/stub-bin/secret-tool"
+t0=$(date +%s)
+check "hanging keychain exits 3" 3 env MS365_CLI_STORAGE=keychain MS365_CLI_KEYCHAIN_BACKEND=libsecret PATH="$TMP/stub-bin:$PATH" \
+  DBUS_SESSION_BUS_ADDRESS="unix:path=$TMP/no-bus" MS365_CLI_CONFIG_DIR="$TMP/hang-cfg" $CLI auth logout && {
+  dt=$(( $(date +%s) - t0 ))
+  if [ "$dt" -gt 15 ]; then bad "hanging keychain exits 3 (took ${dt}s)";
+  elif ! grep -q "keychain_unavailable\|keychain is unavailable" "$TMP/err"; then bad "hanging keychain error message";
+  elif pgrep -f "^sleep 47$" >/dev/null; then bad "hanging keychain left the stub running";
+  else ok "hanging keychain exits 3 (${dt}s)"; fi; }
+
 echo "smoke: pass=$pass fail=$fail skip=$skip"
 [ "$fail" = 0 ]

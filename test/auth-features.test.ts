@@ -215,6 +215,9 @@ describe('T40: profiles (PM-8, D21)', () => {
     expect(fs.existsSync(path.join(dir, 'profiles', 'work.json'))).toBe(true);
     expect(readProfile('work')).toEqual({ clientId: 'c', tenantId: 't', scopes: ['User.Read'], orgMode: true, account: 'a@x.com' });
     saveProfile('home', {});
+    saveProfile('adm', { type: 'admin', tenantId: 'contoso.onmicrosoft.com' });
+    expect(readProfile('adm')).toEqual({ type: 'admin', tenantId: 'contoso.onmicrosoft.com' });
+    expect(deleteProfile('adm')).toBe(true);
     expect(listProfiles()).toEqual(['home', 'work']);
     expect(deleteProfile('work')).toBe(true);
     expect(deleteProfile('work')).toBe(false);
@@ -226,6 +229,8 @@ describe('T40: profiles (PM-8, D21)', () => {
     fs.mkdirSync(path.join(dir, 'profiles'), { recursive: true });
     fs.writeFileSync(path.join(dir, 'profiles', 'bad.json'), '{"scopes":"User.Read"}');
     expect(() => readProfile('bad')).toThrow(CliError);
+    fs.writeFileSync(path.join(dir, 'profiles', 'bad.json'), '{"type":"service"}');
+    expect(() => readProfile('bad')).toThrow(expect.objectContaining({ code: 'invalid_profile' }));
   });
 
   const m = () => new AuthManager([]);

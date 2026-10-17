@@ -10,3 +10,7 @@ process.env.HOME = sandbox;
 process.env.USERPROFILE = sandbox;
 process.env.MS365_CLI_CONFIG_DIR = path.join(sandbox, '.config', 'ms365-cli');
 process.env.MS365_CLI_AUDIT = '0';
+// ID-14: no test may reach a real OS keychain. Keychain tests opt in per test (MS365_CLI_STORAGE=keychain) with
+// stub `security` / `secret-tool` / `powershell` scripts first on PATH (test/helpers/keychain-stubs.ts).
+process.env.MS365_CLI_STORAGE = 'file';
+delete process.env.MS365_CLI_KEYCHAIN_BACKEND;

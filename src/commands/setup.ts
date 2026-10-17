@@ -18,7 +18,7 @@ async function promptYN(p: Prompter, question: string, defaultYes = true): Promi
 
 const AZURE_PORTAL_APP_REG = 'https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade';
 
-const PERMISSION_GROUPS = {
+export const PERMISSION_GROUPS = {
   'Mail (read/write/send)': ['Mail.ReadWrite', 'Mail.Send'],
   'Mailbox settings: rules, out-of-office (read/write)': ['MailboxSettings.ReadWrite'],
   'Calendar (read/write)': ['Calendars.ReadWrite'],
@@ -39,6 +39,7 @@ const PERMISSION_GROUPS = {
   'Groups (read) [org]': ['Group.Read.All'],
   'Shared calendars (read) [org]': ['Calendars.Read.Shared'],
   'Rooms / places (read) [org]': ['Place.Read.All'],
+  'Aggregate activity reports (counts only) [org]': ['Reports.Read.All'],
   'Teams meetings, transcripts, recordings (read) [org]': ['OnlineMeetings.Read', 'OnlineMeetingTranscript.Read.All', 'OnlineMeetingRecording.Read.All'],
 };
 
