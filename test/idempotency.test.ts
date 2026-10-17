@@ -128,15 +128,20 @@ describe('stale and unknown claims (R-6, R-7, F17)', () => {
     expect(codeOf(() => checkKey('k1', 'mail send', 'fp'))).toMatchObject({ code: 'idempotency_outcome_unknown', exitCode: 1 });
   });
 
-  it('mail send: a 5xx on sendMail leaves the key unknown and the retry sends nothing', async () => {
+  it('mail send: a 5xx on /send leaves the key unknown with its correlation; the retry sends nothing', async () => {
     const fail = await runCommand(registerMailCommands, sendArgs('k1'), {
-      routes: [['POST', '/me/sendMail', () => new Response(JSON.stringify({ error: { code: 'X', message: 'boom' } }), { status: 503 })]],
+      routes: [
+        ['POST', /\/send$/, () => new Response(JSON.stringify({ error: { code: 'X', message: 'boom' } }), { status: 503 })],
+        ['POST', '/me/messages', () => ({ id: 'D1', internetMessageId: '<m1@contoso.com>' })],
+      ],
     });
     expect(fail.exitCode).not.toBe(0);
     const retry = await runCommand(registerMailCommands, sendArgs('k1'));
     expect(retry.exitCode).toBe(1);
     expect(retry.calls).toHaveLength(0);
     expect(retry.stderr).toContain('idempotency release k1');
+    expect(retry.stderr).toContain('mail reconcile --idempotency-key k1');
+    expect(readLedger()[0]).toMatchObject({ status: 'unknown', result: { correlation: { draftId: 'D1', internetMessageId: '<m1@contoso.com>', idempotencyKey: 'k1' } } });
   });
 
   it('8 processes racing for one key: exactly one claims it, the rest are in_progress', async () => {
@@ -191,7 +196,7 @@ describe('ms365 idempotency list / release', () => {
     expect(readLedger()).toEqual([]);
     const send = await runCommand(registerMailCommands, sendArgs('k1'));
     expect(send.exitCode).toBe(0);
-    expect(send.calls).toHaveLength(1);
+    expect(send.calls).toHaveLength(2);
   });
 
   it('release of an unknown key exits 5', async () => {
@@ -204,13 +209,13 @@ describe('mail sends with --idempotency-key', () => {
   it('mail send: second run replays without calling Graph', async () => {
     const first = await runCommand(registerMailCommands, sendArgs('k1'));
     expect(first.exitCode).toBe(0);
-    expect(first.calls).toHaveLength(1);
+    expect(first.calls.map(c => `${c.method} ${c.path}`)).toEqual(['POST /me/messages', 'POST /me/messages/undefined/send']);
 
     const second = await runCommand(registerMailCommands, sendArgs('k1'));
     expect(second.exitCode).toBe(0);
     expect(second.calls).toHaveLength(0);
     expect(second.stderr).toMatch(/already sent at .+; not sent again/i);
-    expect(JSON.parse(second.stdout)).toHaveProperty('sentAt');
+    expect(JSON.parse(second.stdout)).toMatchObject({ outcome: 'ACCEPTED', delivery: 'unknown', correlation: { idempotencyKey: 'k1' } });
   });
 
   it('mail send: same key, different body → conflict exit 2, nothing sent', async () => {
@@ -223,11 +228,11 @@ describe('mail sends with --idempotency-key', () => {
 
   it('mail send: a failed send does not record the key', async () => {
     const fail = await runCommand(registerMailCommands, sendArgs('k1'), {
-      routes: [['POST', '/me/sendMail', () => new Response(JSON.stringify({ error: { code: 'ErrorX', message: 'bad' } }), { status: 400 })]],
+      routes: [['POST', /\/send$/, () => new Response(JSON.stringify({ error: { code: 'ErrorX', message: 'bad' } }), { status: 400 })]],
     });
     expect(fail.exitCode).not.toBe(0);
     const retry = await runCommand(registerMailCommands, sendArgs('k1'));
-    expect(retry.calls).toHaveLength(1);
+    expect(retry.calls).toHaveLength(2);
   });
 
   it.each([

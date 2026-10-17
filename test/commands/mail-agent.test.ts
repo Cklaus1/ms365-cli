@@ -35,13 +35,15 @@ const uploadRoutes = (messageId: string): Route[] => [
 ];
 
 describe('--attach (PM-6): inline for small files', () => {
-  it('mail send embeds a repeatable --attach as fileAttachments in sendMail', async () => {
+  it('mail send embeds a repeatable --attach as fileAttachments in the draft it sends', async () => {
     fs.writeFileSync('a.pdf', 'pdf!');
     fs.writeFileSync('notes.txt', 'hi');
-    const r = await run(['send', '--to', 'x@contoso.com', '--subject', 's', '--body', 'b', '--attach', 'a.pdf', '--attach', 'notes.txt']);
+    const r = await run(['send', '--to', 'x@contoso.com', '--subject', 's', '--body', 'b', '--attach', 'a.pdf', '--attach', 'notes.txt'], {
+      routes: [['POST', '/me/messages', () => ({ id: 'D1' })]],
+    });
     expect(r.exitCode).toBe(0);
-    expect(seq(r)).toEqual(['POST /me/sendMail']);
-    const msg = (r.calls[0].body as any).message;
+    expect(seq(r)).toEqual(['POST /me/messages', 'POST /me/messages/D1/send']);
+    const msg = r.calls[0].body as any;
     expect(msg.attachments).toEqual([
       { '@odata.type': '#microsoft.graph.fileAttachment', name: 'a.pdf', contentType: 'application/pdf', contentBytes: Buffer.from('pdf!').toString('base64') },
       { '@odata.type': '#microsoft.graph.fileAttachment', name: 'notes.txt', contentType: 'text/plain', contentBytes: Buffer.from('hi').toString('base64') },

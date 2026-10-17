@@ -41,6 +41,9 @@ export const PLAN_COMMANDS: Record<string, true> = {
   'mail draft': true,
   'mail update-draft': true,
   'mail send-draft': true,
+  'mail send': true,
+  'mail reply': true,
+  'mail forward': true,
 };
 
 export const PLAN_TTL_DEFAULT_MIN = 15;

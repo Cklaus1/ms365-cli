@@ -178,7 +178,7 @@ describe('mcp tools/call', () => {
   it('honours an explicit output, repeats array options and omits false flags', async () => {
     const r = fakeRunner({ stdout: 'a table\n' });
     const [res] = await session([call(1, 'mail_send', { to: 'a@b.c', subject: 's', body: 'b', html: false, attach: ['x.txt', 'y.txt'] })], { runner: r.run });
-    expect(r.calls[0]).toEqual(['--error-format', 'json', 'mail', 'send', '--to=a@b.c', '--subject=s', '--body=b', '--attach=x.txt', '--attach=y.txt']);
+    expect(r.calls[0]).toEqual(['--error-format', 'json', 'mail', 'send', '--to=a@b.c', '--subject=s', '--body=b', '--attach=x.txt', '--attach=y.txt', '-o', 'json']);
     expect(res.result.structuredContent).toBeUndefined();
     const r2 = fakeRunner({ stdout: 'a table\n' });
     await session([call(1, 'mail_list', { output: 'table' })], { runner: r2.run });

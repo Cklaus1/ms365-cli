@@ -6,11 +6,11 @@ import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import {
   truncate, parseRecipients, formatSize, addListOptions, outputOption, confirm, info, success,
-  kqlQuote, safeOutputPath, resolveTimeZone, parseTime, toGraphDateTime, fromGet, addBodyOptions, bodyText,
+  kqlQuote, odataQuote, safeOutputPath, resolveTimeZone, parseTime, toGraphDateTime, fromGet, addBodyOptions, bodyText,
 } from '../utils.js';
 import { detectMimeType } from '../mime.js';
-import { idempotentSend, IDEMPOTENCY_HELP } from '../idempotency.js';
-import { attachmentDigests, ifMatchFor, planning, readVersion, setPlanPayload, setPlanTarget } from '../plan.js';
+import { idempotentSend, IDEMPOTENCY_HELP, listEntries, settleKey, type Entry } from '../idempotency.js';
+import { attachmentDigests, ifMatchFor, planning, readVersion, setPlanPayload, setPlanTarget, usage } from '../plan.js';
 import { resolve } from '../resolve.js';
 import { addContentOptions, contentOptions, messageTransform, transformData, type BodyMode } from '../content.js';
 
@@ -113,6 +113,9 @@ async function draftVersion(client: GraphClient, messageId: string): Promise<str
  * body, so the preview shows `<from GET>` where the quoted thread goes.
  */
 async function prependHtml(client: GraphClient, draftId: string, html: string): Promise<void> {
+  if (planning()) {
+    throw usage('--html on a reply or forward reads the new draft\'s quoted thread, which does not exist yet, so it cannot be planned. Plan it without --html.');
+  }
   const endpoint = `/me/messages/${encodeURIComponent(draftId)}`;
   const current = await client.request(endpoint, {
     queryParams: { '$select': 'body' }, headers: { Prefer: 'outlook.body-content-type="html"' },
@@ -126,30 +129,68 @@ async function prependHtml(client: GraphClient, draftId: string, html: string): 
 }
 
 /**
- * Create a draft via `endpoint`, put `html` on top of its body (if given), attach the files, then send it.
- * If anything fails before /send is dispatched, the unsent draft is deleted (best effort) so retries
- * don't pile up copies in Drafts (R-8). Nothing is deleted once /send was dispatched (its outcome may be unknown).
+ * Under --plan, a reply or forward binds the message it answers (id and version, for the reviewer) and its payload.
+ * Apply sends no If-Match here: the original is not modified, and its changeKey moves whenever it is read or flagged
+ * (E19).
+ */
+async function planTargetMessage(client: GraphClient, messageId: string, request: { attachments: Array<{ name: string; size: number; sha256: string }> }): Promise<void> {
+  if (!planning()) return;
+  const { version } = await readVersion(client, `/me/messages/${encodeURIComponent(messageId)}`, 'id');
+  setPlanTarget({ id: messageId, version: version ?? '' });
+  setPlanPayload({ ...request, attachments: request.attachments.map(({ name, size, sha256 }) => ({ name, size, sha256 })) });
+}
+
+/** The handles of a draft-path send (AH-6): the draft's immutable id and its internetMessageId (null under preview). */
+export interface SendCorrelation { draftId: string; internetMessageId: string | null }
+
+/** The internetMessageId a ledger entry's send recorded (its result's or its unknown outcome's correlation). */
+function sentMessageId(entry: Entry): string | undefined {
+  const correlation: unknown = entry.result?.correlation;
+  const id: unknown = correlation && typeof correlation === 'object' ? Reflect.get(correlation, 'internetMessageId') : undefined;
+  return typeof id === 'string' ? id : undefined;
+}
+
+/**
+ * Create a draft via `endpoint`, put `html` on top of its body (if given), attach the files, then send it, and return
+ * its correlation. If anything fails before /send is dispatched, the unsent draft is deleted (best effort) so retries
+ * don't pile up copies in Drafts (R-8). Nothing is deleted once /send was dispatched: a lost /send response is exit 1
+ * `outcome_unknown` with `maybeProcessed` and the correlation (AH-6(3)).
  */
 async function sendViaDraft(
   client: GraphClient, endpoint: string, body: unknown, files: FileToAttach[], html?: string,
-): Promise<void> {
+): Promise<SendCorrelation> {
   const draft = await createDraft(client, endpoint, body);
-  const draftPath = `/me/messages/${encodeURIComponent(draft.id as string)}`;
+  const draftId = String(draft.id);
+  const correlation: SendCorrelation = {
+    draftId, internetMessageId: typeof draft.internetMessageId === 'string' ? draft.internetMessageId : null,
+  };
+  const draftPath = `/me/messages/${encodeURIComponent(draftId)}`;
   try {
-    if (html !== undefined) await prependHtml(client, draft.id as string, html);
-    await addAttachments(client, draft.id as string, files);
+    if (html !== undefined) await prependHtml(client, draftId, html);
+    await addAttachments(client, draftId, files);
   } catch (err) {
     const deleted = await client.request(draftPath, { method: 'DELETE' }).then(() => true, () => false);
     if (err instanceof Error) {
       err.message += deleted
         ? ' The unsent draft was deleted.'
-        : ` The unsent draft ${draft.id as string} could not be deleted; remove it from Drafts.`;
+        : ` The unsent draft ${draftId} could not be deleted; remove it from Drafts.`;
     }
     // A deleted draft can no longer be sent, so the request cannot have taken effect.
     if (deleted && err instanceof CliError) err.maybeProcessed = undefined;
     throw err;
   }
-  await client.request(`${draftPath}/send`, { method: 'POST' });
+  try {
+    await client.request(`${draftPath}/send`, { method: 'POST' });
+  } catch (err) {
+    if (!(err instanceof CliError) || !err.maybeProcessed) throw err;
+    const ref = correlation.internetMessageId ? `--internet-message-id ${JSON.stringify(correlation.internetMessageId)}` : '--idempotency-key <key>';
+    throw new CliError(`The send of draft ${draftId} may or may not have been accepted (${err.message}).`, {
+      code: 'outcome_unknown', exitCode: ExitCode.GENERIC, maybeProcessed: true, correlation: { ...correlation },
+      status: err.status, requestId: err.requestId,
+      fix: `do not resend; run \`ms365 mail reconcile ${ref}\` to see whether it reached Sent Items`,
+    });
+  }
+  return correlation;
 }
 
 export function registerMailCommands(program: Command, getClient: () => GraphClient): void {
@@ -371,14 +412,15 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
 
   addBodyOptions(mail
     .command('send')
-    .description('Send an email')
+    .description('Send an email (via a draft, so the result carries its id and internetMessageId; accepted, not delivered)')
     .requiredOption('--to <addresses>', 'Comma-separated recipient email addresses')
     .option('--cc <addresses>', 'Comma-separated CC addresses')
     .option('--bcc <addresses>', 'Comma-separated BCC addresses')
     .requiredOption('--subject <subject>', 'Email subject'), 'Email body', true)
     .option('--html', 'Send body as HTML')
-    .option('--attach <path>', 'Attach a file (repeatable; over 3 MB total goes via a draft + upload session)', collect, [])
+    .option('--attach <path>', 'Attach a file (repeatable; over 3 MB goes via an upload session)', collect, [])
     .option('--idempotency-key <key>', IDEMPOTENCY_HELP)
+    .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const content = bodyText(opts) ?? '';
       const files = prepareAttachments(opts.attach);
@@ -402,20 +444,33 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
         message.bccRecipients = parseRecipients(opts.bcc);
       }
 
-      const request = { message, attachments: attachmentDigests(files) };
-      const sent = await idempotentSend(client, opts.idempotencyKey, 'mail send', request, async () => {
-        if (needsUploadSession(files)) {
-          await sendViaDraft(client, '/me/messages', message, files);
-        } else {
-          if (files.length > 0) message.attachments = files.map(inlineAttachment);
-          await client.request('/me/sendMail', {
-            method: 'POST',
-            body: JSON.stringify({ message, saveToSentItems: true }),
-          });
+      const attachments = attachmentDigests(files);
+      setPlanPayload({ ...message, attachments: attachments.map(({ name, size, sha256 }) => ({ name, size, sha256 })) });
+      const key: string | undefined = opts.idempotencyKey;
+      // AH-6(1): always the draft path, so the send has a handle (draft id, internetMessageId) before the 202.
+      const accepted = await idempotentSend(client, key, 'mail send', { message, attachments }, async () => {
+        const upload = needsUploadSession(files);
+        const draft = !upload && files.length > 0 ? { ...message, attachments: files.map(inlineAttachment) } : message;
+        let correlation: SendCorrelation;
+        try {
+          correlation = await sendViaDraft(client, '/me/messages', draft, upload ? files : []);
+        } catch (err) {
+          if (err instanceof CliError && err.correlation) err.correlation.idempotencyKey = key ?? null;
+          throw err;
         }
+        return {
+          outcome: 'ACCEPTED', acceptedAt: new Date().toISOString(),
+          correlation: { ...correlation, idempotencyKey: key ?? null }, delivery: 'unknown',
+        };
       });
-
-      if (sent) success('Email sent successfully.');
+      if (!accepted || planning() || client.isDryRun()) return;
+      if (opts.output === 'json') {
+        console.log(formatOutput(accepted, 'json'));
+        return;
+      }
+      const correlation: unknown = accepted.correlation;
+      const imid = correlation && typeof correlation === 'object' ? Reflect.get(correlation, 'internetMessageId') : null;
+      success(`Accepted by Exchange for delivery${typeof imid === 'string' ? ` (internetMessageId ${imid})` : ''}; delivery is not confirmed.`);
     }));
 
   mail
@@ -614,6 +669,51 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       if (sent && !planning()) success('Draft sent.');
     }));
 
+  // ── Reconcile a send whose outcome is unknown (AH-6(4)) ─────
+  mail
+    .command('reconcile')
+    .description('Find out what became of a send: SENT (in Sent Items), STILL_DRAFT or NOT_FOUND_YET (never "not sent")')
+    .addOption(new Option('--idempotency-key <key>', 'The send\'s --idempotency-key (its ledger entry holds the internetMessageId)').conflicts('internetMessageId'))
+    .option('--internet-message-id <id>', 'The internetMessageId from the send result or its outcome_unknown error')
+    .addOption(outputOption())
+    .action(handleErrors(async (opts) => {
+      const key: string | undefined = opts.idempotencyKey;
+      const entries = listEntries();
+      const byKey = key ? entries.find(e => e.key === key) : undefined;
+      if (key && !byKey) throw usage(`No idempotency ledger entry for key "${key}" (entries are kept 24 h). Pass --internet-message-id instead.`);
+      const id: string | undefined = opts.internetMessageId ?? (byKey && sentMessageId(byKey));
+      if (!id) {
+        throw usage(key
+          ? `The ledger entry for "${key}" (${byKey?.command}) has no internetMessageId to look for. Pass --internet-message-id.`
+          : 'Pass --idempotency-key or --internet-message-id.');
+      }
+      const client = getClient();
+      let found: { folder: string; item: Record<string, unknown> } | undefined;
+      for (const folder of ['sentitems', 'outbox', 'drafts']) {
+        const response = await client.request(`/me/mailFolders/${folder}/messages`, {
+          queryParams: { '$filter': `internetMessageId eq '${odataQuote(id)}'`, '$select': 'id,sentDateTime,webLink,internetMessageId', '$top': '1' },
+        });
+        if (client.isPreview(response)) continue;
+        const value: unknown = Reflect.get(Object(response.data), 'value');
+        const item: unknown = Array.isArray(value) ? value[0] : undefined;
+        if (item && typeof item === 'object') {
+          found = { folder, item: { ...item } };
+          break;
+        }
+      }
+      if (client.isDryRun()) return;
+      const evidence = found && {
+        id: found.item.id ?? null, folder: found.folder, sentDateTime: found.item.sentDateTime ?? null,
+        webLink: found.item.webLink ?? null, internetMessageId: found.item.internetMessageId ?? id,
+      };
+      // An Outbox copy is accepted but not yet sent, so it is still NOT_FOUND_YET (with its evidence) (E18).
+      const state = found?.folder === 'sentitems' ? 'SENT' : found?.folder === 'drafts' ? 'STILL_DRAFT' : 'NOT_FOUND_YET';
+      const checkedAt = new Date().toISOString();
+      const entry = byKey ?? entries.find(e => sentMessageId(e) === id);
+      if (state === 'SENT' && evidence && entry) settleKey(entry.key, { ...evidence, checkedAt });
+      console.log(formatOutput({ state, evidence: evidence ?? null, checkedAt }, opts.output as OutputFormat));
+    }));
+
   addListOptions(mail
     .command('attachments <messageId>')
     .description('List attachments for a message'))
@@ -733,6 +833,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       const create = `${base}/${opts.replyAll ? 'createReplyAll' : 'createReply'}`;
       const html = !!opts.html;
       const request = { messageId, replyAll: !!opts.replyAll, comment, html, attachments: attachmentDigests(files) };
+      await planTargetMessage(client, messageId, request);
       const sent = await idempotentSend(client, opts.idempotencyKey, 'mail reply', request, async () => {
         if (html) {
           // Graph treats `comment` as text and rejects it together with message.body, so patch the draft's body.
@@ -745,7 +846,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
           await client.request(`${base}/${opts.replyAll ? 'replyAll' : 'reply'}`, { method: 'POST', body: JSON.stringify(body) });
         }
       });
-      if (sent) success('Reply sent.');
+      if (sent && !planning()) success('Reply sent.');
     }));
 
   // ── Forward ──────────────────────────────────────────────────
@@ -765,6 +866,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       const html = !!opts.html;
       const body: Record<string, unknown> = { comment: opts.comment || '', toRecipients };
       const request = { messageId, ...body, html, attachments: attachmentDigests(files) };
+      await planTargetMessage(client, messageId, request);
       const sent = await idempotentSend(client, opts.idempotencyKey, 'mail forward', request, async () => {
         if (html) {
           await sendViaDraft(client, `${base}/createForward`, { toRecipients }, files, opts.comment || '');
@@ -775,7 +877,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
           await client.request(`${base}/forward`, { method: 'POST', body: JSON.stringify(body) });
         }
       });
-      if (sent) success('Message forwarded.');
+      if (sent && !planning()) success('Message forwarded.');
     }));
 
   // ── Mark read/unread ────────────────────────────────────────
