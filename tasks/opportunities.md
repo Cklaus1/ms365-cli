@@ -46,3 +46,11 @@ Things discovered mid-build that have no assigned task. Each entry gives a propo
 - **[P4] Snapshot sampler gives `--app x`,** so the `audit-trail access` snapshot exits 2 before the POST. Teach the sampler GUID-shaped values for `--app`. (AOT-5)
 - **[P4] `audit-trail import` stops at the first malformed row (exit 1).** Consider `--skip-bad-rows` with a count on stderr. (AOT-6)
 - **[P4] `audit-trail changes` shows role targets as `?`.** The role's display name is in `modifiedProperties` (Role.DisplayName), not in `targetResources[].displayName`. (AOT-7 live)
+
+## From the agent-host-integration run
+- **[P3] `search_cap` is not reported across `--cursor` pages:** `complete` counts only the current page, so a mail `$search` hitting the 250 cap over several cursor pages ends `complete: true`. Carry the running count in the encoded cursor. (review #7)
+- **[P3] A send applied from a plan cannot be reconciled:** `apply` records no `correlation` (internetMessageId) and rethrows raw Graph errors, so a lost `/send` in a plan has no `mail reconcile` path. Record the draft's internetMessageId and map a failure after the draft-create to `outcome_unknown`. (review #8)
+- **[P3] Smoke cadence vs request-shape changes:** smoke ran per tier and missed an AHT-8 regression for five tasks (lesson 13). Cheap fix: a guard test that each smoke `grep` pattern for a request URL still appears in the dry-run snapshot. (dev-loop)
+- **[P4] Cross-spec contract has no machine check:** Chief parses `describe --json`, `auth status -o json`, health records and error envelopes; a shared JSON-schema fixture (or a recorded `describe --json` golden that both repos test) would have caught the AHT-11 `scopes` change before the peer did (lesson 14). (contract)
+- **[P4] `requestCommand` is a second description of each plan command's request shapes:** a catalog field per plan command (method + path pattern) would let the recorder and `apply` share one table. (E27)
+- **[P4] `--follow` window-roll gap line repeats on a retried roll:** harmless for idempotent consumers, but a host counting gaps sees two. (review #2 fix)

@@ -214,7 +214,7 @@ export class GraphClient {
       try { claims = decodeAccessToken(token); } catch { /* opaque: ask Graph */ }
       if (claims) return { tenantId: s(claims.tid), accountId: s(claims.oid), upn: s(claims.upn) ?? s(claims.preferred_username) ?? s(claims.unique_name) };
       const me = (await this.request('/me', { queryParams: { $select: 'id,userPrincipalName' } })).data;
-      const field = (k: string) => (me && typeof me === 'object' && k in me ? s((me as Record<string, unknown>)[k]) : null);
+      const field = (k: string) => (me && typeof me === 'object' ? s(Reflect.get(me, k)) : null);
       return { tenantId: null, accountId: field('id'), upn: field('userPrincipalName') };
     })();
     return this.identityPromise;

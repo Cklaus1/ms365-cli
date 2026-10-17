@@ -35,11 +35,12 @@ export const START_TIMEOUT_MS = 30_000;
 const START_POLL_MS = 200;
 const WAIT_POLL_MS = 1000;
 
-/** Test seams: the detached child, the clock and the poll sleep. */
+/** Test seams: the detached child (returns a function that stops it), the clock and the poll sleep. */
 export const deviceLoginDeps = {
-  spawnHolder(argv: string[]): void {
+  spawnHolder(argv: string[]): (() => void) | undefined {
     const child = spawn(process.execPath, [...process.execArgv, process.argv[1], ...argv], { detached: true, stdio: 'ignore', env: childEnv() });
     child.unref();
+    return () => { child.kill(); };
   },
   sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
   now: () => Date.now(),
@@ -83,7 +84,7 @@ function alive(pid: number): boolean {
 export async function startDeviceLogin(app: string, globals: string[]): Promise<DeviceLoginStart> {
   const handle = crypto.randomBytes(16).toString('hex');
   writeRecord(handle, { state: 'starting', pid: 0, app });
-  deviceLoginDeps.spawnHolder([...globals, 'auth', 'login', '--hold', handle]);
+  const stopHolder = deviceLoginDeps.spawnHolder([...globals, 'auth', 'login', '--hold', handle]);
   const deadline = deviceLoginDeps.now() + START_TIMEOUT_MS;
   for (;;) {
     const r = readRecord(handle);
@@ -92,6 +93,8 @@ export async function startDeviceLogin(app: string, globals: string[]): Promise<
     }
     const failed = r.state !== 'starting' && r.state !== 'pending';
     if (failed || deviceLoginDeps.now() >= deadline) {
+      // Stop the holder first: left running, its next update would write the handle file again.
+      stopHolder?.();
       fs.rmSync(handleFile(handle), { force: true });
       const why = failed ? r.reason ?? r.state : `no code from Microsoft within ${START_TIMEOUT_MS / 1000} s`;
       throw new CliError(`The device-code sign-in could not start: ${why}.`, { code: 'login_failed', exitCode: ExitCode.AUTH });

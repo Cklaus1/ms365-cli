@@ -154,6 +154,30 @@ describe('apply refusals (AC19)', () => {
     expect([...r1.calls, ...r2.calls, ...r3.calls].filter(c => c.method !== 'GET')).toEqual([]);
   });
 
+  it('judges the ceiling and the delete/cancel confirmation by the requests, not the plan\'s own label', async () => {
+    const { plan, file } = await planDraft();
+    const relabel = (request: Plan['requests'][number]) => {
+      const { digest: _old, ...rest } = { ...plan!, requests: [request] };
+      const forged = { ...rest, digest: planDigest(rest) };
+      fs.writeFileSync(file, JSON.stringify(forged));
+      return forged.digest;
+    };
+    const base = plan!.requests[0];
+    saveProfile('drafts-only', { type: 'host', tenantId: TENANT, scopes: ['Mail.ReadWrite'] });
+    const sendDigest = relabel({ ...base, path: '/me/messages/D1/send', body: null });
+    const r1 = await run(['apply', file, '--expect-digest', sendDigest], { env: { MS365_CLI_PROFILE: 'drafts-only' } });
+    expect(r1.exitCode).toBe(4);
+    expect(lastError(r1.stderr).error.code).toBe('scope_ceiling');
+
+    const r2 = await run(['apply', file, '--expect-digest', relabel({ ...base, method: 'DELETE', path: '/me/events/E1', body: null })]);
+    expect(r2.exitCode).toBe(7);
+
+    const r3 = await run(['apply', file, '--expect-digest', relabel({ ...base, path: '/me/drive/root/children' })]);
+    expect(r3.exitCode).toBe(2);
+    expect(lastError(r3.stderr).error.code).toBe('plan_invalid');
+    expect([...r1.calls, ...r2.calls, ...r3.calls].filter(c => c.method !== 'GET')).toEqual([]);
+  });
+
   it('maps 412 to exit 4 version_changed without a retry', async () => {
     const file = path.join(dir, 'upd.json');
     await run(['mail', 'update-draft', 'D1', '--subject', 'v2'], { plan: { file, command: 'mail update-draft' }, routes: [DRAFT_ROUTE] });

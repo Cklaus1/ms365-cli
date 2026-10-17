@@ -94,11 +94,12 @@ describe('watch --checkpoint (AH-4(1), AC 12)', () => {
     expect(errorCode(r.stderr)).toBe('checkpoint_mismatch');
   });
 
-  it("Graph's mailFolders('…') deltaLink form still matches", async () => {
+  it("Graph's mailFolders('…') deltaLink form still matches, and still asks for immutable ids", async () => {
     const link = `${GRAPH}/me/mailFolders('AAMkFOLDER')/messages/delta?$deltatoken=x`;
     const r = await run(['mail', '--checkpoint', mailCheckpoint({ deltaLink: link })], [['GET', /messages\/delta/, () => ({ value: [], '@odata.deltaLink': link })]] as never);
     expect(r.exitCode, r.stderr).toBe(0);
     expect(r.calls.map(c => c.url)).toEqual([link]);
+    expect(r.calls[0].headers.Prefer).toMatch(/IdType="ImmutableId"/);
   });
 
   it.each([[['--name', 'x']], [['--reset']]])('--checkpoint with %j exits 2 before any request', async (extra) => {
@@ -203,5 +204,20 @@ describe('events window roll (AH-4(5), AC 30)', () => {
     const r = await run(['events', '--checkpoint', eventsCheckpoint(window)], routes);
     expect(r.calls.map(c => c.url)).toEqual([`${GRAPH}${EVENTS}?$deltatoken=OLD`]);
     expect(lines(r.stdout).at(-1).window).toEqual(window);
+  });
+
+  it('a failed roll under --follow rolls again on the next pass instead of re-baselining silently', async () => {
+    vi.spyOn(watchDeps, 'sleep').mockImplementation(async () => {});
+    const old = { start: '2026-09-24T17:00:00.000Z', end: '2026-10-24T17:00:00.000Z' };
+    let n = 0;
+    env.MS365_CLI_MAX_RETRIES = '0';
+    const r = await run(['events', '--checkpoint', eventsCheckpoint(old), '--follow', '--max-passes', '2'], [['GET', EVENTS, () => (++n === 1
+      ? jsonResponse({ error: { code: 'ServiceUnavailable', message: 'down' } }, 503)
+      : { value: [{ id: 'E9', changeKey: 'k' }], '@odata.deltaLink': `${GRAPH}${EVENTS}?$deltatoken=NEW` })]] as never);
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(r.calls).toHaveLength(2);
+    for (const c of r.calls) expect(query(c).get('startDateTime')).toBe(NOW);
+    const out = lines(r.stdout);
+    expect(out.filter(l => l.type === 'backfill').map(l => l.item?.id ?? l.id)).toEqual(['E9']);
   });
 });

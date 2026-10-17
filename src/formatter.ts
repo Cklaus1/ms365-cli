@@ -508,13 +508,13 @@ export async function printList(
     ? await client.request(decodeCursor(pageCursor, client.buildUrl(endpoint)), { headers: options.headers })
     : await client.request(endpoint, options);
   const pageData = await transformData(response.data);
-  const items = pageData && typeof pageData === 'object' ? (pageData as Record<string, unknown>).value : undefined;
+  const items: unknown = pageData && typeof pageData === 'object' ? Reflect.get(pageData, 'value') : undefined;
   if (preview || !Array.isArray(items)) {
     console.log(formatOutput(pageData, format));
     return;
   }
   const meta = completeness(response.nextLink, 'next_cursor', items.length);
-  console.log(formatOutput(inBand ? { ...(pageData as Record<string, unknown>), ...meta } : pageData, format));
+  console.log(formatOutput(inBand && pageData && typeof pageData === 'object' ? { ...pageData, ...meta } : pageData, format));
   if (format === 'ndjson') process.stdout.write(JSON.stringify({ _meta: meta }) + '\n');
   else if (!inBand && meta.nextCursor) process.stderr.write(`nextCursor: ${meta.nextCursor}\n`);
 }

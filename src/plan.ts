@@ -56,6 +56,27 @@ export const PLAN_CONFIRM: Record<string, true> = {
   'calendar cancel': true,
 };
 
+/**
+ * The plan command a recorded request belongs to, judged from its method and path rather than the plan's own
+ * `command` label (a hand-edited plan can carry any label with a matching digest). `null`: no plan command sends it.
+ * Apply checks the ceiling and the delete/cancel confirmation against these, so the label cannot widen either.
+ */
+export function requestCommand(r: Pick<PlanRequest, 'method' | 'path'>): string | null {
+  const path = r.path.split('?')[0];
+  if (!path.startsWith('/me/')) return null;
+  if (/\/(messages|mailFolders)(\/|\(|$)/.test(path)) {
+    if (r.method === 'POST' && /\/(send|reply|replyAll|forward)$/.test(path)) return 'mail send-draft';
+    return r.method === 'POST' || r.method === 'PATCH' ? 'mail update-draft' : null;
+  }
+  if (path === '/me/sendMail') return r.method === 'POST' ? 'mail send' : null;
+  if (/\/(events|calendars?)(\/|\(|$)/.test(path)) {
+    if (r.method === 'DELETE') return 'calendar delete';
+    if (r.method === 'POST' && /\/cancel$/.test(path)) return 'calendar cancel';
+    return r.method === 'POST' || r.method === 'PATCH' ? 'calendar update' : null;
+  }
+  return null;
+}
+
 export const PLAN_TTL_DEFAULT_MIN = 15;
 /** The idempotency ledger's TTL: an applied plan's digest is remembered that long. */
 export const PLAN_TTL_MAX_MIN = 24 * 60;
@@ -188,10 +209,13 @@ export function beginPlan(opts: { file: string; command: string; ttlMinutes: num
       expiresAt: new Date(now.getTime() + opts.ttlMinutes * 60_000).toISOString(),
     };
     const plan: Plan = { ...body, digest: planDigest(body) };
+    // A new 0600 file renamed into place: writing over an existing 0644 file (or a symlink) would expose the body.
+    const tmp = `${opts.file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
     try {
-      fs.writeFileSync(opts.file, canonicalJson(plan) + '\n', { mode: 0o600 });
-      fs.chmodSync(opts.file, 0o600);
+      fs.writeFileSync(tmp, canonicalJson(plan) + '\n', { mode: 0o600, flag: 'wx' });
+      fs.renameSync(tmp, opts.file);
     } catch (err) {
+      fs.rmSync(tmp, { force: true });
       throw usage(`Cannot write plan ${opts.file}: ${err instanceof Error ? err.message : String(err)}`);
     }
     console.log(JSON.stringify({ plan: opts.file, command: plan.command, digest: plan.digest, expiresAt: plan.expiresAt, requests: plan.requests.length }, null, 2));

@@ -6,19 +6,29 @@ import { CliError, ExitCode, handleErrors } from '../errors.js';
 import { formatOutput, type OutputFormat } from '../formatter.js';
 import type { GraphClient } from '../graph-client.js';
 import { withIdempotency } from '../idempotency.js';
-import { PLAN_COMMANDS, PLAN_CONFIRM, planDigest, readPlan, resolveRefs, sha256Hex, usage, type Plan } from '../plan.js';
+import { PLAN_COMMANDS, PLAN_CONFIRM, planDigest, readPlan, requestCommand, resolveRefs, sha256Hex, usage, type Plan } from '../plan.js';
 import { confirm, info, outputOption, success } from '../utils.js';
 
-/** Every check that needs no token: digest, command, ceiling (AH-5(7)), expiry, attachment bytes. Nothing is sent. */
-function checkPlan(plan: Plan, expectDigest: string, profileFlag: string | undefined): void {
+/**
+ * Every check that needs no token: digest, command, ceiling (AH-5(7)), expiry, attachment bytes. Nothing is sent.
+ * Returns the commands the plan's requests amount to (its label plus what each request is), for the confirmation.
+ */
+function checkPlan(plan: Plan, expectDigest: string, profileFlag: string | undefined): string[] {
   const digest = planDigest(plan);
   if (digest !== plan.digest || digest !== expectDigest) {
     throw new CliError(`The plan's digest is ${digest}, which does not match ${digest !== plan.digest ? 'its digest field' : '--expect-digest'}; nothing was sent.`,
       { code: 'plan_digest_mismatch', exitCode: ExitCode.USAGE, fix: 'apply the plan that was approved, unmodified' });
   }
   if (!PLAN_COMMANDS[plan.command]) throw usage(`"${plan.command}" cannot be applied from a plan.`, 'plan_invalid');
+  // The label is the plan's own claim; the ceiling and the confirmation also cover what each request really does.
+  const commands = new Set([plan.command]);
+  for (const r of plan.requests) {
+    const command = requestCommand(r);
+    if (!command) throw usage(`The plan's request ${r.method} ${r.path} is not one a plan command sends; nothing was sent.`, 'plan_invalid');
+    commands.add(command);
+  }
   const ceiling = activeCeiling(profileFlag);
-  if (ceiling) assertWithinCeiling(plan.command, usedScopes(plan.command), ceiling.ceiling, ceiling.profile);
+  if (ceiling) for (const c of commands) assertWithinCeiling(c, usedScopes(c), ceiling.ceiling, ceiling.profile);
   if (!(Date.parse(plan.expiresAt) > Date.now())) {
     throw new CliError(`The plan expired at ${plan.expiresAt}; nothing was sent.`, { code: 'plan_expired', exitCode: ExitCode.USAGE, fix: 'make a new plan' });
   }
@@ -30,6 +40,7 @@ function checkPlan(plan: Plan, expectDigest: string, profileFlag: string | undef
         { code: 'plan_attachment_changed', exitCode: ExitCode.USAGE, fix: 'make a new plan with the current file' });
     }
   }
+  return [...commands];
 }
 
 /** Send the plan's requests in order; `{{n.id}}` takes the id request n returned. */
@@ -65,12 +76,15 @@ export function registerApplyCommand(program: Command, getClient: () => GraphCli
     .action(handleErrors(async (file: string, opts) => {
       if (!/^[0-9a-f]{64}$/.test(opts.expectDigest)) throw usage('--expect-digest must be a sha256 in lowercase hex.');
       const plan = readPlan(file);
-      checkPlan(plan, opts.expectDigest, program.opts().profile);
+      const commands = checkPlan(plan, opts.expectDigest, program.opts().profile);
       // A delete or cancel still asks on a terminal and is refused without one: OQ-8 (approval in the host) is open.
-      if (PLAN_CONFIRM[plan.command]) {
+      const destructive = commands.filter(c => PLAN_CONFIRM[c]);
+      if (destructive.length) {
         const field = (key: string): unknown => Reflect.get(Object(plan.payload), key);
         const notifies = field('notifies');
-        await confirm(`Apply ${plan.command} ${String(field('eventId'))} (${String(field('scope'))}; notifies ${Array.isArray(notifies) ? notifies.length : '?'} attendee(s))?`);
+        await confirm(PLAN_CONFIRM[plan.command]
+          ? `Apply ${plan.command} ${String(field('eventId'))} (${String(field('scope'))}; notifies ${Array.isArray(notifies) ? notifies.length : '?'} attendee(s))?`
+          : `Apply ${plan.command}, whose requests include ${destructive.join(' and ')}?`);
       }
       const client = getClient();
       if (client.isDryRun()) {

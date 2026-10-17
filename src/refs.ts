@@ -51,7 +51,8 @@ function outlookPath(url: string): { owner: string; rest: string[] } | null {
   if (segments[0] === 'me') { owner = 'me'; rest = segments.slice(1); }
   else if ((segments[0] === 'users' || segments[0] === 'groups') && segments.length > 2) { owner = decodeURIComponent(segments[1]); rest = segments.slice(2); }
   else return null;
-  return OUTLOOK_SEGMENTS[rest[0]] === true ? { owner, rest } : null;
+  // Graph's deltaLinks use the key form `mailFolders('AAMk…')/messages/delta` (E10): match on the segment name.
+  return OUTLOOK_SEGMENTS[(rest[0] ?? '').replace(/\(.*\)$/, '')] === true ? { owner, rest } : null;
 }
 
 /** True for a mail or calendar request (absolute URL or path under the API base). */
@@ -121,11 +122,11 @@ export function sourceRef(item: Record<string, unknown>, resource: RefResource, 
 /** Add `_ref` to every item of a Graph response body (`{value: [...]}` or one object), in place. */
 export function attachRefs(data: unknown, resource: RefResource, identity: RefIdentity, mailbox: string | null, observedAt: string): void {
   if (!data || typeof data !== 'object') return;
-  const body = data as Record<string, unknown>;
-  const items = Array.isArray(body.value) ? body.value : [body];
+  const value: unknown = Reflect.get(data, 'value');
+  const items: unknown[] = Array.isArray(value) ? value : [data];
   for (const item of items) {
     if (item && typeof item === 'object' && !Array.isArray(item)) {
-      (item as Record<string, unknown>)._ref = sourceRef(item as Record<string, unknown>, resource, identity, mailbox, observedAt);
+      Reflect.set(item, '_ref', sourceRef({ ...item }, resource, identity, mailbox, observedAt));
     }
   }
 }
