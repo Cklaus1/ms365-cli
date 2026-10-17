@@ -75,6 +75,11 @@ const ORG_SCOPES = [
   'OnlineMeetingTranscript.Read.All',
   'OnlineMeetingRecording.Read.All',
   'Reports.Read.All',
+  // audit-trail (AO-15): per-workload audit search, directory audits, app grants (Directory.Read.All: AO-28, OQ-9)
+  'AuditLogsQuery-Exchange.Read.All',
+  'AuditLog.Read.All',
+  'Application.Read.All',
+  'Directory.Read.All',
 ];
 
 function ensureConfigDir(): void {

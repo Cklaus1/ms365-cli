@@ -50,6 +50,7 @@ const NO_CURSOR: Record<string, string> = {
   'groups get': SINGLE,
   'meetings get': SINGLE,
   'notes get': SINGLE,
+  'audit-trail mailbox': 'POST + poll; the GET mock does not exercise paging (records are read with every page, AO-25)',
 };
 const NO_CURSOR_PREFIX: Record<string, string> = {
   'workflow ': 'reports aggregate several reads; no collection to page',

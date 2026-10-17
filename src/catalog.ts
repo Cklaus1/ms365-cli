@@ -70,6 +70,7 @@ const GROUP_SCOPES: Record<string, { read: string[]; write: string[] }> = {
   describe: { read: [], write: [] },
   meetings: { read: ['OnlineMeetings.Read'], write: [] },
   reports: { read: ['Reports.Read.All'], write: [] },
+  'audit-trail': { read: ['AuditLog.Read.All'], write: [] },
   watch: { read: [], write: [] },
   audit: { read: [], write: [] },
   idempotency: { read: [], write: [] },
@@ -298,6 +299,10 @@ const COMMANDS: Record<string, Entry> = {
   'reports teams': 'read',
   'reports active-users': 'read',
   'reports by-department': ['read', ['Reports.Read.All', 'User.Read.All']],
+
+  // audit-trail (AO-25): `mailbox` creates a saved audit query (a POST; no data is changed), so it is not `read`.
+  'audit-trail mailbox': ['action', ['AuditLogsQuery-Exchange.Read.All']],
+  'audit-trail changes': 'read',
   'meetings transcript': ['read', ['OnlineMeetings.Read', 'OnlineMeetingTranscript.Read.All']],
   'meetings recordings': ['read', ['OnlineMeetings.Read', 'OnlineMeetingRecording.Read.All']],
   'meetings recording': ['read', ['OnlineMeetings.Read', 'OnlineMeetingRecording.Read.All']],

@@ -17,6 +17,7 @@ import { registerWorkflowCommands } from '../../src/commands/workflow.js';
 import { registerGroupsCommands } from '../../src/commands/groups.js';
 import { registerMeetingsCommands } from '../../src/commands/meetings.js';
 import { registerReportsCommands } from '../../src/commands/reports.js';
+import { registerAuditTrailCommands } from '../../src/commands/audit-trail.js';
 import { registerWatchCommands } from '../../src/commands/watch.js';
 import { registerNotesCommands } from '../../src/commands/notes.js';
 import type { GraphClient } from '../../src/graph-client.js';
@@ -28,6 +29,7 @@ export const MODULES: Register[] = [
   registerContactsCommands, registerTeamsCommands, registerSharePointCommands, registerPlannerCommands,
   registerOneNoteCommands, registerExcelCommands, registerSearchCommands, registerUserCommands,
   registerWorkflowCommands, registerGroupsCommands, registerMeetingsCommands, registerWatchCommands, registerNotesCommands, registerReportsCommands,
+  registerAuditTrailCommands,
 ];
 
 export function leafCommands(register: Register): Array<{ chain: string[]; cmd: Command }> {
@@ -57,6 +59,7 @@ export function sampleArg(name: string, chain: string[] = [], choices?: readonly
   if (/remote|drive|^path$|sitePath/i.test(name)) return '/Docs/a.txt';
   if (chain.join(' ') === 'user upload-photo') return samples.photo;
   if (/file|path/i.test(name)) return samples.file;
+  if (/^upn$/i.test(name)) return 'a@contoso.com';
   if (/ids$/i.test(name)) return 'ID1,ID2';
   if (/^timezone$/i.test(name)) return 'UTC';
   return name.toUpperCase();
@@ -66,10 +69,11 @@ export function sampleOption(o: Option): string[] {
   const flag = o.long!;
   if (!o.required && !o.optional) return [];
   if (o.argChoices?.length) return [flag, o.argChoices[0]];
-  if (/to\b|cc|bcc|attendees|emails|assigned|mailbox|address|forward|members|mention/i.test(flag)) return [flag, 'a@contoso.com'];
+  if (/to\b|cc|bcc|attendees|emails|assigned|mailbox|address|forward|members|mention|^--by$/i.test(flag)) return [flag, 'a@contoso.com'];
   if (/work-start/.test(flag)) return [flag, '9'];
   if (/work-end/.test(flag)) return [flag, '17'];
   if (/due/i.test(flag)) return [flag, '2026-10-20'];
+  if (/until/i.test(flag)) return [flag, '2026-10-21T10:00'];
   if (/start|end|date|propose|since/i.test(flag)) return [flag, '2026-10-20T10:00'];
   if (/percent/i.test(flag)) return [flag, '50'];
   if (/interval/i.test(flag)) return [flag, '15'];

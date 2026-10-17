@@ -40,3 +40,4 @@ Things discovered mid-build that have no assigned task. Each entry gives a propo
 - **[P4] `invalid_grant` message lacks the AADSTS detail** (MSAL's errorMessage only links to aka.ms); surface `subError`/`errorMessage` from the server response. Pre-existing. (IDT-5)
 - **[P3] Admin-profile az hint shows az's own tenant GUID** instead of the profile's tenant (seen with `--tenant contoso.onmicrosoft.com`). (IDT-6)
 - **[P4] `MS365_CLI_STORAGE` missing from the generated ms365-shared skill env list** (src/docs-gen.ts:275). (IDT-6)
+- **[P4] `audit-trail changes` filters activities after paging,** so a page can be empty yet carry `nextCursor`. Push the activity filter server-side once the `or` list in `$filter` is verified live (AOT-7). (AOT-3)

@@ -25,6 +25,7 @@ import { registerGenerateSkillsCommand } from '../src/commands/generate-skills.j
 import { registerSetupCommand } from '../src/commands/setup.js';
 import { registerMeetingsCommands } from '../src/commands/meetings.js';
 import { registerReportsCommands } from '../src/commands/reports.js';
+import { registerAuditTrailCommands } from '../src/commands/audit-trail.js';
 import { registerWatchCommands } from '../src/commands/watch.js';
 import { registerAuditCommands } from '../src/commands/audit.js';
 import { registerIdempotencyCommands } from '../src/commands/idempotency.js';
@@ -61,6 +62,7 @@ const MODULES: Module[] = [
   { file: 'setup.ts', register: (p, _g, a) => registerSetupCommand(p, a) },
   { file: 'meetings.ts', register: (p, g) => registerMeetingsCommands(p, g) },
   { file: 'reports.ts', register: (p, g) => registerReportsCommands(p, g) },
+  { file: 'audit-trail.ts', register: (p, g) => registerAuditTrailCommands(p, g) },
   { file: 'watch.ts', register: (p, g) => registerWatchCommands(p, g) },
   { file: 'audit.ts', register: (p) => registerAuditCommands(p) },
   { file: 'idempotency.ts', register: (p) => registerIdempotencyCommands(p) },

@@ -98,6 +98,17 @@ describe('Wave A wiring (T30, T37, T39 pre-flight)', () => {
     expect(w.status, w.stderr).toBe(4);
   }, 30_000);
 
+  it('audit-trail is not offline: the two-word OFFLINE_COMMANDS check leaves mailbox/changes pre-flighting (AO-34)', () => {
+    const token = jwt({ scp: 'User.Read', aud: 'https://graph.microsoft.com', exp: Math.floor(Date.now() / 1000) + 3600 });
+    for (const argv of [['audit-trail', 'mailbox', 'a@contoso.com'], ['audit-trail', 'changes']]) {
+      const r = cli(['--error-format', 'json', ...argv], { MS365_CLI_TOKEN: token });
+      expect(r.status, r.stderr).toBe(4);
+      const err = JSON.parse(r.stderr.trim().split('\n').pop()!).error;
+      expect(err.code).toBe('missing_scope');
+      expect(err.message).toContain(argv[1] === 'mailbox' ? 'AuditLogsQuery-Exchange.Read.All' : 'AuditLog.Read.All');
+    }
+  }, 30_000);
+
   it('describe --json and audit path run with no client ID', () => {
     const noClientId = { MS365_CLI_CLIENT_ID: '' };
     const d = cli(['describe', '--json'], noClientId);

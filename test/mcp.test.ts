@@ -16,6 +16,7 @@ import { registerSetupCommand } from '../src/commands/setup.js';
 import { registerWatchCommands } from '../src/commands/watch.js';
 import { registerDescribeCommand } from '../src/commands/describe.js';
 import { registerMcpCommands } from '../src/commands/mcp.js';
+import { registerAuditTrailCommands } from '../src/commands/audit-trail.js';
 import { buildTools, serve, spawnRunner, type Runner, type RunResult, type ServeOptions } from '../src/mcp-server.js';
 import { runCommand } from './helpers/cli.js';
 import type { GraphClient } from '../src/graph-client.js';
@@ -35,6 +36,7 @@ function program(): Command {
   registerUserCommands(p, noClient);
   registerSetupCommand(p, noAuth);
   registerWatchCommands(p, noClient);
+  registerAuditTrailCommands(p, noClient);
   registerDescribeCommand(p);
   registerMcpCommands(p);
   return p;
@@ -109,6 +111,16 @@ describe('mcp tools/list', () => {
     expect(names).toContain('auth_profile_list');
     expect(names).toContain('watch');
     for (const gone of ['mcp_serve', 'auth_login', 'auth_setup', 'auth_logout', 'auth_profile_delete']) expect(names).not.toContain(gone);
+  });
+
+  it('hides every audit-trail leaf: an admin oversight action, like auth grant-scopes (AO-14, AC 11)', async () => {
+    const names = (await toolList()).map(t => t.name);
+    expect(names.filter(n => n.startsWith('audit_trail'))).toEqual([]);
+    // All five leaf paths are excluded, including those added later (apps, access, import).
+    const p = program();
+    const at = p.commands.find(c => c.name() === 'audit-trail')!;
+    for (const leaf of ['apps', 'access', 'import']) if (!at.commands.some(c => c.name() === leaf)) at.command(leaf).action(() => {});
+    expect(buildTools(p).map(t => t.name).filter(n => n.startsWith('audit_trail'))).toEqual([]);
   });
 
   it('mail_send: required options, boolean flags, repeatable options and catalog annotations', async () => {

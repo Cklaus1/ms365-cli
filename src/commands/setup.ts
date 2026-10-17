@@ -40,6 +40,7 @@ export const PERMISSION_GROUPS = {
   'Shared calendars (read) [org]': ['Calendars.Read.Shared'],
   'Rooms / places (read) [org]': ['Place.Read.All'],
   'Aggregate activity reports (counts only) [org]': ['Reports.Read.All'],
+  'Audit trail — mailbox access, role/consent changes, app grants (admins) [org]': ['AuditLogsQuery-Exchange.Read.All', 'AuditLog.Read.All', 'Application.Read.All', 'Directory.Read.All'],
   'Teams meetings, transcripts, recordings (read) [org]': ['OnlineMeetings.Read', 'OnlineMeetingTranscript.Read.All', 'OnlineMeetingRecording.Read.All'],
 };
 

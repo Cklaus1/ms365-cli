@@ -40,6 +40,7 @@ import { registerGenerateSkillsCommand } from './commands/generate-skills.js';
 import { registerSetupCommand } from './commands/setup.js';
 import { registerMeetingsCommands } from './commands/meetings.js';
 import { registerReportsCommands } from './commands/reports.js';
+import { registerAuditTrailCommands } from './commands/audit-trail.js';
 import { registerWatchCommands } from './commands/watch.js';
 import { registerAuditCommands } from './commands/audit.js';
 import { registerIdempotencyCommands } from './commands/idempotency.js';
@@ -116,8 +117,8 @@ function globalFlags() {
   };
 }
 
-/** Commands that never call Graph and must work without a client ID or login. */
-const OFFLINE_COMMANDS = new Set(['auth', 'schema', 'generate-skills', 'describe', 'audit', 'idempotency', 'mcp', 'completion']);
+/** Commands that never call Graph and must work without a client ID or login: a top-level group, or one two-word leaf (AO-34). */
+const OFFLINE_COMMANDS = new Set(['auth', 'schema', 'generate-skills', 'describe', 'audit', 'idempotency', 'mcp', 'completion', 'audit-trail import']);
 
 // Lazy-initialized singletons
 let authManager: AuthManager | null = null;
@@ -167,6 +168,7 @@ registerGenerateSkillsCommand(program);
 registerSetupCommand(program, getAuth);
 registerMeetingsCommands(program, getClient);
 registerReportsCommands(program, getClient);
+registerAuditTrailCommands(program, getClient);
 registerWatchCommands(program, getClient);
 registerAuditCommands(program);
 registerIdempotencyCommands(program);
@@ -198,7 +200,7 @@ program.hook('preAction', async (_program, actionCommand) => {
   setCommandPath(commandPath);
 
   // Skip auth initialization for offline commands and dry-run
-  if (OFFLINE_COMMANDS.has(commandChain[1])) return;
+  if (OFFLINE_COMMANDS.has(commandChain[1]) || OFFLINE_COMMANDS.has(commandChain.slice(1, 3).join(' '))) return;
   if (globalFlags().dryRun) return;
 
   logger.info(`Running: ms365 ${commandChain.slice(1).join(' ')}`);

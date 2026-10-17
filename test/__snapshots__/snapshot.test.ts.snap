@@ -1,5 +1,49 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`dry-run endpoint snapshot (every command) > audit-trail changes [optional flags] 1`] = `
+{
+  "argv": "audit-trail changes --since 2026-10-20T10:00 --until 2026-10-21T10:00 --top 5 --page-limit 5 --page-delay 5 --output json",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/auditLogs/directoryAudits?$filter=activityDateTime%20ge%202026-10-20T17%3A00%3A00.000Z%20and%20activityDateTime%20le%202026-10-21T17%3A00%3A00.000Z%20and%20(category%20eq%20'RoleManagement'%20or%20category%20eq%20'ApplicationManagement')&$orderby=activityDateTime%20desc&$top=5",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > audit-trail changes 1`] = `
+{
+  "argv": "audit-trail changes",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/auditLogs/directoryAudits?$filter=activityDateTime%20ge%202026-10-07T17%3A00%3A00.000Z%20and%20(category%20eq%20'RoleManagement'%20or%20category%20eq%20'ApplicationManagement')&$orderby=activityDateTime%20desc",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > audit-trail mailbox [optional flags] 1`] = `
+{
+  "argv": "audit-trail mailbox a@contoso.com --since 2026-10-20T10:00 --until 2026-10-21T10:00 --operations x --by a@contoso.com --timeout 5 --page-limit 5 --page-delay 5 --output json",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/security/auditLog/queries",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > audit-trail mailbox 1`] = `
+{
+  "argv": "audit-trail mailbox a@contoso.com",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/security/auditLog/queries",
+  ],
+}
+`;
+
 exports[`dry-run endpoint snapshot (every command) > calendar accept [optional flags] 1`] = `
 {
   "argv": "calendar accept EVENTID --comment x",
