@@ -305,11 +305,11 @@ exactly. MS365_CLI_STORAGE, when set, overrides storage.json (use it for CI); sw
   profile
     .command('set <name>')
     .description('Create a profile, or update the given fields of an existing one')
-    .addOption(new Option('--type <type>', 'Identity type: user (ms365 sign-in) or admin (token borrowed from the Azure CLI, never stored)').choices(['user', 'admin']))
+    .addOption(new Option('--type <type>', 'Identity type: user (ms365 sign-in), admin (token borrowed from the Azure CLI, never stored) or host (token supplied by an agent host in MS365_CLI_TOKEN, never stored)').choices(['user', 'admin', 'host']))
     .option('--client-id <id>', 'Application (client) ID')
     .option('--tenant-id <id>', 'Tenant ID or domain')
     .option('--tenant <id>', 'Same as --tenant-id')
-    .option('--scopes <list>', 'Comma-separated scopes requested at login')
+    .option('--scopes <list>', 'Comma-separated scopes: requested at login, and the ceiling of every command run under a user or host profile')
     .option('--org-mode', 'Enable organization mode')
     .option('--no-org-mode', 'Disable organization mode')
     .option('--account <upn|homeAccountId>', 'Cached account to use')
