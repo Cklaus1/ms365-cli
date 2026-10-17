@@ -22,11 +22,13 @@ export interface CommandMeta {
 /**
  * Scopes chosen by what the command is asked to touch (Q-16 to Q-19). Each selected value is one any-of clause:
  * `option` reads the option's value (comma-separated when `split`); `arg` reads a positional argument by index.
- * `withOption` adds a second clause for the selected argument value when that option is given.
+ * `withOption` adds a second clause for the selected argument value when that option is given. `base` is one fixed
+ * clause, and `withOption` adds its `scopes` as a second one when the option is given (`--mailbox`, AH-10).
  */
 export type ScopeSelector =
   | { option: string; split?: ','; map: Record<string, string[]> }
-  | { arg: number; map: Record<string, string[]>; withOption?: { option: string; map: Record<string, string[]> } };
+  | { arg: number; map: Record<string, string[]>; withOption?: { option: string; map: Record<string, string[]> } }
+  | { base: string[]; withOption: { option: string; scopes: string[] } };
 
 /** One any-of clause of a command's requirement; `for` names the option or argument value that selected it. */
 export interface ScopeClause {
@@ -80,6 +82,8 @@ const GROUP_SCOPES: Record<string, { read: string[]; write: string[] }> = {
 
 const MAILBOX_READ = ['MailboxSettings.Read'];
 const MAILBOX_WRITE = ['MailboxSettings.ReadWrite'];
+/** A read of the caller's own mailbox, or with `--mailbox` of a delegate one, which also needs the `.Shared` scope (AH-10). */
+const delegateRead = (own: string): [Kind, ScopeSelector] => ['read', { base: [own], withOption: { option: '--mailbox', scopes: [`${own}.Shared`] } }];
 
 const COMMANDS: Record<string, Entry> = {
   // auth: local token-cache management; login/status/setup verify the login against /me.
@@ -100,8 +104,8 @@ const COMMANDS: Record<string, Entry> = {
   'auth profile set': 'update',
   'auth profile delete': 'delete',
 
-  'mail list': 'read',
-  'mail get': 'read',
+  'mail list': delegateRead('Mail.Read'),
+  'mail get': delegateRead('Mail.Read'),
   'mail read': 'read',
   'mail triage': 'read',
   'mail send': ['action', ['Mail.Send']],
@@ -128,8 +132,6 @@ const COMMANDS: Record<string, Entry> = {
   'mail unflag': 'update',
   'mail complete': 'update',
   'mail categorize': 'update',
-  'mail shared-list': ['read', ['Mail.Read.Shared']],
-  'mail shared-get': ['read', ['Mail.Read.Shared']],
   'mail shared-send': ['action', ['Mail.Send.Shared']],
   'mail rules': ['read', MAILBOX_READ],
   'mail rule': ['read', MAILBOX_READ],
@@ -140,13 +142,13 @@ const COMMANDS: Record<string, Entry> = {
 
   'calendar list': 'read',
   'calendar events': 'read',
-  'calendar get': 'read',
+  'calendar get': delegateRead('Calendars.Read'),
   'calendar create': 'action',
   'calendar update': 'update',
   'calendar delete': 'delete',
   'calendar cancel': 'delete',
-  'calendar instances': 'read',
-  'calendar view': 'read',
+  'calendar instances': delegateRead('Calendars.Read'),
+  'calendar view': delegateRead('Calendars.Read'),
   'calendar accept': 'action',
   'calendar decline': 'action',
   'calendar tentative': 'action',
@@ -319,7 +321,11 @@ const COMMANDS: Record<string, Entry> = {
   'meetings recording': ['read', ['OnlineMeetings.Read', 'OnlineMeetingRecording.Read.All']],
   'meetings all-transcripts': ['read', ['User.Read', 'OnlineMeetingTranscript.Read.All']],
 
-  watch: ['read', { arg: 0, map: { mail: ['Mail.Read'], events: ['Calendars.Read'], files: ['Files.Read'], contacts: ['Contacts.Read'] } }],
+  watch: ['read', {
+    arg: 0,
+    map: { mail: ['Mail.Read'], events: ['Calendars.Read'], files: ['Files.Read'], contacts: ['Contacts.Read'] },
+    withOption: { option: '--mailbox', map: { mail: ['Mail.Read.Shared'], events: ['Calendars.Read.Shared'] } },
+  }],
   // GET /me plus one read per resource; a resource outside the ceiling is reported UNSUPPORTED, not probed (E12).
   health: ['read', ['User.Read']],
   // AH-5: apply checks the ceiling for the plan's own command; it uses no scope itself. It may delete or cancel (and
@@ -379,6 +385,7 @@ export function commandMeta(path: string): CommandMeta | undefined {
 }
 
 function selectorUnion(sel: ScopeSelector): string[] {
+  if ('base' in sel) return [...new Set([...sel.base, ...sel.withOption.scopes])];
   const maps = [sel.map, ...('withOption' in sel && sel.withOption ? [sel.withOption.map] : [])];
   return [...new Set(maps.flatMap(m => Object.values(m).flat()))];
 }
@@ -398,7 +405,10 @@ export function requiredScopes(path: string, opts: Record<string, unknown> = {},
   const sel = meta.scopesBy;
   if (!sel) return [{ scopes: meta.scopes }];
   const clauses: ScopeClause[] = [];
-  if ('option' in sel) {
+  if ('base' in sel) {
+    clauses.push({ scopes: sel.base });
+    if (opts[optKey(sel.withOption.option)] !== undefined) clauses.push({ scopes: sel.withOption.scopes, for: `with ${sel.withOption.option}` });
+  } else if ('option' in sel) {
     const raw = opts[optKey(sel.option)];
     const values = typeof raw === 'string' ? (sel.split ? raw.split(sel.split).map(v => v.trim()) : [raw]) : [];
     for (const v of values) if (sel.map[v]) clauses.push({ scopes: sel.map[v], for: `${sel.option} ${v}` });

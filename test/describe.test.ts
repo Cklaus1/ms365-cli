@@ -127,7 +127,7 @@ describe('ms365 describe --json', () => {
     const output = cmd.options.find((o: { long: string }) => o.long === '--output');
     expect(output).toMatchObject({ short: '-o', takesValue: true, required: false });
     expect(output.choices).toContain('json');
-    expect(cmd).toMatchObject({ scopes: ['Mail.Read'], destructive: false, idempotent: true, offline: false });
+    expect(cmd).toMatchObject({ scopes: ['Mail.Read', 'Mail.Read.Shared'], destructive: false, idempotent: true, offline: false });
   });
 
   it('reports option defaults and mandatory options', async () => {
@@ -146,7 +146,9 @@ describe('ms365 describe --json', () => {
     expect(byPath.get('resolve')).toMatchObject({
       scopesBy: { argument: 'type', map: { 'mail-folder': ['Mail.Read'] }, withOption: { option: '--user', map: { 'mail-folder': ['Mail.Read.Shared'] } } },
     });
-    expect(byPath.get('mail list')).toMatchObject({ scopesBy: null });
+    expect(byPath.get('mail list')).toMatchObject({ scopesBy: { base: ['Mail.Read'], withOption: { option: '--mailbox', scopes: ['Mail.Read.Shared'] } } });
+    expect(byPath.get('mail read')).toMatchObject({ scopesBy: null });
+    expect(byPath.has('mail shared-list')).toBe(false);
     expect((await runCommand(registerAll, ['describe', 'watch'])).stdout).toMatch(/by <resource>/);
   });
 

@@ -51,7 +51,8 @@ export function assertWithinCeiling(command: string, clauses: ScopeClause[], cei
  */
 export function ceilingSurface(path: string, ceiling: Set<string>): { allowed: boolean; values?: string[] } {
   const sel = commandMeta(path)?.scopesBy;
-  if (!sel) return { allowed: !unmetClause(usedScopes(path), ceiling) };
+  // A delegate read (`base`) fits when the caller's own read does; `--mailbox` is then checked per run.
+  if (!sel || 'base' in sel) return { allowed: !unmetClause(sel ? [{ scopes: sel.base }] : usedScopes(path), ceiling) };
   const values = Object.keys(sel.map).filter(v => !unmetClause([{ scopes: sel.map[v] }], ceiling));
   return { allowed: values.length > 0, values };
 }
