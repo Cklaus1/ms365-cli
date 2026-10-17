@@ -157,7 +157,9 @@ async function sync(client: GraphClient, feed: Feed, cursor: Cursor | undefined,
     for (const item of items) {
       if (!cursor && (!includeExisting || isRemoved(item))) continue;
       const type = cursor ? classify(item, cursor.syncedAt) : 'created';
-      console.log(JSON.stringify({ type, resource: feed.resource, id: item.id, item }));
+      // AH-3: with --refs the item's _ref is the line's (one place for a host to read it).
+      const { _ref, ...rest } = item;
+      console.log(JSON.stringify({ type, resource: feed.resource, id: item.id, ...(_ref !== undefined && { _ref }), item: rest }));
     }
     if (response.deltaLink) return { resource: feed.resource, endpoint: feed.endpoint, deltaLink: response.deltaLink, syncedAt: startedAt };
     if (!response.nextLink) throw new CliError('Graph returned neither a nextLink nor a deltaLink.', { code: 'bad_response' });

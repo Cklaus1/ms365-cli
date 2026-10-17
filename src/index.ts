@@ -74,7 +74,8 @@ program
   .addOption(new Option('--error-format <format>', 'Error output on stderr (default: text)').choices(['text', 'json']))
   .option('--fields <list>', 'Only output these comma-separated fields (dot paths allowed, e.g. id,from.emailAddress.address)')
   .option('--actor <name>', 'Name recorded as the actor in the audit log (default: MS365_CLI_ACTOR or "cli")')
-  .option('--cursor <token>', 'Fetch the page after a previous call of the same command (its nextCursor); a cursor from another command exits 2')
+  .option('--cursor <token>', 'Fetch the next page of a previous call of the same command: its nextCursor (json/yaml: a field; ndjson: the _meta line; table/csv: stderr). A cursor from another command exits 2')
+  .option('--refs', 'Add _ref (tenant, account, mailbox, id, version, link, observedAt) to every message and event read (env MS365_CLI_REFS=1)')
   .option('--account <upn|homeAccountId>', 'Use this cached account for this call only (env MS365_CLI_ACCOUNT)')
   .option('--profile <name>', 'Apply a saved profile: client ID, tenant, scopes, org mode, account (env MS365_CLI_PROFILE)');
 
@@ -147,7 +148,7 @@ function getClient(): GraphClient {
     // A thunk: under --dry-run no AuthManager is built, so previews need no client ID (DR-16, F23).
     const clientId = adminProfileName() ? undefined : profile.clientId;
     graphClient = new GraphClient(getAuth, dryRun, apiVersion, readOnly,
-      { clientId: clientId || process.env.MS365_CLI_CLIENT_ID || undefined, orgMode });
+      { clientId: clientId || process.env.MS365_CLI_CLIENT_ID || undefined, refs: !!program.opts().refs || process.env.MS365_CLI_REFS === '1', orgMode });
   }
   return graphClient;
 }

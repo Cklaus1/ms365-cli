@@ -36,6 +36,10 @@ export interface RunOptions {
   env?: Record<string, string>;
   /** The client ID the CLI resolved (GraphClient.clientId()); default none. */
   clientId?: string;
+  /** `--refs` (AH-3) on the client. */
+  refs?: boolean;
+  /** The access token the stub auth returns; default the opaque 'test-token'. */
+  token?: string;
 }
 
 type Register = (program: Command, getClient: () => GraphClient) => void;
@@ -109,8 +113,8 @@ export async function runCommand(register: Register, argv: string[], opts: RunOp
 
   setExitHandler((c) => { exitCode = c; });
   setDryRun(!!opts.dryRun);
-  const auth = { getToken: async () => 'test-token' };
-  const client = new GraphClient(() => auth as never, !!opts.dryRun, opts.apiVersion ?? 'v1.0', !!opts.readOnly, { clientId: opts.clientId });
+  const auth = { getToken: async () => opts.token ?? 'test-token' };
+  const client = new GraphClient(() => auth as never, !!opts.dryRun, opts.apiVersion ?? 'v1.0', !!opts.readOnly, { clientId: opts.clientId, refs: opts.refs });
   const program = new Command().name('ms365').exitOverride();
   program.configureOutput({ writeOut: (s) => { stdout += s; }, writeErr: (s) => { stderr += s; } });
   register(program, () => client);

@@ -1,4 +1,4 @@
-import type { GraphClient, GraphRequestOptions } from './graph-client.js';
+import type { GraphClient, GraphRequestOptions, PagingState } from './graph-client.js';
 import { CliError, ExitCode } from './errors.js';
 import { defaultColumns } from './columns.js';
 import { info } from './utils.js';
@@ -88,20 +88,33 @@ function project(data: unknown): unknown {
 }
 
 /**
+ * AH-3: whether a list holds everything Graph has. Always in band: JSON/YAML envelope keys, an NDJSON trailer line
+ * `{"_meta": …}`. `next_cursor`: one page of several (pass `nextCursor` to `--cursor`); `page_limit`: `--all` stopped
+ * at `--page-limit`; `search_cap`: mail `$search` returned its 250-item maximum.
+ */
+export interface Completeness {
+  complete: boolean;
+  incompleteReason?: 'page_limit' | 'search_cap' | 'next_cursor';
+  nextCursor?: string;
+}
+
+/**
  * Stream formatted output page-by-page from an async generator.
  * JSON streams as a valid array; CSV streams rows after a single header;
- * other formats fall back to buffering all items.
+ * other formats fall back to buffering all items. `meta`, read after the last page, closes the JSON
+ * wrapper (`],"complete":…}`) and is the NDJSON trailer line.
  */
 export async function streamPages(
   pages: AsyncGenerator<unknown[], void, undefined>,
   format: OutputFormat,
   write: (chunk: string) => void = (s) => process.stdout.write(s),
-  options: { jsonWrapper?: boolean } = {},
+  options: { jsonWrapper?: boolean; meta?: () => Completeness } = {},
 ): Promise<void> {
   if (format === 'ndjson') {
     for await (const page of pages) {
       for (const item of page) write(JSON.stringify(projectItem(item)) + '\n');
     }
+    if (options.meta) write(JSON.stringify({ _meta: options.meta() }) + '\n');
     return;
   }
 
@@ -117,7 +130,12 @@ export async function streamPages(
         first = false;
       }
     }
-    write(options.jsonWrapper ? '\n  ]\n}\n' : '\n]\n');
+    if (!options.jsonWrapper) {
+      write('\n]\n');
+      return;
+    }
+    const meta = options.meta ? Object.entries(options.meta()).map(([k, v]) => `,\n  ${JSON.stringify(k)}: ${JSON.stringify(v)}`).join('') : '';
+    write(`\n  ]${meta}\n}\n`);
     return;
   }
 
@@ -431,15 +449,17 @@ export interface ListOptions {
 }
 
 /**
- * Print a Graph collection: one page (with a nextCursor hint on stderr when more exist),
- * the page named by --cursor, or every page with --all — streamed for json/ndjson/csv.
+ * Print a Graph collection: one page, the page named by --cursor, or every page with --all — streamed for
+ * json/ndjson/csv. Completeness is in band (AH-3): JSON/YAML get `complete` (+ `incompleteReason`, `nextCursor`),
+ * NDJSON ends with a `{"_meta": …}` line; table and csv print `nextCursor: <token>` on stderr.
+ * `searchCap`: the most items Graph returns for this query in total (mail `$search`: 250).
  */
 export async function printList(
   client: GraphClient,
   endpoint: string,
   options: GraphRequestOptions,
   opts: ListOptions,
-  hooks: { transform?: (items: unknown[]) => Promise<unknown[]> } = {},
+  hooks: { transform?: (items: unknown[]) => Promise<unknown[]>; searchCap?: number } = {},
 ): Promise<void> {
   const transform = hooks.transform ?? (async (items: unknown[]) => items);
   const transformData = async (data: unknown): Promise<unknown> => {
@@ -451,16 +471,35 @@ export async function printList(
   const format = (opts.output ?? 'json') as OutputFormat;
   const pageLimit = opts.pageLimit ? parseInt(opts.pageLimit, 10) : undefined;
   const pageDelay = opts.pageDelay ? parseInt(opts.pageDelay, 10) : undefined;
+  const completeness = (nextLink: string | undefined, reason: 'page_limit' | 'next_cursor', count: number): Completeness => {
+    if (nextLink) return { complete: false, incompleteReason: reason, nextCursor: encodeCursor(nextLink) };
+    if (hooks.searchCap && count >= hooks.searchCap) return { complete: false, incompleteReason: 'search_cap' };
+    return { complete: true };
+  };
+  const inBand = format === 'json' || format === 'yaml';
+  const preview = client.isDryRun();
 
   if (opts.all && !pageCursor) {
     if (format === 'json' || format === 'ndjson' || format === 'csv') {
+      const paging: PagingState = {};
+      let count = 0;
       async function* pages() {
-        for await (const page of client.requestPagesStreaming(endpoint, options, pageLimit, pageDelay)) yield await transform(page);
+        for await (const page of client.requestPagesStreaming(endpoint, options, pageLimit, pageDelay, paging)) {
+          count += page.length;
+          yield await transform(page);
+        }
       }
-      await streamPages(pages(), format, (chunk) => process.stdout.write(chunk), { jsonWrapper: true });
+      const meta = () => completeness(paging.nextLink, 'page_limit', count);
+      await streamPages(pages(), format, (chunk) => process.stdout.write(chunk), { jsonWrapper: true, ...(!preview && { meta }) });
+      if (format === 'csv' && paging.nextLink) process.stderr.write(`nextCursor: ${meta().nextCursor}\n`);
     } else {
       const response = await client.requestAllPages(endpoint, options, pageLimit, pageDelay);
-      console.log(formatOutput(await transformData(response.data), format));
+      const all = response.data;
+      const count = all && typeof all === 'object' && 'value' in all && Array.isArray(all.value) ? all.value.length : 0;
+      const meta = completeness(response.nextLink, 'page_limit', count);
+      const data = await transformData(all);
+      console.log(formatOutput(inBand && !preview && data && typeof data === 'object' ? { ...data, ...meta } : data, format));
+      if (!inBand && meta.nextCursor) process.stderr.write(`nextCursor: ${meta.nextCursor}\n`);
     }
     return;
   }
@@ -469,14 +508,13 @@ export async function printList(
     ? await client.request(decodeCursor(pageCursor, client.buildUrl(endpoint)), { headers: options.headers })
     : await client.request(endpoint, options);
   const pageData = await transformData(response.data);
-  const nextCursor = response.nextLink ? encodeCursor(response.nextLink) : undefined;
-  // JSON/YAML carry the cursor in-band; line/tabular formats print it on stderr.
-  const inBand = format === 'json' || format === 'yaml';
-  const data = inBand && nextCursor && pageData && typeof pageData === 'object'
-    ? { ...(pageData as Record<string, unknown>), nextCursor }
-    : pageData;
-  console.log(formatOutput(data, format));
-  if (nextCursor && !inBand) {
-    process.stderr.write(`nextCursor: ${nextCursor}\n`);
+  const items = pageData && typeof pageData === 'object' ? (pageData as Record<string, unknown>).value : undefined;
+  if (preview || !Array.isArray(items)) {
+    console.log(formatOutput(pageData, format));
+    return;
   }
+  const meta = completeness(response.nextLink, 'next_cursor', items.length);
+  console.log(formatOutput(inBand ? { ...(pageData as Record<string, unknown>), ...meta } : pageData, format));
+  if (format === 'ndjson') process.stdout.write(JSON.stringify({ _meta: meta }) + '\n');
+  else if (!inBand && meta.nextCursor) process.stderr.write(`nextCursor: ${meta.nextCursor}\n`);
 }

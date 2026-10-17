@@ -5,6 +5,8 @@ import { registerCalendarCommands } from '../../src/commands/calendar.js';
 const TZ = 'America/Los_Angeles';
 const env = { MS365_CLI_TIMEZONE: TZ };
 const PREFER = `outlook.timezone="${TZ}"`;
+/** What calendar reads send: the zone plus immutable ids (AH-3). */
+const PREFER_IDS = `${PREFER}, IdType="ImmutableId"`;
 
 const query = (call: RecordedCall) => new URLSearchParams(call.path.split('?')[1] ?? '');
 const writes = (calls: RecordedCall[]) => calls.filter(c => c.method !== 'GET');
@@ -99,16 +101,16 @@ describe('cal view (M-26, Prefer)', () => {
       });
     expect(r.exitCode).toBe(0);
     expect(r.calls).toHaveLength(2);
-    expect(r.calls[0].headers.Prefer).toBe(PREFER);
+    expect(r.calls[0].headers.Prefer).toBe(PREFER_IDS);
     expect(query(r.calls[0]).get('startDateTime')).toBe('2026-10-20T07:00:00.000Z');
     expect(query(r.calls[0]).get('endDateTime')).toBe('2026-10-21T07:00:00.000Z');
   });
 
   it('sends Prefer on events and get', async () => {
     const r1 = await runCommand(registerCalendarCommands, ['cal', 'events'], { env });
-    expect(r1.calls[0].headers.Prefer).toBe(PREFER);
+    expect(r1.calls[0].headers.Prefer).toBe(PREFER_IDS);
     const r2 = await runCommand(registerCalendarCommands, ['cal', 'get', 'E1', '--timezone', 'Europe/London'], { env });
-    expect(r2.calls[0].headers.Prefer).toBe('outlook.timezone="Europe/London"');
+    expect(r2.calls[0].headers.Prefer).toBe('outlook.timezone="Europe/London", IdType="ImmutableId"');
   });
 });
 

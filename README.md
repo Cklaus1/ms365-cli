@@ -260,7 +260,7 @@ The reference below is generated from the live command tree (`ms365 describe --j
 | `--account <upn\|homeAccountId>` | Use this cached account for this call only (env MS365_CLI_ACCOUNT) |
 | `--actor <name>` | Name recorded as the actor in the audit log (default: MS365_CLI_ACTOR or "cli") |
 | `--api-version <version>` | Graph API version |
-| `--cursor <token>` | Fetch the page after a previous call of the same command (its nextCursor); a cursor from another command exits 2 |
+| `--cursor <token>` | Fetch the next page of a previous call of the same command: its nextCursor (json/yaml: a field; ndjson: the _meta line; table/csv: stderr). A cursor from another command exits 2 |
 | `--dry-run` | Preview the API request without executing it |
 | `--error-format <format>` | Error output on stderr (default: text) |
 | `--fields <list>` | Only output these comma-separated fields (dot paths allowed, e.g. id,from.emailAddress.address) |
@@ -268,6 +268,7 @@ The reference below is generated from the live command tree (`ms365 describe --j
 | `--profile <name>` | Apply a saved profile: client ID, tenant, scopes, org mode, account (env MS365_CLI_PROFILE) |
 | `-q, --quiet` | Suppress non-data output (confirmations, progress) |
 | `--read-only` | Restrict to read-only operations |
+| `--refs` | Add _ref (tenant, account, mailbox, id, version, link, observedAt) to every message and event read (env MS365_CLI_REFS=1) |
 | `-V, --version` | output the version number |
 
 ### audit

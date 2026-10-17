@@ -1,8 +1,9 @@
-import { AuthManager } from './auth.js';
+import { AuthManager, decodeAccessToken } from './auth.js';
 import logger from './logger.js';
 import { CliError, ExitCode } from './errors.js';
 import { recordAudit } from './audit.js';
 import { dryRunTrace as trace, info, notePreview } from './utils.js';
+import { attachRefs, refMailbox, refResource, selectForRefs, withImmutableIds, type RefIdentity } from './refs.js';
 
 const MAX_RETRIES = 3;
 const MAX_PAGES = 100;
@@ -40,6 +41,11 @@ export interface GraphResponse {
   headers?: Headers;
   /** Set when responseType is 'stream'. */
   stream?: ReadableStream<Uint8Array> | null;
+}
+
+/** Filled in by requestPagesStreaming: the next page's link when the page limit stopped it. */
+export interface PagingState {
+  nextLink?: string;
 }
 
 export interface BatchRequest {
@@ -130,6 +136,8 @@ function isPreSendError(err: unknown): boolean {
 export interface GraphClientOptions {
   /** The client ID the CLI resolved (profile, then MS365_CLI_CLIENT_ID); known without building an AuthManager. */
   clientId?: string;
+  /** AH-3 `--refs`: add `_ref` to every message and event a read returns. */
+  refs?: boolean;
   /** Whether the run is already in --org-mode, so a 403 doesn't suggest it. */
   orgMode?: boolean;
 }
@@ -143,6 +151,8 @@ export class GraphClient {
   private readOnly: boolean;
   private apiVersion: string;
   private baseUrl: string;
+  private refs: boolean;
+  private identityPromise?: Promise<RefIdentity>;
 
   constructor(auth: AuthManager | (() => AuthManager), dryRun = false, apiVersion = 'v1.0', readOnly = false, options: GraphClientOptions = {}) {
     this.authSource = auth;
@@ -152,6 +162,7 @@ export class GraphClient {
     this.readOnly = readOnly;
     this.apiVersion = apiVersion;
     this.baseUrl = `https://graph.microsoft.com/${this.apiVersion}`;
+    this.refs = !!options.refs;
   }
 
   private get auth(): AuthManager {
@@ -162,6 +173,24 @@ export class GraphClient {
   /** The configured client ID, or undefined when none is set (callers previewing print `<client-id>`). */
   clientId(): string | undefined {
     return this.resolvedClientId;
+  }
+
+  /**
+   * Who the token belongs to (E6), read once: tenant, object ID and UPN from the decoded token; an opaque token
+   * costs one `GET /me?$select=id,userPrincipalName` and has no tenant.
+   */
+  identity(): Promise<RefIdentity> {
+    this.identityPromise ??= (async () => {
+      const s = (v: unknown) => (typeof v === 'string' && v ? v : null);
+      const token = await this.auth.getToken();
+      let claims: Record<string, unknown> | null = null;
+      try { claims = decodeAccessToken(token); } catch { /* opaque: ask Graph */ }
+      if (claims) return { tenantId: s(claims.tid), accountId: s(claims.oid), upn: s(claims.upn) ?? s(claims.preferred_username) ?? s(claims.unique_name) };
+      const me = (await this.request('/me', { queryParams: { $select: 'id,userPrincipalName' } })).data;
+      const field = (k: string) => (me && typeof me === 'object' && k in me ? s((me as Record<string, unknown>)[k]) : null);
+      return { tenantId: null, accountId: field('id'), upn: field('userPrincipalName') };
+    })();
+    return this.identityPromise;
   }
 
   /** True when requests are previewed, not sent (--dry-run). */
@@ -228,9 +257,16 @@ export class GraphClient {
     if (/^https:\/\//.test(endpoint) && new URL(endpoint).hostname !== 'graph.microsoft.com') {
       throw new CliError(`Refusing to send credentials to non-Graph URL: ${new URL(endpoint).hostname}`, { code: 'untrusted_url' });
     }
-    const url = this.buildUrl(endpoint, options.queryParams);
     const method = (options.method || 'GET').toUpperCase();
+    // AH-3: with --refs, a narrowed $select still returns what _ref needs.
+    const refKind = this.refs && method === 'GET' ? refResource(endpoint) : null;
+    const queryParams = refKind && options.queryParams?.$select
+      ? { ...options.queryParams, $select: selectForRefs(options.queryParams.$select)! }
+      : options.queryParams;
+    const url = this.buildUrl(endpoint, queryParams);
     const responseType = options.responseType ?? 'auto';
+    // AH-3 (OQ-6): mail and calendar ids that survive a folder move.
+    const requestHeaders = withImmutableIds(url, options.headers);
 
     logger.debug(`${method} ${url}`, options.body ? { bodyLength: options.body.length } : undefined);
 
@@ -242,8 +278,8 @@ export class GraphClient {
     if (this.dryRun) {
       const body = options.body ? previewBody(options.body) : undefined;
       traceRequest(method, url, body);
-      if (options.headers && Object.keys(options.headers).length > 0) {
-        trace(`Headers: ${JSON.stringify(redactForPreview(options.headers))}`);
+      if (requestHeaders && Object.keys(requestHeaders).length > 0) {
+        trace(`Headers: ${JSON.stringify(redactForPreview(requestHeaders))}`);
       }
       return { data: { dryRun: true, method, url, ...(body !== undefined && { body }) }, status: 0 };
     }
@@ -253,7 +289,7 @@ export class GraphClient {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
-      ...options.headers,
+      ...requestHeaders,
     };
 
     const idempotent = IDEMPOTENT_METHODS.has(method);
@@ -351,7 +387,12 @@ export class GraphClient {
         throw error;
       }
 
-      return decodeResponse(response, responseType);
+      const decoded = await decodeResponse(response, responseType);
+      if (refKind) {
+        const identity = await this.identity();
+        attachRefs(decoded.data, refKind, identity, refMailbox(url, identity), new Date().toISOString());
+      }
+      return decoded;
     }
 
     throw lastError || new Error('Request failed after retries');
@@ -663,11 +704,12 @@ export class GraphClient {
           requests: chunk.map((idx) => {
             const r = requests[idx];
             const item: Record<string, unknown> = { id: String(idx), method: r.method.toUpperCase(), url: r.url };
+            const headers = withImmutableIds(r.url, r.headers);
             if (r.body !== undefined) {
               item.body = r.body;
-              item.headers = { 'Content-Type': 'application/json', ...r.headers };
-            } else if (r.headers) {
-              item.headers = r.headers;
+              item.headers = { 'Content-Type': 'application/json', ...headers };
+            } else if (headers) {
+              item.headers = headers;
             }
             return item;
           }),
@@ -710,12 +752,14 @@ export class GraphClient {
    * Async generator that yields items page-by-page for streaming output.
    * Use this for large result sets to avoid buffering everything in memory.
    * Next pages reuse the original headers (e.g. ConsistencyLevel) and retry rules.
+   * When the page limit stops it before the last page, `paging.nextLink` is the page it did not fetch (AH-3).
    */
   async *requestPagesStreaming(
     endpoint: string,
     options: GraphRequestOptions = {},
     pageLimit?: number,
     pageDelayMs?: number,
+    paging?: PagingState,
   ): AsyncGenerator<unknown[], void, undefined> {
     const maxPages = pageLimit || MAX_PAGES;
     const delayMs = pageDelayMs || 0;
@@ -750,11 +794,13 @@ export class GraphClient {
 
     if (pageCount >= maxPages && nextLink) {
       console.error(`Warning: Reached page limit (${maxPages}). Results may be incomplete.`);
+      if (paging) paging.nextLink = nextLink;
     }
 
     logger.info(`Paginated across ${pageCount} pages (streamed)`);
   }
 
+  /** Every page in one `{value}`; `nextLink` is set when the page limit stopped it early. */
   async requestAllPages(
     endpoint: string,
     options: GraphRequestOptions = {},
@@ -762,10 +808,11 @@ export class GraphClient {
     pageDelayMs?: number,
   ): Promise<GraphResponse> {
     const allItems: unknown[] = [];
-    for await (const page of this.requestPagesStreaming(endpoint, options, pageLimit, pageDelayMs)) {
+    const paging: PagingState = {};
+    for await (const page of this.requestPagesStreaming(endpoint, options, pageLimit, pageDelayMs, paging)) {
       allItems.push(...page);
     }
-    return { data: { value: allItems }, status: 200 };
+    return { data: { value: allItems }, status: 200, nextLink: paging.nextLink };
   }
 }
 

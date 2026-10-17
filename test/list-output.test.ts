@@ -79,7 +79,7 @@ describe('--cursor (§6 pagination)', () => {
       routes: [['GET', /tasks/, () => (++n === 1 ? { value: [{ id: 'a' }], '@odata.nextLink': nextLink } : { value: [{ id: 'b' }] })]],
     });
     expect(r.exitCode).toBe(0);
-    expect(r.stdout.trim().split('\n').map(l => JSON.parse(l).id)).toEqual(['a', 'b']);
+    expect(r.stdout.trim().split('\n').map(l => JSON.parse(l))).toEqual([{ id: 'a' }, { id: 'b' }, { _meta: { complete: true } }]);
   });
 });
 

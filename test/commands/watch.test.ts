@@ -162,7 +162,7 @@ describe('watch: resources', () => {
     const q = query(r.calls[0]);
     expect(q.get('startDateTime')).toBe('2026-10-15T07:00:00.000Z');
     expect(q.get('endDateTime')).toBe('2026-10-21T17:00:00.000Z');
-    expect(r.calls[0].headers.Prefer).toBe(`outlook.timezone="${TZ}"`);
+    expect(r.calls[0].headers.Prefer).toBe(`outlook.timezone="${TZ}", IdType="ImmutableId"`);
   });
 
   it('events: defaults to now..+30d', async () => {
@@ -180,7 +180,7 @@ describe('watch: resources', () => {
       routes: [['GET', '/me/calendarView/delta', () => ({ value: [], '@odata.deltaLink': `${GRAPH}/me/calendarView/delta?$deltatoken=E2` })]],
     });
     expect(r.exitCode).toBe(0);
-    expect(r.calls[0].headers.Prefer).toBe(`outlook.timezone="${TZ}"`);
+    expect(r.calls[0].headers.Prefer).toBe(`outlook.timezone="${TZ}", IdType="ImmutableId"`);
   });
 
   it('files: baseline asks for token=latest; the deleted facet means deleted', async () => {
