@@ -71,11 +71,21 @@ function keyOptions(c: CatalogCommand): string {
     .join(' ');
 }
 
+/** The scopes a command needs; a delegate read (`base` selector) names its `--mailbox` clause apart (AH-10). */
+function scopeNote(c: CatalogCommand): string {
+  const base = c.scopesBy?.base;
+  const extra = c.scopesBy?.withOption;
+  if (Array.isArray(base) && extra && typeof extra === 'object' && 'option' in extra && 'scopes' in extra && Array.isArray(extra.scopes)) {
+    return `${base.join(', ')} (${String(extra.option)}: + ${extra.scopes.join(', ')})`;
+  }
+  return c.scopes?.join(', ') ?? '';
+}
+
 function notes(c: CatalogCommand): string {
   return [
     c.destructive && '**destructive**',
     c.idempotent === false && 'not idempotent',
-    c.offline ? 'offline' : c.scopes?.length ? c.scopes.join(', ') : '',
+    c.offline ? 'offline' : scopeNote(c),
   ].filter(Boolean).join(' · ');
 }
 

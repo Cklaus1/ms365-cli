@@ -14,7 +14,7 @@
 - [x] AHT-9 calendar plans: series/type checks, `instances`, `cancel`, `notifies`/`scope` (TTY part; non-TTY apply is needs-human, OQ-8)
 - [x] AHT-10 MCP buffer gap / resume / argv via 0600 file; `MS365_CLI_TOKEN_COMMAND`; `auth login --start/--wait`
 - [x] AHT-11 `--mailbox` delegate reads; fold `mail shared-list`/`shared-get`
-- [ ] AHT-13 docs: agent-host guide, mapping tables, skills, snapshot
+- [x] AHT-13 docs: agent-host guide, mapping tables, skills, snapshot
 
 ## needs-human (excluded)
 - [ ] AHT-6b live read evidence (Chief MSC-H3)

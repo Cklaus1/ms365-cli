@@ -31,6 +31,7 @@ ms365 --org-mode teams list -o table
 - [Output Formats](#output-formats)
 - [Commands](#commands)
 - [Admin oversight](#admin-oversight)
+- [Agent hosts](#agent-hosts)
 - [OData Query Parameters](#odata-query-parameters)
 - [Pagination](#pagination)
 - [Dry Run](#dry-run)
@@ -199,9 +200,11 @@ ms365 auth remove <accountId>  # Remove an account
 ### Bring your own token
 
 ```bash
-# In .env
-MS365_CLI_TOKEN=eyJ0eXAiOiJKV1Qi...
+# The real environment only; a .env file cannot set it
+MS365_CLI_TOKEN="$(my-broker get-token)" ms365 mail list
 ```
+
+See [Agent hosts](#agent-hosts) for the checks ms365 makes on a supplied token, a token helper and `type: host` profiles.
 
 ---
 
@@ -330,15 +333,15 @@ The reference below is generated from the live command tree (`ms365 describe --j
 | `calendar events` | List calendar events |  | `--filter <filter>` `--select <fields>` `--orderby <field>` `--calendar <calendarId>` `--timezone <tz>` `--top <n>` | Calendars.Read |
 | `calendar find-time` | Suggest meeting times when the attendees are free (findMeetingTimes) |  | `--attendees <emails>` (required) `--duration <d>` (required) `--start <datetime>` `--end <datetime>` `--timezone <tz>` | Calendars.Read.Shared |
 | `calendar free-busy` | Get free/busy schedule for one or more users |  | `--emails <addresses>` (required) `--start <datetime>` (required) `--end <datetime>` (required) `--timezone <tz>` `--interval <min>` | Calendars.Read |
-| `calendar get` | Get a specific event | `<eventId>` | `--calendar <calendarId>` `--select <fields>` `--timezone <tz>` `--mailbox <upn>` | Calendars.Read, Calendars.Read.Shared |
-| `calendar instances` | List the occurrences of a recurring series in a time range (paged) | `<seriesId>` | `--start <datetime>` (required) `--end <datetime>` (required) `--calendar <calendarId>` `--timezone <tz>` `--mailbox <upn>` | Calendars.Read, Calendars.Read.Shared |
+| `calendar get` | Get a specific event | `<eventId>` | `--calendar <calendarId>` `--select <fields>` `--timezone <tz>` `--mailbox <upn>` | Calendars.Read (--mailbox: + Calendars.Read.Shared) |
+| `calendar instances` | List the occurrences of a recurring series in a time range (paged) | `<seriesId>` | `--start <datetime>` (required) `--end <datetime>` (required) `--calendar <calendarId>` `--timezone <tz>` `--mailbox <upn>` | Calendars.Read (--mailbox: + Calendars.Read.Shared) |
 | `calendar list` | List calendars |  |  | Calendars.Read |
 | `calendar room-lists` | List room lists / buildings (requires --org-mode) |  |  | Place.Read.All |
 | `calendar rooms` | List meeting rooms (requires --org-mode) |  |  | Place.Read.All |
 | `calendar tentative` | Tentatively accept a meeting invite | `<eventId>` | `--comment <text>` `--no-notify` | not idempotent · Calendars.ReadWrite |
 | `calendar update` | Update a calendar event (a series master needs --series; the organizer's change notifies every attendee) | `<eventId>` | `--subject <subject>` `--start <datetime>` `--end <datetime>` `--timezone <tz>` `--body <body>` `--body-file <path>` `--location <location>` `--calendar <calendarId>` `--series` `--if-match <etag>` | Calendars.ReadWrite |
 | `calendar update-calendar` | Update a calendar | `<calendarId>` | `--name <name>` `--color <color>` | Calendars.ReadWrite |
-| `calendar view` | Get calendar view (time range) |  | `--start <datetime>` (required) `--end <datetime>` (required) `--select <fields>` `--timezone <tz>` `--mailbox <upn>` | Calendars.Read, Calendars.Read.Shared |
+| `calendar view` | Get calendar view (time range) |  | `--start <datetime>` (required) `--end <datetime>` (required) `--select <fields>` `--timezone <tz>` `--mailbox <upn>` | Calendars.Read (--mailbox: + Calendars.Read.Shared) |
 
 ### chat
 
@@ -465,8 +468,8 @@ The reference below is generated from the live command tree (`ms365 describe --j
 | `mail folder` | Find a folder by display name or path (e.g. "Drafts", "Sent Items", "Inbox/Projects") | `<name>` |  | Mail.Read |
 | `mail folders` | List mail folders |  | `--parent <name>` | Mail.Read |
 | `mail forward` | Forward a message | `<messageId>` | `--to <addresses>` (required) `--comment <text>` `--html` `--attach <path>` `--idempotency-key <key>` | not idempotent · Mail.Send |
-| `mail get` | Get a specific message (marked untrusted; see --body, --unique, --wrap-untrusted) | `<messageId>` | `--select <fields>` `--unique` `--body <mode>` `--max-chars <n>` `--wrap-untrusted` `--mailbox <upn>` | Mail.Read, Mail.Read.Shared |
-| `mail list` | List inbox messages |  | `--filter <filter>` `--select <fields>` `--search <query>` `--folder <name>` `--body <mode>` `--max-chars <n>` `--wrap-untrusted` `--top <n>` `--mailbox <upn>` | Mail.Read, Mail.Read.Shared |
+| `mail get` | Get a specific message (marked untrusted; see --body, --unique, --wrap-untrusted) | `<messageId>` | `--select <fields>` `--unique` `--body <mode>` `--max-chars <n>` `--wrap-untrusted` `--mailbox <upn>` | Mail.Read (--mailbox: + Mail.Read.Shared) |
+| `mail list` | List inbox messages |  | `--filter <filter>` `--select <fields>` `--search <query>` `--folder <name>` `--body <mode>` `--max-chars <n>` `--wrap-untrusted` `--top <n>` `--mailbox <upn>` | Mail.Read (--mailbox: + Mail.Read.Shared) |
 | `mail mark-read` | Mark a message as read | `<messageId>` |  | Mail.ReadWrite |
 | `mail mark-unread` | Mark a message as unread | `<messageId>` |  | Mail.ReadWrite |
 | `mail move` | Move a message to a folder | `<messageId>` | `--folder <name>` (required) | not idempotent · Mail.ReadWrite |
@@ -703,6 +706,67 @@ ms365 audit-trail import export.csv --cross-mailbox   # offline: a Purview audit
 
 ---
 
+## Agent hosts
+
+An agent host (Chief, an MCP client, a script acting for someone) can use ms365 as its Microsoft 365 transport. The
+full contract is in the generated shared skill (`ms365 generate-skills`, section *Host-supplied tokens and scope
+ceilings*); this is the map.
+
+**1. Token.** Pick one mode per run.
+
+| Mode | How | ms365 then |
+|---|---|---|
+| Supplied token | `MS365_CLI_TOKEN` in the real environment | never signs in or caches; exits 3 `token_expired` (also within 5 min of expiry), `token_audience` (not a Graph token), `token_identity_mismatch` (other tenant/account than the profile pins), `token_rejected` (Graph 401) |
+| Token helper | `MS365_CLI_TOKEN_COMMAND=/abs/path/helper` | runs the helper (no shell, no args, 30 s) at start, before expiry and once after a 401; a failing helper exits 3 `token_helper_failed` |
+| `type: host` profile | `ms365 auth profile set <name> --type host --tenant <tenant-guid> --scopes <list>` | requires one of the two above (exit 3 `token_missing` otherwise) |
+| Device-code relay | `ms365 auth login --start -o json`, show `userCode`/`verificationUri`/`app`, then `ms365 auth login --wait <handle> -o json` | ms365's own sign-in, relayed by the host; `--wait` exits 3 `login_expired`/`login_denied`/`login_failed` |
+
+Spawned children (browsers, `az`, the helper) never see `MS365_CLI_TOKEN*`. `ms365 auth status -o json` reports
+`source`, `tenantId`, `accountId`, `upn`, `expiresAt`, `scopes` and `ceiling` from the token without a Graph call.
+
+**2. Scope ceiling.** The `scopes` of a `host` or `user` profile are a ceiling: a command needing anything else exits
+4 `scope_ceiling` before any request, even under `--dry-run`. `ms365 describe --json` and `mcp serve` show only what
+the ceiling allows; `describe --json` also says per command `plan`, `providerIdempotency`, `scopes` and `scopesBy`, so
+a host detects features instead of parsing `--version`. Pin a build by the digest `bash scripts/smoke.sh` prints
+(`conformance: dist sha256=…`, over every file in `dist/`).
+
+**3. Reads.** `--refs` adds `_ref {provider, tenantId, accountId, mailbox, resource, id, version, lastModified,
+webLink, observedAt}` to each message and event (ids are immutable). Every list says whether it is whole:
+`complete`, `incompleteReason`, `nextCursor` (`-o ndjson`: a final `{"_meta":…}` line). A cursor used on another
+command exits 2 `cursor_mismatch`. `--mailbox <upn>` reads a mailbox you are a delegate of (`mail list/get`,
+`calendar view/get/instances`, `watch mail|events`) and also needs `Mail.Read.Shared` / `Calendars.Read.Shared`.
+
+**4. Change feeds.** `ms365 watch mail|events --checkpoint <blob|@file|@->` keeps no state of its own: each pass ends
+with a `checkpoint` line; persist it with the records and pass it next time (`new` starts a baseline). `gap` lines
+(`sync_state_expired`, `window_rolled`, under MCP `no_checkpoint`/`buffer_overflow`) and `backfill` lines say when
+coverage broke and what was re-read. A blob for another resource, folder, window or mailbox exits 2
+`checkpoint_mismatch`.
+
+**5. Health.** `ms365 health [mail] [events] -o json` probes `/me` and one read per resource (no retries, 10 s each)
+and prints `{resource, status, reason, checkedAt, lastSuccessAt, coverageStart, coverageEnd, checkpoint}`. The
+shared skill has the table mapping every exit code to `AUTH_REQUIRED`, `UNSUPPORTED`, `RATE_LIMITED`, `PARTIAL` or
+`STALE`. Errors are one JSON line, always the **last non-empty stderr line**, with `--error-format json`;
+`MS365_CLI_MAX_RETRIES` (0–2) and `MS365_CLI_REQUEST_TIMEOUT_MS` (1000–30000) bound each request.
+
+**6. Writes: plan, approve, apply.**
+
+```bash
+ms365 --plan /tmp/p.json mail send --to <recipient> --subject "Q3" --body-file body.txt   # reads only; prints {plan, digest, requests}
+ms365 apply /tmp/p.json --expect-digest <digest>                                          # sends exactly the planned requests, at most once
+```
+
+Plans pin the target's version (If-Match → exit 4 `version_changed`), attachments by sha256, the identity and an
+expiry. `mail send` reports `ACCEPTED` (Exchange took it), never "delivered"; a send whose response was lost exits 1
+`outcome_unknown`, and `ms365 mail reconcile --idempotency-key <key>` then says `SENT`, `STILL_DRAFT` or
+`NOT_FOUND_YET` (do not resend). Calendar plans name their `scope`
+(`single`, `occurrence`, `series`) and who gets a notice (`notifies`); a series needs `--series`, which a host plan
+refuses. Applying a calendar delete or cancel asks on a terminal and exits 7 without one.
+
+**7. MCP.** `ms365 mcp serve` exposes the same commands as tools (arguments passed in a 0600 file, never argv) and
+`ms365://watch/<resource>` resources that resume their cursor after a restart.
+
+---
+
 ## OData Query Parameters
 
 Most list commands support:
@@ -774,10 +838,11 @@ ms365 --dry-run mail send --to "a@b.com" --subject "Test" --body "Hello"
 
 ## Error Handling
 
-- **401** — suggests `ms365 auth login`
+- **401** — suggests `ms365 auth login` (with a supplied token: exit 3 `token_rejected`)
 - **403** — suggests `--org-mode` when scope-related
-- **429** — automatic retry with exponential backoff (up to 3 retries)
-- **5xx** — automatic retry with backoff
+- **429** — automatic retry after `Retry-After` (up to 2 retries; `MS365_CLI_MAX_RETRIES`)
+- **5xx** — automatic retry with backoff, except for writes that are not idempotent
+- `--error-format json` prints one `{"error":{…}}` line, always the last non-empty stderr line
 - All commands wrapped with user-friendly error messages (no stack traces)
 
 ---
@@ -788,7 +853,13 @@ ms365 --dry-run mail send --to "a@b.com" --subject "Test" --body "Hello"
 |---------------------------|------------------------------------------------------|----------|
 | `MS365_CLI_CLIENT_ID`    | Azure AD app client ID                               | Yes      |
 | `MS365_CLI_TENANT_ID`    | Azure AD tenant ID                                   | No (defaults to `common`) |
-| `MS365_CLI_TOKEN`        | Pre-obtained OAuth2 access token                     | No       |
+| `MS365_CLI_TOKEN`        | Access token supplied by a host (real environment only; see [Agent hosts](#agent-hosts)) | No |
+| `MS365_CLI_TOKEN_COMMAND` | Absolute path of a token helper that prints an access token | No |
+| `MS365_CLI_REFS`         | `1` adds `_ref` to Outlook items (same as `--refs`)  | No       |
+| `MS365_CLI_ERROR_FORMAT` | `json` for one machine-readable error line           | No       |
+| `MS365_CLI_MAX_RETRIES`  | Retries after a failed request, 0–2 (default 2)      | No       |
+| `MS365_CLI_REQUEST_TIMEOUT_MS` | Timeout per attempt, 1000–30000 ms (default 30000) | No |
+| `MS365_CLI_TIMEZONE`     | Time zone for times you pass and print               | No       |
 | `MS365_CLI_ORG_MODE`     | Enable organization mode (`true`)                    | No       |
 | `MS365_CLI_API_VERSION`  | Graph API version (`v1.0` or `beta`)                 | No       |
 | `MS365_CLI_LOG_LEVEL`    | Log level: `debug`, `info`, `warn`, `error`, `none`  | No       |
