@@ -630,7 +630,7 @@ The reference below is generated from the live command tree (`ms365 describe --j
 
 | Command | Description | Arguments | Key options | Notes |
 |---|---|---|---|---|
-| `watch` | Print changes since the last run as NDJSON (delta queries; cursor saved per --name) | `<resource>` | `--folder <folder>` `--start <time>` `--end <time>` `--timezone <tz>` `--name <name>` `--reset` `--include-existing` `--strict` `--follow` `--interval <seconds>` `--max-failures <n>` `--max-passes <n>` | Mail.Read, Calendars.Read, Files.Read, Contacts.Read |
+| `watch` | Print changes since the last run as NDJSON (delta queries; cursor saved per --name, or held by the caller with --checkpoint) | `<resource>` | `--folder <folder>` `--start <time>` `--end <time>` `--timezone <tz>` `--name <name>` `--reset` `--checkpoint <blob\|@file\|@->` `--select <fields>` `--include-existing` `--strict` `--follow` `--interval <seconds>` `--max-failures <n>` `--max-passes <n>` | Mail.Read, Calendars.Read, Files.Read, Contacts.Read |
 
 ### workflow
 
