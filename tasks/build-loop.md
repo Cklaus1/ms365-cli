@@ -173,3 +173,13 @@ Merge 32bf6f6 (`git merge --no-ff origin/main`, ebfbd0b). Conflicts kept both si
 Gate after merge: 70 files / 1986 passed; tsc 0; smoke 36/0/0; docs:check ok; contract:check ok (25 files unchanged).
 
 **Final dist sha256 (pin for Chief runners):** `ea8671a5e5b34e30b7256ff9f53f4cfd2991b33ad99520100c5947349ce46e60` — built from 1376a00; `manifest.json` names `commit: 1376a00`, `dirty: false`; only the manifest's `ms365` block changed.
+
+## E30: mail baseline bound and page size (2026-10-17)
+
+Chief's first real read timed out on the `watch mail --checkpoint` baseline (owner's inbox, 721 s, two Graph 504 retries, default page size). Owner choice: 90 days, bigger pages, 30-min sync. 866bbff adds `watch mail --received-since <time>` (mail only; `$filter=receivedDateTime ge` on the initial delta request, carried in the named cursor and the checkpoint blob; resume with another bound = `checkpoint_mismatch`, a named cursor with another bound = usage error) and asks Graph for 200-item delta pages (`Prefer: odata.maxpagesize=200`). 8194500 regenerates the contract fixture (`describe.json` only). Chief consumes it as feature `watch_received_since` and owns the 30-min baseline call.
+
+Measured on megapc against the owner's inbox (`--checkpoint new`, no state written): default pages, whole folder 721 s; 200-item pages, whole folder 121 s; 200-item pages + `-90d` 8 s (3 289 items, one checkpoint).
+
+Gate: 1993 passed; tsc 0; smoke 36/0/0; docs:check ok; contract:check ok.
+
+**Final dist sha256 (pin for Chief runners):** `19be41bbf5be411c5cfefc559f9e5a18d6379253587896f65c9c81b4030a2db1` — built from 866bbff (8194500 changes only the fixture); `manifest.json` names `commit: 866bbff`, `dirty: false`. Installed at `/opt/ms365/8194500` on gpumaster and megapc (`dist` tree identical to this digest on both).
