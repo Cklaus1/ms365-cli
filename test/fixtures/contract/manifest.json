@@ -1,9 +1,9 @@
 {
   "v": 1,
   "ms365": {
-    "commit": "1e86c6eb5c9439fcfca231a4394aaec8a22ef3c6",
+    "commit": "1376a00a8c42b575cc1d9bcd3b66b7115e8d05be",
     "dirty": false,
-    "distSha256": "d0d5e7148e161b73144a76db993d9d96b78ee863821158d655d1ce679793fd97"
+    "distSha256": "ea8671a5e5b34e30b7256ff9f53f4cfd2991b33ad99520100c5947349ce46e60"
   },
   "clock": "2026-10-17T12:00:00.000Z",
   "profile": {
