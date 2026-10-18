@@ -165,3 +165,11 @@ Steps 0–2 done upstream (owner decisions recorded in the spec, 8a438f4). Branc
 **Owner-only (not done):** live-tenant evidence of a host-approved delete/cancel is AHT-14 (Gate 3, dedicated test mailbox; owner runs consent and sign-in). Node 22 contract reproduction is CI-only here (no Node 22 installed).
 
 **Final dist sha256 (pin for Chief runners):** `d0d5e7148e161b73144a76db993d9d96b78ee863821158d655d1ce679793fd97` — built from 1e86c6e; the manifest-only commit after it does not change `dist/`, so the branch head builds the same digest. `test/fixtures/contract/manifest.json` names `commit: 1e86c6e`, `dirty: false`.
+
+## Merge of origin/main (PR #4) into PR #3 (2026-10-17)
+
+Merge 32bf6f6 (`git merge --no-ff origin/main`, ebfbd0b). Conflicts kept both sides: `GraphClientOptions` has `refs` (AH-3) and `orgMode` (#4); the external-token 401 → `token_rejected` path (AH-2) stays ahead of `graphError`, which gains `{orgMode}` and keeps `retryAfterMs` (AH-8); `getClient` passes both; opportunities keeps both lists. No AH guarantee changed (the #4 hint only edits a 403 message; codes, exit codes, ceiling, host profile and non-TTY apply are untouched; contract fixture bytes identical). 1376a00 freezes the clock in the owner's PR #4 clamp test (time-boundary race on main CI).
+
+Gate after merge: 70 files / 1986 passed; tsc 0; smoke 36/0/0; docs:check ok; contract:check ok (25 files unchanged).
+
+**Final dist sha256 (pin for Chief runners):** `ea8671a5e5b34e30b7256ff9f53f4cfd2991b33ad99520100c5947349ce46e60` — built from 1376a00; `manifest.json` names `commit: 1376a00`, `dirty: false`; only the manifest's `ms365` block changed.
