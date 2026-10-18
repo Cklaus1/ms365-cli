@@ -2913,6 +2913,16 @@
           "default": null
         },
         {
+          "flags": "--received-since <time>",
+          "long": "--received-since",
+          "short": null,
+          "description": "mail: a baseline covers only messages received since <time> (e.g. -90d); kept in the cursor or checkpoint",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
           "flags": "--strict",
           "long": "--strict",
           "short": null,
