@@ -183,3 +183,13 @@ Measured on megapc against the owner's inbox (`--checkpoint new`, no state writt
 Gate: 1993 passed; tsc 0; smoke 36/0/0; docs:check ok; contract:check ok.
 
 **Final dist sha256 (pin for Chief runners):** `19be41bbf5be411c5cfefc559f9e5a18d6379253587896f65c9c81b4030a2db1` — built from 866bbff (8194500 changes only the fixture); `manifest.json` names `commit: 866bbff`, `dirty: false`. Installed at `/opt/ms365/8194500` on gpumaster and megapc (`dist` tree identical to this digest on both).
+
+## E31: key-form cursor paths (2026-10-18)
+
+Chief's shadow brief pages `mail list --folder sentitems`; page 2 always exited 2 `cursor_mismatch` on megapc. Cause: Graph's `@odata.nextLink` names the folder in OData key form (`/v1.0/me/mailFolders('sentitems')/messages`, likewise `inbox`), and `decodeCursor`'s `graphPath` compared it literally against the command's own `/v1.0/me/mailFolders/sentitems/messages`, so every keyed page after the first was refused. 7e0c2c5: `graphPath` rewrites a key-form segment `name('value')` to `name/value` after percent-decoding and before lower-casing (Graph folder ids are base64url, never `'`). AH-1(7) unchanged: another folder, resource or API version is still `cursor_mismatch`. 70fb13f regenerates the contract manifest only (`commit`, `distSha256`).
+
+**Fail-first evidence:** `cursor binding (AH-1(7), AC 28) > mail list --folder sentitems: a key-form nextLink cursor (mailFolders('sentitems')) is accepted; another folder is cursor_mismatch` is red on c947619's `formatter.ts` (exit 2 on the `mailFolders('sentitems')` page-2 cursor) and green after; the same test keeps `mailFolders('inbox')` for `--folder sentitems` at exit 2 with zero fetch calls, and a `beta` key-form cursor `cursor_mismatch`.
+
+Gate: 70 files / 1994 passed; tsc 0; smoke 36/0/0; docs:check ok; contract:check ok (25 files unchanged).
+
+**Final dist sha256 (pin for Chief runners):** `cb84ed9fd2aed0eb9dc19629a386670e86c44155a2d0ccee53dd507d76ff8a0a` — built from 7e0c2c5 (70fb13f changes only the manifest); `manifest.json` names `commit: 7e0c2c5`, `dirty: false`. Installed at `/opt/ms365/70fb13f` on gpumaster and megapc (clean `git archive`, build, one `npm ci --omit=dev`; read-only; trees identical on both). Runner wrapper `identify` on megapc: `ms365_dist_sha256` `baad03e915e10f8652c5531d435d6de42dd8f644e832600e5c933755c9a4d574`, `ms365_deps_sha256` `9b6edb752c0d7ee83897bf4dd237d6837ccf4b628e7342471b0722f5d25197ef` (deps equal to 8194500's).
