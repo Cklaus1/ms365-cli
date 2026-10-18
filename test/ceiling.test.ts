@@ -182,6 +182,21 @@ describe('cursor binding (AH-1(7), AC 28)', () => {
     expect(ok.exitCode, ok.stderr).not.toBe(2);
     expect(ok.calls).toHaveLength(1);
   });
+
+  it('mail list --folder sentitems: a key-form nextLink cursor (mailFolders(\'sentitems\')) is accepted; another folder is cursor_mismatch', async () => {
+    setCursor(encodeCursor(`${v1}/me/mailFolders('sentitems')/messages?$skip=50&$top=50`));
+    const ok = await runCommand(registerMailCommands, ['mail', 'list', '--folder', 'sentitems', '-o', 'json'], { routes: [['GET', /skip=50/, () => ({ value: [] })]] });
+    expect(ok.exitCode, ok.stderr).not.toBe(2);
+    expect(ok.calls).toHaveLength(1);
+    setCursor(encodeCursor(`${v1}/me/mailFolders('inbox')/messages?$skip=50&$top=50`));
+    const bad = await runCommand(registerMailCommands, ['mail', 'list', '--folder', 'sentitems', '-o', 'json']);
+    expect(bad.exitCode).toBe(2);
+    expect(bad.stderr).toContain("--cursor belongs to /v1.0/me/mailFolders('inbox')/messages");
+    expect(bad.calls).toEqual([]);
+    const own = `${v1}/me/mailFolders/sentitems/messages`;
+    expect(decodeCursor(encodeCursor(`${v1}/me/mailFolders(%27sentitems%27)/messages?$skip=50`), own)).toContain('$skip=50');
+    expect(refusal(() => decodeCursor(encodeCursor(`https://graph.microsoft.com/beta/me/mailFolders('sentitems')/messages`), own)).code).toBe('cursor_mismatch');
+  });
 });
 
 describe('through the real entry point (AC 1, spawned)', () => {
