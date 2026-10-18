@@ -105,12 +105,13 @@ function csvValue(v: string): string | number {
 }
 
 /**
- * Read a usage report whatever format Graph answers in (AO-4): JSON when `$format=application/json`
- * is honoured (paged, AO-23), otherwise the 302 → CSV download from reports.office.com (one file,
- * followed by the client without the bearer token). Rows keep their source keys; callers normalize.
+ * Read a usage report whatever format Graph answers in (AO-4). v1.0 rejects `$format=application/json`
+ * ("JSON format is not supported", verified live 2026-10-17), so no format is requested: Graph answers with the
+ * 302 → CSV download from reports.office.com (followed without the bearer token); a JSON answer is still
+ * accepted and paged (AO-23). Rows keep their source keys; callers normalize.
  */
 async function readReport(client: GraphClient, fn: string, period: string): Promise<Row[]> {
-  const res = await client.requestAllPages(`/reports/${fn}(period='${odataQuote(period)}')`, { queryParams: { $format: 'application/json' } });
+  const res = await client.requestAllPages(`/reports/${fn}(period='${odataQuote(period)}')`);
   const value = ((res.data as { value?: unknown[] }).value ?? []);
   // A non-JSON body comes back as one item: text types as { rawResponse }, octet-stream as base64 { contentBytes }.
   if (value.length === 1) {

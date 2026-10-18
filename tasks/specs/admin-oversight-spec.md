@@ -138,3 +138,18 @@ The v0.1 Step 1 review notes (sources, † list, sequencing, lint guards) apply 
 **† — needs the live tenant (AOT-7):** `consentType` as a `$filter` target and paging of `/oauth2PermissionGrants`; OQ-9 probe; GUID tokenisation of `keywordFilter`; Exchange Online scope values (AO-33); recipient type of shared mailboxes (AO-30); plus every † carried from v0.1 (`MailboxOwnerUPN` keyword match, `serviceFilter(s)`, `MailItemsAccessed` on Audit (Standard), Mail.* role GUIDs, `$format` on v1.0, concealed-name string).
 
 **Sequencing and contention:** AOT-1 ∥ AOT-2; AOT-3 after AOT-2 (index.ts, catalog.ts, both MODULES lists); AOT-3 is the only task editing auth.ts, setup.ts, index.ts, mcp-server.ts, lint and MCP tests; AOT-5 and AOT-6 edit only audit-trail.ts and add catalog entries (describe.test requires the entry and the registration to land in the same task); AOT-6 after AOT-1 (csv.ts) and AOT-5; snapshot `-u` and `npm run docs` once in AOT-4. Lint guards for the new commands: VT9 (coverage line via `info()`), AC-3c (UPN inside `$select`-only URLs is a path segment — encode it with `encodeURIComponent`, no `$filter`), DR-20, QP-6 (`apps`/`access` aggregate in memory, so add both to `NO_CURSOR` with the reason "aggregated view; pages are consumed internally").
+
+## Live results (AOT-7, 2026-10-17)
+
+Run as cklaus@fusen.world after `--org-mode auth grant-scopes` and assigning **Reports Reader** to cklaus (a fresh token is needed after a role change: `auth refresh`).
+
+| Check | Result |
+|---|---|
+| Scopes | All five granted and in the token (`Reports.Read.All`, `AuditLogsQuery-Exchange.Read.All`, `AuditLog.Read.All`, `Application.Read.All`, `Directory.Read.All`). |
+| `reports email` | **v1.0 rejects `$format=application/json` (400 "JSON format is not supported")** → AO-4 resolved: no `$format`, CSV path used; works live. Without a reports role: 403 `S2SUnauthorized` with the AO-27 hint. |
+| `reports by-department` | Stops with the concealed-names error (AC 4) — the tenant hides user names in reports. Owner's decision whether to change the setting. |
+| `audit-trail changes` | Works. **directoryAudits answers only the last 30 days** (400 for older `activityDateTime`) → `--since` is clamped with a stderr note. Target role names show as `?` (opportunity). |
+| `audit-trail apps` | Works. `AllPrincipals` filter accepted (no fallback needed). Listed 7 rows incl. two this-tenant apps with application `Mail.Read`. |
+| `audit-trail access --app` | Works; `keywordFilter` on an AppId GUID returns the app's records. 30-day result exceeded the truncated CSV export (operations@ 37/226 vs 22/146). |
+| `audit-trail mailbox` | Not run separately; same engine as `access`. |
+| OQ-9 `DelegatedPermissionGrant.Read.All` probe | Not run (would need removing `Directory.Read.All`); stays †. |

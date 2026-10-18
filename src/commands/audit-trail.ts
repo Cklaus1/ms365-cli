@@ -192,6 +192,9 @@ export function projectRecord(auditData: unknown, envelope: AuditEnvelope = {}):
   };
 }
 
+/** How far back Graph's directoryAudits endpoint answers. */
+const DIRECTORY_AUDIT_DAYS = 30;
+
 /** The calling app. In Exchange records `AppId` is often the resource (Microsoft Graph), so the client comes first. */
 function appIdOf(a: Obj): string | undefined {
   return str(a.ClientAppId) ?? str(obj(a.AppAccessContext).ClientAppId) ?? str(a.AppId);
@@ -823,8 +826,14 @@ export function registerAuditTrailCommands(program: Command, getClient: () => Gr
     .addOption(outputOption())
     .action(handleErrors(auditHints('directory', async (opts) => {
       const tz = resolveTimeZone();
-      const since = opts.since ? parseTime(opts.since, { tz }).date : new Date(Date.now() - 7 * 86_400_000);
+      let since = opts.since ? parseTime(opts.since, { tz }).date : new Date(Date.now() - 7 * 86_400_000);
       const until = opts.until ? parseTime(opts.until, { tz }).date : undefined;
+      // Graph keeps directory audits for 30 days and rejects an older activityDateTime with a 400 (verified live 2026-10-17).
+      const oldest = new Date(Date.now() - DIRECTORY_AUDIT_DAYS * 86_400_000);
+      if (since.getTime() < oldest.getTime()) {
+        info(`The directory audit log keeps ${DIRECTORY_AUDIT_DAYS} days; --since moved to ${oldest.toISOString()}. Older role and consent changes are only in the Purview audit log.`);
+        since = oldest;
+      }
       if (until && since.getTime() >= until.getTime()) {
         throw new CliError('--since must be before --until.', { code: 'usage', exitCode: ExitCode.USAGE });
       }

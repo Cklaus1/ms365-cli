@@ -2974,7 +2974,7 @@ exports[`dry-run endpoint snapshot (every command) > reports active-users [optio
   "error": "",
   "exitCode": 0,
   "requests": [
-    "[dry-run] GET https://graph.microsoft.com/v1.0/reports/getOffice365ActiveUserCounts(period='D7')?$format=application%2Fjson",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/reports/getOffice365ActiveUserCounts(period='D7')",
   ],
 }
 `;
@@ -2985,7 +2985,7 @@ exports[`dry-run endpoint snapshot (every command) > reports active-users 1`] = 
   "error": "",
   "exitCode": 0,
   "requests": [
-    "[dry-run] GET https://graph.microsoft.com/v1.0/reports/getOffice365ActiveUserCounts(period='D30')?$format=application%2Fjson",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/reports/getOffice365ActiveUserCounts(period='D30')",
   ],
 }
 `;
@@ -2996,7 +2996,7 @@ exports[`dry-run endpoint snapshot (every command) > reports by-department [opti
   "error": "",
   "exitCode": 0,
   "requests": [
-    "[dry-run] GET https://graph.microsoft.com/v1.0/reports/getEmailActivityUserDetail(period='D7')?$format=application%2Fjson",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/reports/getEmailActivityUserDetail(period='D7')",
     "[dry-run] GET https://graph.microsoft.com/v1.0/users?$select=userPrincipalName%2Cdepartment%2CaccountEnabled&$top=999",
   ],
 }
@@ -3008,7 +3008,7 @@ exports[`dry-run endpoint snapshot (every command) > reports by-department 1`] =
   "error": "",
   "exitCode": 0,
   "requests": [
-    "[dry-run] GET https://graph.microsoft.com/v1.0/reports/getEmailActivityUserDetail(period='D30')?$format=application%2Fjson",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/reports/getEmailActivityUserDetail(period='D30')",
     "[dry-run] GET https://graph.microsoft.com/v1.0/users?$select=userPrincipalName%2Cdepartment%2CaccountEnabled&$top=999",
   ],
 }
@@ -3020,7 +3020,7 @@ exports[`dry-run endpoint snapshot (every command) > reports email [optional fla
   "error": "",
   "exitCode": 0,
   "requests": [
-    "[dry-run] GET https://graph.microsoft.com/v1.0/reports/getEmailActivityCounts(period='D7')?$format=application%2Fjson",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/reports/getEmailActivityCounts(period='D7')",
   ],
 }
 `;
@@ -3031,7 +3031,7 @@ exports[`dry-run endpoint snapshot (every command) > reports email 1`] = `
   "error": "",
   "exitCode": 0,
   "requests": [
-    "[dry-run] GET https://graph.microsoft.com/v1.0/reports/getEmailActivityCounts(period='D30')?$format=application%2Fjson",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/reports/getEmailActivityCounts(period='D30')",
   ],
 }
 `;
@@ -3042,7 +3042,7 @@ exports[`dry-run endpoint snapshot (every command) > reports teams [optional fla
   "error": "",
   "exitCode": 0,
   "requests": [
-    "[dry-run] GET https://graph.microsoft.com/v1.0/reports/getTeamsUserActivityCounts(period='D7')?$format=application%2Fjson",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/reports/getTeamsUserActivityCounts(period='D7')",
   ],
 }
 `;
@@ -3053,7 +3053,7 @@ exports[`dry-run endpoint snapshot (every command) > reports teams 1`] = `
   "error": "",
   "exitCode": 0,
   "requests": [
-    "[dry-run] GET https://graph.microsoft.com/v1.0/reports/getTeamsUserActivityCounts(period='D30')?$format=application%2Fjson",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/reports/getTeamsUserActivityCounts(period='D30')",
   ],
 }
 `;
