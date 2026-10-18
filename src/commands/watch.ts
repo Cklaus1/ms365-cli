@@ -14,6 +14,8 @@ export type Resource = typeof RESOURCES[number];
 const MAIL_SELECT = 'id,subject,from,receivedDateTime,createdDateTime,lastModifiedDateTime,changeKey,isRead,hasAttachments,bodyPreview';
 /** Fields every `watch --select` keeps, so a line always has its dedupe key (AH-4(6)). */
 const SELECT_BASE = ['id', 'changeKey', 'lastModifiedDateTime'];
+/** Mail delta page size (`Prefer: odata.maxpagesize`); Graph's default is 10 †, so a large folder's baseline took hundreds of round trips. */
+export const MAIL_PAGE_SIZE = 200;
 const MIN_INTERVAL_S = 15;
 /** Longest wait between --follow passes after failures (R-10). */
 const MAX_BACKOFF_S = 15 * 60;
@@ -37,6 +39,8 @@ export interface Cursor {
   syncedAt: string;
   /** Start of the last baseline; absent in cursor files written before AH-4. */
   coverageStart?: string;
+  /** mail: the baseline's `receivedDateTime ge` bound (--received-since); absent = the whole folder. */
+  receivedSince?: string;
 }
 
 /** The decoded --checkpoint blob (AH-4(1)): a cursor plus the scope it covers. */
@@ -58,6 +62,8 @@ interface Feed {
   window?: Window;
   /** --select fields to keep on each item (SELECT_BASE included). */
   select?: string[];
+  /** mail: only messages received at or after this instant are in the baseline. */
+  receivedSince?: string;
 }
 
 type ChangeType = 'created' | 'updated' | 'deleted' | 'backfill';
@@ -88,12 +94,28 @@ function eventsWindow(opts: Record<string, string | boolean | undefined>): Windo
   return { start: start.toISOString(), end: end.toISOString() };
 }
 
-/** `folder` is the resolved mail folder ID or well-known name; `window` the events window. */
-function buildFeed(resource: Resource, opts: Record<string, string | boolean | undefined>, folder: string, window: Window | undefined): Feed {
+/** --received-since as an ISO instant in the past. */
+function receivedSinceOpt(opts: Record<string, string | boolean | undefined>): string | undefined {
+  if (opts.receivedSince === undefined) return undefined;
+  const date = parseTime(String(opts.receivedSince), { tz: resolveTimeZone(opts.timezone as string | undefined) }).date;
+  if (date.getTime() > Date.now()) throw usage('--received-since must not be in the future.');
+  return date.toISOString();
+}
+
+/** `folder` is the resolved mail folder ID or well-known name; `window` the events window; `receivedSince` the mail bound. */
+function buildFeed(resource: Resource, opts: Record<string, string | boolean | undefined>, folder: string, window: Window | undefined, receivedSince?: string): Feed {
   const select = typeof opts.select === 'string' ? [...new Set([...opts.select.split(',').map(s => s.trim()).filter(Boolean), ...SELECT_BASE])] : undefined;
   switch (resource) {
     case 'mail':
-      return { resource, endpoint: `${userPath(opts.mailbox as string | undefined)}/mailFolders/${encodeURIComponent(folder)}/messages/delta`, initialParams: { $select: select?.join(',') ?? MAIL_SELECT }, headers: {}, select };
+      // Graph keeps $filter in the nextLink/deltaLink tokens; Prefer must be sent with every page.
+      return {
+        resource,
+        endpoint: `${userPath(opts.mailbox as string | undefined)}/mailFolders/${encodeURIComponent(folder)}/messages/delta`,
+        initialParams: { $select: select?.join(',') ?? MAIL_SELECT, ...(receivedSince !== undefined && { $filter: `receivedDateTime ge ${receivedSince}` }) },
+        headers: { Prefer: `odata.maxpagesize=${MAIL_PAGE_SIZE}` },
+        select,
+        ...(receivedSince !== undefined && { receivedSince }),
+      };
     case 'events':
       // calendarView/delta may ignore $select †; the fields are projected locally instead (AH-4(6)).
       return {
@@ -194,6 +216,7 @@ export function decodeCheckpoint(text: string): Checkpoint | undefined {
   for (const key of ['resource', 'endpoint', 'deltaLink', 'syncedAt', 'coverageStart']) {
     if (typeof field(key) !== 'string') throw usage(`--checkpoint lacks ${key}.`);
   }
+  if (field('receivedSince') !== undefined && typeof field('receivedSince') !== 'string') throw usage('--checkpoint has an invalid receivedSince.');
   return parsed as Checkpoint;
 }
 
@@ -291,7 +314,10 @@ async function sync(client: GraphClient, feed: Feed, cursor: Cursor | undefined,
       console.log(JSON.stringify(changeLine(feed, item, cursor ? classify(item, cursor.syncedAt) : 'backfill')));
     }
     if (response.deltaLink) {
-      return { resource: feed.resource, endpoint: feed.endpoint, deltaLink: response.deltaLink, syncedAt: startedAt, coverageStart: cursor?.coverageStart ?? startedAt };
+      return {
+        resource: feed.resource, endpoint: feed.endpoint, deltaLink: response.deltaLink, syncedAt: startedAt, coverageStart: cursor?.coverageStart ?? startedAt,
+        ...(feed.receivedSince !== undefined && { receivedSince: feed.receivedSince }),
+      };
     }
     if (!response.nextLink) throw new CliError('Graph returned neither a nextLink nor a deltaLink.', { code: 'bad_response' });
     if (signal?.aborted) throw interrupted();
@@ -315,6 +341,7 @@ export function registerWatchCommands(program: Command, getClient: () => GraphCl
     .option('--checkpoint <blob|@file|@->', 'Resume from a checkpoint the caller holds (the blob, a file, or stdin); "new" or "" starts a baseline. No cursor file is read or written')
     .option('--select <fields>', 'mail, events: keep only these item fields (id, changeKey and lastModifiedDateTime are always kept)')
     .option('--include-existing', 'On a baseline, print existing items (type "backfill") instead of only saving the cursor')
+    .option('--received-since <time>', 'mail: a baseline covers only messages received since <time> (e.g. -90d); kept in the cursor or checkpoint')
     .option('--strict', 'Exit 1 when the cursor has expired instead of emitting a gap and a backfill')
     .option('--follow', 'Keep watching, one pass per --interval, until Ctrl-C')
     .option('--interval <seconds>', `Seconds between passes with --follow (min ${MIN_INTERVAL_S})`, '60')
@@ -332,6 +359,9 @@ so changes printed by a pass that fails or is interrupted are printed again by t
 An expired cursor prints {"type":"gap","reason":"sync_state_expired",...}, then backfill lines, then the
 new state (--strict exits instead). With --checkpoint, an events window with less than half left rolls
 forward: a gap with reason window_rolled, backfill lines for the new window, then the checkpoint.
+--received-since bounds a mail baseline (and any re-sync after an expired cursor) to newer messages; the
+checkpoint line then carries receivedSince. Graph may still report deletes and read-state changes of
+older messages. A resume with a different --received-since is refused; use a new baseline.
 With --follow, a failed pass logs a warning and is retried after interval x 2^n (at most 15 min);
 auth and usage errors, an expired cursor under --strict, or --max-failures consecutive failures end
 the watch. Ctrl-C during a pass exits 130 without saving it; Ctrl-C between passes exits 0.`)
@@ -346,6 +376,8 @@ the watch. Ctrl-C during a pass exits 130 without saving it; Ctrl-C between pass
       if (opts.select !== undefined && resource !== 'mail' && resource !== 'events') throw usage('--select applies to watch mail and watch events.');
       if (opts.mailbox !== undefined && resource !== 'mail' && resource !== 'events') throw usage('--mailbox applies to watch mail and watch events.');
       if (opts.name !== undefined) cursorName(resource, opts, ''); // reject a bad --name before any request
+      if (opts.receivedSince !== undefined && resource !== 'mail') throw usage('--received-since applies to watch mail.');
+      const askedSince = receivedSinceOpt(opts);
       const client = getClient();
       const checkpoint = held ? decodeCheckpoint(checkpointText(String(opts.checkpoint))) : undefined;
       if (checkpoint) checkCheckpoint(checkpoint, client, resource, opts);
@@ -356,8 +388,11 @@ the watch. Ctrl-C during a pass exits 130 without saving it; Ctrl-C between pass
         : opts.folder === undefined && checkpoint?.folder !== undefined ? checkpoint.folder
           : await resolve(client, 'mail-folder', (opts.folder as string | undefined) ?? 'inbox', opts.mailbox as string | undefined);
       if (checkpoint && resource === 'mail' && checkpoint.folder !== folder) throw mismatch(`--checkpoint follows folder ${String(checkpoint.folder)}, not ${folder}.`);
+      if (checkpoint && askedSince !== undefined && checkpoint.receivedSince !== askedSince) {
+        throw mismatch(`--checkpoint covers mail received since ${checkpoint.receivedSince ?? '(all)'}, not ${askedSince}.`);
+      }
       let window = resource === 'events' ? checkpoint?.window ?? eventsWindow(opts) : undefined;
-      let feed = buildFeed(resource, opts, folder, window);
+      let feed = buildFeed(resource, opts, folder, window, askedSince ?? checkpoint?.receivedSince);
       if (checkpoint && checkpoint.endpoint !== feed.endpoint) throw mismatch(`--checkpoint belongs to ${checkpoint.endpoint}, not ${feed.endpoint}.`);
       const name = held ? '' : cursorName(resource, opts, folder);
       const file = held ? '' : cursorPath(name);
@@ -365,6 +400,10 @@ the watch. Ctrl-C during a pass exits 130 without saving it; Ctrl-C between pass
       const dryRun = isDryRun();
 
       let cursor: Cursor | undefined = held ? checkpoint : opts.reset ? undefined : readCursor(file, feed);
+      if (!held && cursor && cursor.receivedSince !== feed.receivedSince) {
+        if (askedSince !== undefined) throw usage(`Cursor ${file} covers mail received since ${cursor.receivedSince ?? '(all)'}, not ${askedSince}. Use --reset for a new baseline.`);
+        feed = buildFeed(resource, opts, folder, window, cursor.receivedSince);
+      }
       if (opts.reset && !dryRun) removeCursor(file);
 
       const stop = new AbortController();
@@ -417,6 +456,7 @@ the watch. Ctrl-C during a pass exits 130 without saving it; Ctrl-C between pass
         console.log(JSON.stringify({
           type: 'checkpoint', resource, checkpoint: encodeCheckpoint(blob), coverageStart: blob.coverageStart, coverageEnd: next.syncedAt,
           syncedAt: next.syncedAt, ...(blob.folder !== undefined && { folder }), ...(window && { window }),
+          ...(blob.receivedSince !== undefined && { receivedSince: blob.receivedSince }),
         }));
         return true;
       };

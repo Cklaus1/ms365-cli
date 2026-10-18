@@ -140,6 +140,60 @@ describe('expired delta token (AH-4(3), AC 13)', () => {
   });
 });
 
+describe('watch mail --received-since and page size', () => {
+  const SINCE = '2026-07-16T17:00:00.000Z'; // NOW - 90 days
+  const paged = [['GET', MAIL, (c: RecordedCall) => c.url.includes('skiptoken=P2')
+    ? { value: [], '@odata.deltaLink': `${GRAPH}${MAIL}?$deltatoken=D1` }
+    : { value: [{ id: 'M1', changeKey: 'c1' }], '@odata.nextLink': `${GRAPH}${MAIL}?$skiptoken=P2` }]] as never;
+
+  it('a baseline filters on receivedDateTime, asks for big pages on every page, and the checkpoint keeps the bound', async () => {
+    const r = await run(['mail', '--checkpoint', 'new', '--received-since', '-90d'], paged);
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(query(r.calls[0]).get('$filter')).toBe(`receivedDateTime ge ${SINCE}`);
+    expect(r.calls.map(c => c.headers.Prefer)).toEqual(Array(2).fill('odata.maxpagesize=200, IdType="ImmutableId"'));
+    const out = lines(r.stdout);
+    expect(out[0]).toMatchObject({ type: 'checkpoint', receivedSince: SINCE, coverageStart: NOW });
+    expect(decode(out[0].checkpoint).receivedSince).toBe(SINCE);
+  });
+
+  it('a resume keeps the bound without asking again; an expired cursor re-syncs with the same filter', async () => {
+    const resumed = await run(['mail', '--checkpoint', mailCheckpoint({ receivedSince: SINCE })], changes);
+    expect(resumed.calls.map(c => c.url)).toEqual([`${GRAPH}${MAIL}?$deltatoken=OLD`]);
+    expect(lines(resumed.stdout).at(-1).receivedSince).toBe(SINCE);
+    const expired = [['GET', MAIL, (c: RecordedCall) => c.url.includes('deltatoken=OLD')
+      ? jsonResponse({ error: { code: 'syncStateNotFound', message: 'gone' } }, 410)
+      : { value: [], '@odata.deltaLink': `${GRAPH}${MAIL}?$deltatoken=FRESH` }]] as never;
+    const resynced = await run(['mail', '--checkpoint', mailCheckpoint({ receivedSince: SINCE })], expired);
+    expect(resynced.exitCode, resynced.stderr).toBe(0);
+    expect(query(resynced.calls[1]).get('$filter')).toBe(`receivedDateTime ge ${SINCE}`);
+    expect(decode(lines(resynced.stdout).at(-1).checkpoint).receivedSince).toBe(SINCE);
+  });
+
+  it.each([
+    ['a checkpoint with another bound', ['mail', '--received-since', '-30d', '--checkpoint', mailCheckpoint({ receivedSince: SINCE })], 'checkpoint_mismatch'],
+    ['a whole-folder checkpoint', ['mail', '--received-since', '-90d', '--checkpoint', mailCheckpoint()], 'checkpoint_mismatch'],
+    ['a time in the future', ['mail', '--received-since', '+1d', '--checkpoint', 'new'], 'usage'],
+    ['watch events', ['events', '--received-since', '-90d', '--checkpoint', 'new'], 'usage'],
+  ])('%s → exit 2 %s, zero requests', async (_label, argv, code) => {
+    setErrorFormat('json');
+    const r = await run(argv as string[]);
+    expect(r.exitCode).toBe(2);
+    expect(r.calls).toHaveLength(0);
+    expect(errorCode(r.stderr)).toBe(code);
+  });
+
+  it('a named cursor keeps its bound; asking for another one needs --reset', async () => {
+    expect((await run(['mail', '--name', 'n', '--received-since', '-90d'], baseline)).exitCode).toBe(0);
+    const kept = await run(['mail', '--name', 'n'], changes);
+    expect(kept.exitCode, kept.stderr).toBe(0);
+    expect(JSON.parse(fs.readFileSync(path.join(dir, 'watch', 'n.json'), 'utf8')).receivedSince).toBe(SINCE);
+    setErrorFormat('json');
+    const other = await run(['mail', '--name', 'n', '--received-since', '-30d']);
+    expect(other.exitCode).toBe(2);
+    expect(other.calls).toHaveLength(0);
+  });
+});
+
 describe('change lines (AH-4(2), AH-4(6), AC 14)', () => {
   it('mail lines carry version, lastModified, untrusted; a delete is a tombstone with removedReason', async () => {
     const r = await run(['mail', '--checkpoint', mailCheckpoint()], changes);
