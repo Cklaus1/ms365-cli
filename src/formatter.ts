@@ -24,6 +24,8 @@ export function encodeCursor(nextLink: string): string {
 function graphPath(url: URL): string {
   let path = url.pathname;
   try { path = decodeURIComponent(path); } catch { /* a stray % stays as written */ }
+  // Graph nextLinks name a keyed segment in OData key form (`mailFolders('sentitems')`): the same path as `mailFolders/sentitems`.
+  path = path.replace(/\('([^'/]*)'\)/g, '/$1');
   return path.replace(/\/+$/, '').toLowerCase();
 }
 
