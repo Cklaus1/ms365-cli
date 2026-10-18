@@ -130,12 +130,15 @@ function isPreSendError(err: unknown): boolean {
 export interface GraphClientOptions {
   /** The client ID the CLI resolved (profile, then MS365_CLI_CLIENT_ID); known without building an AuthManager. */
   clientId?: string;
+  /** Whether the run is already in --org-mode, so a 403 doesn't suggest it. */
+  orgMode?: boolean;
 }
 
 export class GraphClient {
   /** An AuthManager, or a thunk that builds one on the first real request — dry-run never calls it (DR-16). */
   private authSource: AuthManager | (() => AuthManager);
   private resolvedClientId?: string;
+  private orgMode: boolean;
   private dryRun: boolean;
   private readOnly: boolean;
   private apiVersion: string;
@@ -144,6 +147,7 @@ export class GraphClient {
   constructor(auth: AuthManager | (() => AuthManager), dryRun = false, apiVersion = 'v1.0', readOnly = false, options: GraphClientOptions = {}) {
     this.authSource = auth;
     this.resolvedClientId = options.clientId;
+    this.orgMode = !!options.orgMode;
     this.dryRun = dryRun;
     this.readOnly = readOnly;
     this.apiVersion = apiVersion;
@@ -340,7 +344,7 @@ export class GraphClient {
               { ...details, code: 'auth_failed', exitCode: ExitCode.AUTH, fix: 'ms365 auth login' });
           }
         }
-        const error = graphError(response.status, errorMessage, details);
+        const error = graphError(response.status, errorMessage, details, { orgMode: this.orgMode });
         if (response.status >= 500 && !idempotent) error.maybeProcessed = true;
         throw error;
       }
@@ -614,7 +618,7 @@ export class GraphClient {
         const text = await response.text();
         let message = text;
         try { message = JSON.parse(text).error?.message ?? text; } catch { /* plain text */ }
-        throw graphError(response.status, message, { requestId: response.headers.get('request-id') ?? undefined });
+        throw graphError(response.status, message, { requestId: response.headers.get('request-id') ?? undefined }, { orgMode: this.orgMode });
       } else {
         await response?.body?.cancel();
       }
@@ -821,6 +825,7 @@ export function graphError(
   status: number,
   message: string,
   details: { status?: number; graphCode?: string; requestId?: string } = {},
+  opts: { orgMode?: boolean } = {},
 ): CliError {
   const d = { ...details, status };
   if (status === 401) {
@@ -828,7 +833,7 @@ export function graphError(
       { ...d, code: 'auth_failed', exitCode: ExitCode.AUTH, fix: 'ms365 auth login' });
   }
   if (status === 403) {
-    const hint = message.includes('scope') || message.includes('permission') ? ' Try running with --org-mode.' : '';
+    const hint = !opts.orgMode && (message.includes('scope') || message.includes('permission')) ? ' Try running with --org-mode.' : '';
     return new CliError(`Permission denied (403): ${message}${hint}`,
       { ...d, code: 'permission_denied', exitCode: ExitCode.PERMISSION });
   }

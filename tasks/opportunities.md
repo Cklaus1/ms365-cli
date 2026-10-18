@@ -45,3 +45,4 @@ Things discovered mid-build that have no assigned task. Each entry gives a propo
 - **[P4] `audit-trail apps --with-consenters`** (AO-10 optional join with directoryAudits by principalId) not built; no AC requires it. (AOT-5)
 - **[P4] Snapshot sampler gives `--app x`,** so the `audit-trail access` snapshot exits 2 before the POST. Teach the sampler GUID-shaped values for `--app`. (AOT-5)
 - **[P4] `audit-trail import` stops at the first malformed row (exit 1).** Consider `--skip-bad-rows` with a count on stderr. (AOT-6)
+- **[P4] `audit-trail changes` shows role targets as `?`.** The role's display name is in `modifiedProperties` (Role.DisplayName), not in `targetResources[].displayName`. (AOT-7 live)

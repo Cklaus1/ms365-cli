@@ -768,3 +768,27 @@ describe('audit-trail: calling app vs resource app (real Purview record shape)',
     expect(accessFacts(real).appId).toBe(CLIENT);
   });
 });
+
+describe('audit-trail changes: 30-day directory audit window (live 2026-10-17)', () => {
+  // Graph rejects activityDateTime earlier than 30 days ago with a 400, so --since is clamped with a note.
+  it('clamps an older --since to 30 days ago and says so on stderr', async () => {
+    const { registerAuditTrailCommands: reg } = await import('../../src/commands/audit-trail.js');
+    const r = await runCommand(reg, ['audit-trail', 'changes', '--since', '-60d', '-o', 'json'], {
+      routes: [['GET', /directoryAudits/, () => ({ value: [] })]],
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+    const ge = r.calls[0].path.match(/activityDateTime ge (\S+Z)/)![1];
+    const ageDays = (Date.now() - new Date(ge).getTime()) / 86_400_000;
+    expect(ageDays).toBeLessThanOrEqual(30);
+    expect(ageDays).toBeGreaterThan(29);
+    expect(r.stderr).toMatch(/30 days/);
+  });
+  it('leaves a --since inside the window alone, with no note', async () => {
+    const { registerAuditTrailCommands: reg } = await import('../../src/commands/audit-trail.js');
+    const r = await runCommand(reg, ['audit-trail', 'changes', '--since', '-5d', '-o', 'json'], {
+      routes: [['GET', /directoryAudits/, () => ({ value: [] })]],
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(r.stderr).not.toMatch(/30 days/);
+  });
+});

@@ -106,12 +106,12 @@ describe('rollUp', () => {
 describe('ms365 reports', () => {
   const run = (argv: string[], routes: any[] = [], extra = {}) => runCommand(registerReportsCommands, ['reports', ...argv], { routes, ...extra });
 
-  it('tenant-level email counts: JSON format requested, rows normalized, period passed', async () => {
+  it('tenant-level email counts: no $format on v1.0 (live 2026-10-17: "JSON format is not supported"), rows normalized, period passed', async () => {
     const r = await run(['email', '--period', 'D7', '-o', 'json'], [
       ['GET', /getEmailActivityCounts\(period='D7'\)/, () => ({ value: [{ 'Report Date': '2026-10-14', 'Send': 12, Receive: 40 }] })],
     ]);
     expect(r.exitCode, r.stderr).toBe(0);
-    expect(r.calls[0].path).toContain('$format=application/json');
+    expect(r.calls[0].path).not.toContain('$format');
     const out = JSON.parse(r.stdout);
     expect(out).toMatchObject({ period: 'D7', report: 'email' });
     expect(out.value[0]).toMatchObject({ reportdate: '2026-10-14', send: 12 });

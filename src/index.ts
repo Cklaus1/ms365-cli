@@ -138,11 +138,11 @@ function getAuth(): AuthManager {
 
 function getClient(): GraphClient {
   if (!graphClient) {
-    const { dryRun, apiVersion, readOnly, profile } = globalFlags();
+    const { dryRun, apiVersion, readOnly, profile, orgMode } = globalFlags();
     // A thunk: under --dry-run no AuthManager is built, so previews need no client ID (DR-16, F23).
     const clientId = adminProfileName() ? undefined : profile.clientId;
     graphClient = new GraphClient(getAuth, dryRun, apiVersion, readOnly,
-      { clientId: clientId || process.env.MS365_CLI_CLIENT_ID || undefined });
+      { clientId: clientId || process.env.MS365_CLI_CLIENT_ID || undefined, orgMode });
   }
   return graphClient;
 }
