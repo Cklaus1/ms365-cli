@@ -772,16 +772,21 @@ describe('audit-trail: calling app vs resource app (real Purview record shape)',
 describe('audit-trail changes: 30-day directory audit window (live 2026-10-17)', () => {
   // Graph rejects activityDateTime earlier than 30 days ago with a 400, so --since is clamped with a note.
   it('clamps an older --since to 30 days ago and says so on stderr', async () => {
-    const { registerAuditTrailCommands: reg } = await import('../../src/commands/audit-trail.js');
-    const r = await runCommand(reg, ['audit-trail', 'changes', '--since', '-60d', '-o', 'json'], {
-      routes: [['GET', /directoryAudits/, () => ({ value: [] })]],
-    });
-    expect(r.exitCode, r.stderr).toBe(0);
-    const ge = r.calls[0].path.match(/activityDateTime ge (\S+Z)/)![1];
-    const ageDays = (Date.now() - new Date(ge).getTime()) / 86_400_000;
-    expect(ageDays).toBeLessThanOrEqual(30);
-    expect(ageDays).toBeGreaterThan(29);
-    expect(r.stderr).toMatch(/30 days/);
+    // The clock is frozen: the command and this assertion each read "now", and a real clock moves between the two
+    // reads (CI saw ageDays 30.0000000116 > 30). With one instant the clamp is exactly 30 days.
+    const now = Date.parse('2026-10-17T12:00:00.000Z');
+    vi.useFakeTimers({ toFake: ['Date'], now });
+    try {
+      const r = await runCommand(registerAuditTrailCommands, ['audit-trail', 'changes', '--since', '-60d', '-o', 'json'], {
+        routes: [['GET', /directoryAudits/, () => ({ value: [] })]],
+      });
+      expect(r.exitCode, r.stderr).toBe(0);
+      const ge = r.calls[0].path.match(/activityDateTime ge (\S+Z)/)![1];
+      expect(ge).toBe(new Date(now - 30 * 86_400_000).toISOString());
+      expect(r.stderr).toMatch(/30 days/);
+    } finally {
+      vi.useRealTimers();
+    }
   });
   it('leaves a --since inside the window alone, with no note', async () => {
     const { registerAuditTrailCommands: reg } = await import('../../src/commands/audit-trail.js');
