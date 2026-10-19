@@ -203,3 +203,11 @@ Chief's Teams brief (Chief `tasks/teams-brief-spec.md`, TMS-1..4) needs the CEO'
 Gate: 70 files / 1999 passed; tsc 0; smoke 36/0/0; docs:check ok; contract:check ok (29 files unchanged).
 
 **Final dist sha256 (pin for Chief runners):** `28a8e0e7a2cc3f2adeb2214a20b234e7c0a77a126759447961b8010bf3ebd893` — built from 7437edb (d742a2c changes only the manifest); `manifest.json` names `commit: 7437edb`, `dirty: false`, manifest sha256 `c4656d43564f064d0ee89107be7e83065ef0eb48cc6872b89b7b1af38b69f343`. Install tree: clean `git archive 7437edb`, `npm ci`, build, one `npm ci --omit=dev` (dist digest unchanged by the prune; package files unchanged since E31, so the runtime deps equal E31's); host install at `/opt/ms365/<commit>` on gpumaster and megapc is the coordinator's step.
+
+## E33: --body none drops a null body (2026-10-19)
+
+Implementation review of E32 (MINOR, Chief TMS-6/I3): `shapeBodies` skipped a non-object `body`/`uniqueBody` before the `--body none` delete, so `body: null` survived `--body none` (`chat list --recent` preview, `chat messages`). a6b4414: under `--body none` the key is deleted whatever its value; the other modes leave a null body as returned. Fail-first: `a null body: --body none drops the key (chat list preview, chat messages); the default mode keeps it (E33)` is red on 228ac93's `content.ts`, green after. Contract samples unchanged, so the manifest is not regenerated (sha256 `c4656d43…`, still naming 7437edb with E32's `distSha256`).
+
+Gate: 70 files / 2000 passed; tsc 0; smoke 36/0/0; docs:check ok; contract:check ok (29 files unchanged).
+
+**Final dist sha256 (pin for Chief runners):** `10e23c4e31818a8d53d894ce2630a3b8c3aa14ff985038662831322f5b9b175d` — built from a6b4414 (clean `git archive`, `npm ci`, build); package files unchanged since 7437edb, so the runtime deps equal E32's.
