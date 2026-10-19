@@ -231,9 +231,10 @@ function shapeText(text: string, opts: ContentOptions): string {
 export function shapeBodies(item: Record<string, unknown>, opts: ContentOptions): Record<string, unknown> {
   const out = { ...item };
   for (const key of ['body', 'uniqueBody']) {
+    // --body none drops the key whatever its value (a null body too, E33).
+    if (opts.body === 'none') { delete out[key]; continue; }
     const body = out[key] as { contentType?: string; content?: unknown } | undefined;
     if (!body || typeof body !== 'object') continue;
-    if (opts.body === 'none') { delete out[key]; continue; }
     if (typeof body.content !== 'string') continue;
     let { contentType, content } = body as { contentType?: string; content: string };
     const isHtml = contentType?.toLowerCase() === 'html';
