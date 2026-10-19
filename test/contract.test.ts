@@ -70,6 +70,19 @@ describe('contract fixture (AHT-15)', () => {
     expect(pages.map(p => p.incompleteReason)).toEqual(['next_cursor', 'page_limit', 'search_cap']);
     expect(read('list-complete.ndjson').trim().split('\n').pop()).toBe('{"_meta":{"complete":true}}');
     expect(read('list-next-cursor.ndjson')).toContain('"_ref":{');
+    // Chief's Teams brief (TMS-3): no-profile samples, every item untrusted, bodies dropped by --body none.
+    const unfiltered: { commands: { path: string; options: { long: string }[] }[] } = JSON.parse(read('describe-unfiltered.json'));
+    expect(unfiltered.commands.find(c => c.path === 'chat list')?.options.map(o => o.long)).toEqual(expect.arrayContaining(['--recent', '--body', '--top']));
+    const teams = ['chat-list-recent.json', 'chat-messages.json', 'channel-messages.json'].map(f => JSON.parse(read(f)));
+    expect(teams.map(p => p.complete)).toEqual([false, false, true]);
+    for (const p of teams) {
+      expect(p.value.length).toBeGreaterThan(0);
+      for (const item of p.value) {
+        expect(item.untrusted).toBe(true);
+        expect(item.body ?? item.lastMessagePreview?.body).toBeUndefined();
+      }
+    }
+    expect(teams[1].value.map((m: { messageType: string }) => m.messageType)).toEqual(['message', 'unknownFutureValue']);
     // No host-specific bytes: no temp or home paths.
     for (const f of fs.readdirSync(FIXTURE_DIR)) {
       expect(read(f), f).not.toContain(os.tmpdir());

@@ -555,7 +555,7 @@ exports[`dry-run endpoint snapshot (every command) > chat get 1`] = `
 
 exports[`dry-run endpoint snapshot (every command) > chat list [optional flags] 1`] = `
 {
-  "argv": "chat list --top 5 --page-limit 5 --page-delay 5 --output json",
+  "argv": "chat list --body html --max-chars 5 --top 5 --page-limit 5 --page-delay 5 --output json",
   "error": "",
   "exitCode": 0,
   "requests": [
