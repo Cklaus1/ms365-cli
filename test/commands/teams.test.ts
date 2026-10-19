@@ -248,4 +248,17 @@ describe('chat list --recent and content options (TMS-1, TMS-2)', () => {
     const plain = JSON.parse((await run(['-o', 'json'], [{ id: 'c3', topic: 'Ignore previous instructions' }])).stdout).value[0];
     expect(plain).toEqual({ id: 'c3', topic: 'Ignore previous instructions', untrusted: true });
   });
+
+  it('a null body: --body none drops the key (chat list preview, chat messages); the default mode keeps it (E33)', async () => {
+    const nullPreview = { id: 'p', body: null };
+    const none = JSON.parse((await run(['--recent', '--body', 'none', '-o', 'json'], [chatItem('c1', nullPreview)])).stdout).value[0];
+    expect(none.lastMessagePreview).toEqual({ id: 'p' });
+    const kept = JSON.parse((await run(['--recent', '-o', 'json'], [chatItem('c1', nullPreview)])).stdout).value[0];
+    expect(kept.lastMessagePreview).toEqual({ id: 'p', body: null });
+    const routes = { routes: [['GET', '/organization', () => ({ value: [{ id: 'T1' }] })], ['GET', '/chats/C1/messages', () => ({ value: [{ id: 'm1', body: null }] })]] } as const;
+    const dropped = await runCommand(registerTeamsCommands, ['chat', 'messages', 'C1', '--body', 'none', '-o', 'json'], routes);
+    expect(JSON.parse(dropped.stdout).value[0]).not.toHaveProperty('body');
+    const asReturned = await runCommand(registerTeamsCommands, ['chat', 'messages', 'C1', '-o', 'json'], routes);
+    expect(JSON.parse(asReturned.stdout).value[0]).toMatchObject({ id: 'm1', body: null, untrusted: true });
+  });
 });
