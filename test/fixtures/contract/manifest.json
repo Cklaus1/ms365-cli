@@ -1,9 +1,9 @@
 {
   "v": 1,
   "ms365": {
-    "commit": "7e0c2c5be0fc1707b7bd13bfa211466963e71355",
-    "dirty": false,
-    "distSha256": "cb84ed9fd2aed0eb9dc19629a386670e86c44155a2d0ccee53dd507d76ff8a0a"
+    "commit": "c0ab7036cc825042398f0b4be4cd66535a60f2a9",
+    "dirty": true,
+    "distSha256": "28a8e0e7a2cc3f2adeb2214a20b234e7c0a77a126759447961b8010bf3ebd893"
   },
   "clock": "2026-10-17T12:00:00.000Z",
   "profile": {
@@ -395,6 +395,72 @@
       "exitCode": 0,
       "capture": "stdout",
       "sha256": "eb8fb24eedde715ecd75893afbe851a2c384bd620acd7dd3f804488be57af62d"
+    },
+    "describe-unfiltered.json": {
+      "argv": [
+        "--error-format",
+        "json",
+        "describe",
+        "--json"
+      ],
+      "exitCode": 0,
+      "capture": "stdout",
+      "sha256": "afb4da41b2cbe777a3f85feb91faedc00e951e57b9269cde03a72756a920500d"
+    },
+    "chat-list-recent.json": {
+      "argv": [
+        "--error-format",
+        "json",
+        "chat",
+        "list",
+        "--recent",
+        "--top",
+        "2",
+        "--body",
+        "none",
+        "-o",
+        "json"
+      ],
+      "exitCode": 0,
+      "capture": "stdout",
+      "sha256": "a4a895eb1bd84f9d7fe5664096b03d019a9b97d7df8158123bb7ec6842db79de"
+    },
+    "chat-messages.json": {
+      "argv": [
+        "--error-format",
+        "json",
+        "chat",
+        "messages",
+        "19:fixturechat@thread.v2",
+        "--top",
+        "2",
+        "--body",
+        "none",
+        "-o",
+        "json"
+      ],
+      "exitCode": 0,
+      "capture": "stdout",
+      "sha256": "9e0d154afd073fe8924a34ef8a97d824963bb40ee741987ef6e3385d7c28505a"
+    },
+    "channel-messages.json": {
+      "argv": [
+        "--error-format",
+        "json",
+        "teams",
+        "channel-messages",
+        "44444444-5555-6666-7777-888888888888",
+        "19:fixturechannel@thread.tacv2",
+        "--top",
+        "2",
+        "--body",
+        "none",
+        "-o",
+        "json"
+      ],
+      "exitCode": 0,
+      "capture": "stdout",
+      "sha256": "91dcc78abf5b6a98235b67be0e8639aad399d660c4ee7dd5644fb1087a86cbd4"
     }
   }
 }

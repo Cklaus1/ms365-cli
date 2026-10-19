@@ -349,7 +349,7 @@ The reference below is generated from the live command tree (`ms365 describe --j
 |---|---|---|---|---|
 | `chat create` | Create a 1:1 chat (one member) or group chat (two or more) |  | `--members <emails>` (required) `--topic <topic>` | not idempotent · Chat.Create, User.Read |
 | `chat get` | Get chat details | `<chatId>` |  | Chat.Read |
-| `chat list` | List chats |  | `--top <n>` | Chat.Read |
+| `chat list` | List chats (marked untrusted; --recent: newest activity first, with the last message preview) |  | `--recent` `--body <mode>` `--max-chars <n>` `--wrap-untrusted` `--top <n>` | Chat.Read |
 | `chat messages` | List chat messages (marked untrusted; see --body, --wrap-untrusted) | `<chatId>` | `--body <mode>` `--max-chars <n>` `--wrap-untrusted` `--top <n>` | ChatMessage.Read |
 | `chat reply` | Reply to a chat message | `<chatId> <messageId>` | `--body <body>` (required) `--body-file <path>` `--html` `--idempotency-key <key>` | not idempotent · ChatMessage.Read, ChatMessage.Send |
 | `chat send` | Send a chat message | `<chatId>` | `--body <body>` (required) `--body-file <path>` `--html` `--mention <upn>` `--idempotency-key <key>` | not idempotent · ChatMessage.Send, User.ReadBasic.All |

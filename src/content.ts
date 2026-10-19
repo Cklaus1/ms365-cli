@@ -313,6 +313,23 @@ export function messageTransform(client: GraphClient, kind: 'mail' | 'teams', op
   };
 }
 
+/**
+ * Build `chat list`'s transform (TMS-2): every chat is marked untrusted (topic and member names are settable by
+ * anyone in the chat), and the content options shape the expanded `lastMessagePreview.body` like a message body.
+ * No identity lookup: a chat has no sender to compare. Under --dry-run the placeholder passes through.
+ */
+export function chatTransform(client: GraphClient, opts: ContentOptions): ItemTransform {
+  return async (items) => {
+    if (client.isDryRun()) return items;
+    return items.map((item) => {
+      if (!isMessage(item)) return item;
+      const out: Record<string, unknown> = { ...item, untrusted: true };
+      if (isMessage(item.lastMessagePreview)) out.lastMessagePreview = shapeBodies(item.lastMessagePreview, opts);
+      return out;
+    });
+  };
+}
+
 /** Apply a transform to a single object or the `value` array of a collection response. */
 export async function transformData(data: unknown, transform: ItemTransform): Promise<unknown> {
   if (data && typeof data === 'object' && Array.isArray((data as Record<string, unknown>).value)) {
