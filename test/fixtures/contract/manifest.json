@@ -1,9 +1,9 @@
 {
   "v": 1,
   "ms365": {
-    "commit": "7437edb5dc41c50553046de00db6aad38acbc1ab",
+    "commit": "d961b9c6ca0ae66f8e3162f55911fe6db9caffed",
     "dirty": false,
-    "distSha256": "28a8e0e7a2cc3f2adeb2214a20b234e7c0a77a126759447961b8010bf3ebd893"
+    "distSha256": "292f53d81d1858db9fbc18c2759cf400e20ee6838af35141e7b56233509a16b6"
   },
   "clock": "2026-10-17T12:00:00.000Z",
   "profile": {
@@ -405,7 +405,7 @@
       ],
       "exitCode": 0,
       "capture": "stdout",
-      "sha256": "afb4da41b2cbe777a3f85feb91faedc00e951e57b9269cde03a72756a920500d"
+      "sha256": "45f945799ba86c6e4cfcf7198ee11bd4a5696c99976d547f97f4719e135aa1f9"
     },
     "chat-list-recent.json": {
       "argv": [
@@ -461,6 +461,23 @@
       "exitCode": 0,
       "capture": "stdout",
       "sha256": "91dcc78abf5b6a98235b67be0e8639aad399d660c4ee7dd5644fb1087a86cbd4"
+    },
+    "mail-reply-draft.json": {
+      "argv": [
+        "--error-format",
+        "json",
+        "mail",
+        "reply",
+        "m1",
+        "--draft",
+        "--body",
+        "Thanks, will do.",
+        "-o",
+        "json"
+      ],
+      "exitCode": 0,
+      "capture": "stdout",
+      "sha256": "0d3584294a41606a7ca20433a822dde9494f5cb28ee63c03db4051310f7f3ca1"
     }
   }
 }
