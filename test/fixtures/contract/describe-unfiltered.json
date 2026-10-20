@@ -2240,7 +2240,13 @@
         ],
         "without": [
           "Mail.Send"
-        ]
+        ],
+        "withoutOption": {
+          "option": "--body",
+          "scopes": [
+            "Mail.ReadWrite"
+          ]
+        }
       },
       "destructive": false,
       "idempotent": false,
@@ -2311,9 +2317,20 @@
         }
       ],
       "scopes": [
-        "Mail.Send"
+        "Mail.Send",
+        "Mail.ReadWrite"
       ],
-      "scopesBy": null,
+      "scopesBy": {
+        "base": [
+          "Mail.Send"
+        ],
+        "withOption": {
+          "option": "--comment",
+          "scopes": [
+            "Mail.ReadWrite"
+          ]
+        }
+      },
       "destructive": false,
       "idempotent": false,
       "offline": false,
