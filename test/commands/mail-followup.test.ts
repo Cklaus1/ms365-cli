@@ -233,6 +233,16 @@ describe('mail reply --draft: create the threaded reply draft, never send', () =
     expect(r.calls[0].body).toEqual({ comment: '' });
   });
 
+  it('an empty body with --html sends no draft either: /reply and /forward with an empty comment (E37: no Mail.ReadWrite)', async () => {
+    const reply = await run(['reply', 'M1', '--body', '', '--html']);
+    expect(reply.exitCode).toBe(0);
+    expect(seq(reply)).toEqual(['POST /me/messages/M1/reply']);
+    expect(reply.calls[0].body).toEqual({ comment: '' });
+    const forward = await run(['forward', 'M1', '--to', 'y@contoso.com', '--html']);
+    expect(forward.exitCode).toBe(0);
+    expect(seq(forward)).toEqual(['POST /me/messages/M1/forward']);
+  });
+
   it('--html patches the HTML above the quoted thread; --attach adds the file to the draft; neither sends', async () => {
     fs.writeFileSync('a.txt', 'x');
     const r = await run(['reply', 'M1', '--body', '<b>Approved</b>', '--html', '--attach', 'a.txt', '--draft', '-o', 'json'], {

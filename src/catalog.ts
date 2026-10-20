@@ -23,15 +23,17 @@ export interface CommandMeta {
  * Scopes chosen by what the command is asked to touch (Q-16 to Q-19). Each selected value is one any-of clause:
  * `option` reads the option's value (comma-separated when `split`); `arg` reads a positional argument by index.
  * `withOption` adds a second clause for the selected argument value when that option is given. `base` is one fixed
- * clause, and `withOption` adds its `scopes` as a second one when the option is given (`--mailbox`, AH-10). `flag`
- * picks one clause by whether a boolean option is given: `with` when it is, `without` when not (`mail reply --draft`
- * creates a draft with Mail.ReadWrite instead of sending with Mail.Send).
+ * clause, and `withOption` adds its `scopes` as a second one when the option is given a non-empty value (`--mailbox`,
+ * AH-10; `mail forward --comment` goes through a draft, E37). `flag` picks one clause by whether a boolean option is
+ * given: `with` when it is, `without` when not (`mail reply --draft` creates a draft with Mail.ReadWrite instead of
+ * sending with Mail.Send); without the flag, `withoutOption` adds its `scopes` as a second clause when that option is
+ * given a non-empty value (a sent `mail reply --body` also creates and patches a draft, E37).
  */
 export type ScopeSelector =
   | { option: string; split?: ','; map: Record<string, string[]> }
   | { arg: number; map: Record<string, string[]>; withOption?: { option: string; map: Record<string, string[]> } }
   | { base: string[]; withOption: { option: string; scopes: string[] } }
-  | { flag: string; with: string[]; without: string[] };
+  | { flag: string; with: string[]; without: string[]; withoutOption?: { option: string; scopes: string[] } };
 
 /** One any-of clause of a command's requirement; `for` names the option or argument value that selected it. */
 export interface ScopeClause {
@@ -126,9 +128,11 @@ const COMMANDS: Record<string, Entry> = {
   'mail add-attachment': 'action',
   'mail delete-attachment': 'delete',
   'mail download-attachment': 'read',
-  // --draft creates the reply draft and never sends it (createReply/createReplyAll, then PATCH/attachments).
-  'mail reply': ['action', { flag: '--draft', with: ['Mail.ReadWrite'], without: ['Mail.Send'] }],
-  'mail forward': ['action', ['Mail.Send']],
+  // --draft creates the reply draft and never sends it (createReply/createReplyAll, then PATCH/attachments). Sent, a
+  // non-empty body goes through a draft too (createReply, PATCH above the quoted thread, send; E36/E37).
+  'mail reply': ['action', { flag: '--draft', with: ['Mail.ReadWrite'], without: ['Mail.Send'], withoutOption: { option: '--body', scopes: ['Mail.ReadWrite'] } }],
+  // A non-empty --comment goes through a forward draft (createForward, PATCH, send; E36/E37).
+  'mail forward': ['action', { base: ['Mail.Send'], withOption: { option: '--comment', scopes: ['Mail.ReadWrite'] } }],
   'mail mark-read': 'update',
   'mail reconcile': 'read',
   'mail mark-unread': 'update',
@@ -390,7 +394,7 @@ export function commandMeta(path: string): CommandMeta | undefined {
 
 function selectorUnion(sel: ScopeSelector): string[] {
   if ('base' in sel) return [...new Set([...sel.base, ...sel.withOption.scopes])];
-  if ('flag' in sel) return [...new Set([...sel.without, ...sel.with])];
+  if ('flag' in sel) return [...new Set([...sel.without, ...sel.with, ...(sel.withoutOption?.scopes ?? [])])];
   const maps = [sel.map, ...('withOption' in sel && sel.withOption ? [sel.withOption.map] : [])];
   return [...new Set(maps.flatMap(m => Object.values(m).flat()))];
 }
@@ -410,11 +414,19 @@ export function requiredScopes(path: string, opts: Record<string, unknown> = {},
   const sel = meta.scopesBy;
   if (!sel) return [{ scopes: meta.scopes }];
   const clauses: ScopeClause[] = [];
+  // The second clause of `base` (withOption) or of a flag selector's `without` mode (withoutOption): added when the
+  // option has a non-empty value (`--comment ''` sends no comment, so no forward draft).
+  let extra: { option: string; scopes: string[] } | undefined;
   if ('base' in sel) {
     clauses.push({ scopes: sel.base });
-    if (opts[optKey(sel.withOption.option)] !== undefined) clauses.push({ scopes: sel.withOption.scopes, for: `with ${sel.withOption.option}` });
+    extra = sel.withOption;
   } else if ('flag' in sel) {
-    clauses.push(opts[optKey(sel.flag)] === true ? { scopes: sel.with, for: `with ${sel.flag}` } : { scopes: sel.without });
+    if (opts[optKey(sel.flag)] === true) {
+      clauses.push({ scopes: sel.with, for: `with ${sel.flag}` });
+    } else {
+      clauses.push({ scopes: sel.without });
+      extra = sel.withoutOption;
+    }
   } else if ('option' in sel) {
     const raw = opts[optKey(sel.option)];
     const values = typeof raw === 'string' ? (sel.split ? raw.split(sel.split).map(v => v.trim()) : [raw]) : [];
@@ -422,11 +434,13 @@ export function requiredScopes(path: string, opts: Record<string, unknown> = {},
   } else {
     const v = String(args[sel.arg] ?? '');
     if (sel.map[v]) clauses.push({ scopes: sel.map[v], for: v });
-    const extra = sel.withOption;
-    if (extra && opts[optKey(extra.option)] !== undefined && extra.map[v]) {
-      clauses.push({ scopes: extra.map[v], for: `${v} with ${extra.option}` });
+    const argExtra = sel.withOption;
+    if (argExtra && opts[optKey(argExtra.option)] !== undefined && argExtra.map[v]) {
+      clauses.push({ scopes: argExtra.map[v], for: `${v} with ${argExtra.option}` });
     }
   }
+  const extraValue = extra && opts[optKey(extra.option)];
+  if (extra && extraValue !== undefined && extraValue !== '') clauses.push({ scopes: extra.scopes, for: `with ${extra.option}` });
   return clauses.length ? clauses : [{ scopes: meta.scopes }];
 }
 

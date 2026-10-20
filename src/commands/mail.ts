@@ -140,10 +140,13 @@ function plainTextHtml(text: string): string {
   return `<div>${text.replace(/[&<>"']/g, c => HTML_ENTITIES[c]).replace(/\r\n|\r|\n/g, '<br>')}</div>`;
 }
 
-/** The HTML a reply/forward puts above the quoted thread: --html as given, plain text escaped; none for an empty plain body. */
+/**
+ * The HTML a reply/forward puts above the quoted thread: --html as given, plain text escaped; none for an empty body,
+ * which goes as `comment` without a draft, so only a non-empty body needs Mail.ReadWrite (catalog, E37).
+ */
 function replyHtml(text: string, html: boolean): string | undefined {
-  if (html) return text;
-  return text ? plainTextHtml(text) : undefined;
+  if (!text) return undefined;
+  return html ? text : plainTextHtml(text);
 }
 
 /**

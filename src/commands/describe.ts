@@ -28,7 +28,7 @@ export function describeSelector(cmd: Command, sel: ScopeSelector | null | undef
   if (!sel) return null;
   if ('option' in sel) return { option: sel.option, map: sel.map };
   if ('base' in sel) return { base: sel.base, withOption: sel.withOption };
-  if ('flag' in sel) return { flag: sel.flag, with: sel.with, without: sel.without };
+  if ('flag' in sel) return { flag: sel.flag, with: sel.with, without: sel.without, ...(sel.withoutOption ? { withoutOption: sel.withoutOption } : {}) };
   return { argument: cmd.registeredArguments[sel.arg]?.name() ?? String(sel.arg), map: sel.map, ...(sel.withOption ? { withOption: sel.withOption } : {}) };
 }
 

@@ -81,9 +81,11 @@ function scopeNote(c: CatalogCommand): string {
   if (Array.isArray(base) && extra && typeof extra === 'object' && 'option' in extra && 'scopes' in extra && Array.isArray(extra.scopes)) {
     return `${base.join(', ')} (${String(extra.option)}: + ${extra.scopes.join(', ')})`;
   }
-  const { flag, with: given, without } = c.scopesBy ?? {};
+  const { flag, with: given, without, withoutOption } = c.scopesBy ?? {};
   if (typeof flag === 'string' && Array.isArray(given) && Array.isArray(without)) {
-    return `${without.join(', ')} (${flag}: ${given.join(', ')} instead)`;
+    const more = withoutOption && typeof withoutOption === 'object' && 'option' in withoutOption && 'scopes' in withoutOption
+      && Array.isArray(withoutOption.scopes) ? `${String(withoutOption.option)}: + ${withoutOption.scopes.join(', ')}; ` : '';
+    return `${without.join(', ')} (${more}${flag}: ${given.join(', ')} instead)`;
   }
   return c.scopes?.join(', ') ?? '';
 }
