@@ -35,6 +35,8 @@ const OTHER_TENANT = jwt({ aud: 'https://graph.microsoft.com', tid: '99999999-22
 const TASKS = jwt({ aud: 'https://graph.microsoft.com', tid: TENANT, oid: OID, scp: 'Tasks.ReadWrite', exp: EXP });
 // Chief's Teams brief (TMS-3): runs without a profile, like Chief's session describe.
 const TEAMS = jwt({ aud: 'https://graph.microsoft.com', tid: TENANT, oid: OID, upn: UPN, scp: 'User.Read Chat.Read ChatMessage.Read ChannelMessage.Read.All', exp: EXP });
+// Chief's mailbox assist (reply drafts): Mail.ReadWrite only, never Mail.Send.
+const DRAFTS = jwt({ aud: 'https://graph.microsoft.com', tid: TENANT, oid: OID, upn: UPN, scp: 'User.Read Mail.ReadWrite', exp: EXP });
 
 const G = 'https://graph.microsoft.com/v1.0';
 const ME = { match: '/me\\?', body: { id: OID, userPrincipalName: UPN, mail: UPN } };
@@ -171,6 +173,10 @@ export const CASES = [
     routes: [ORG, { match: '/chats/[^/?]+/messages', body: page(chatMessages, `${G}/chats/${encodeURIComponent(CHAT_ID)}/messages?$top=2&$skiptoken=m2`) }] },
   { file: 'channel-messages.json', argv: ['--error-format', 'json', 'teams', 'channel-messages', TEAM_ID, CHANNEL_ID, '--top', '2', '--body', 'none', '-o', 'json'], exit: 0, capture: 'stdout', token: TEAMS,
     routes: [ORG, { match: '/teams/[^/?]+/channels/[^/?]+/messages', body: page(channelMessages) }] },
+  // Chief's mailbox assist, no profile: `mail reply --draft` creates the threaded reply draft and prints its handles
+  { file: 'mail-reply-draft.json', argv: ['--error-format', 'json', 'mail', 'reply', 'm1', '--draft', '--body', 'Thanks, will do.', '-o', 'json'], exit: 0, capture: 'stdout', token: DRAFTS,
+    routes: [{ match: '/me/messages/m1/createReply$', body: msg('d1', { conversationId: 'conv-m1', internetMessageId: '<d1@contoso.com>', isDraft: true, subject: 'RE: Subject m1',
+      body: { contentType: 'html', content: '<p>Thanks, will do.</p>' } }) }] },
 ];
 
 const sha256 = data => crypto.createHash('sha256').update(data).digest('hex');

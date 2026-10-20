@@ -53,6 +53,8 @@ export function ceilingSurface(path: string, ceiling: Set<string>): { allowed: b
   const sel = commandMeta(path)?.scopesBy;
   // A delegate read (`base`) fits when the caller's own read does; `--mailbox` is then checked per run.
   if (!sel || 'base' in sel) return { allowed: !unmetClause(sel ? [{ scopes: sel.base }] : usedScopes(path), ceiling) };
+  // A boolean-flag selector fits when either mode does; the run's own mode is checked per run.
+  if ('flag' in sel) return { allowed: !unmetClause([{ scopes: sel.with }], ceiling) || !unmetClause([{ scopes: sel.without }], ceiling) };
   const values = Object.keys(sel.map).filter(v => !unmetClause([{ scopes: sel.map[v] }], ceiling));
   return { allowed: values.length > 0, values };
 }

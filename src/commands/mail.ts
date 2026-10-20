@@ -9,7 +9,9 @@ import {
   kqlQuote, odataQuote, safeOutputPath, resolveTimeZone, parseTime, toGraphDateTime, fromGet, addBodyOptions, bodyText, mailboxOption, userPath,
 } from '../utils.js';
 import { detectMimeType } from '../mime.js';
-import { idempotentSend, IDEMPOTENCY_HELP, listEntries, settleKey, type Entry } from '../idempotency.js';
+import {
+  fingerprint, idempotentSend, withIdempotency, IDEMPOTENCY_HELP, listEntries, settleKey, type Entry, type IdempotencyResult,
+} from '../idempotency.js';
 import { attachmentDigests, ifMatchFor, planning, readVersion, setPlanPayload, setPlanTarget, usage } from '../plan.js';
 import { resolve } from '../resolve.js';
 import { addContentOptions, contentOptions, messageTransform, transformData, type BodyMode } from '../content.js';
@@ -151,25 +153,20 @@ function sentMessageId(entry: Entry): string | undefined {
 }
 
 /**
- * Create a draft via `endpoint`, put `html` on top of its body (if given), attach the files, then send it, and return
- * its correlation. If anything fails before /send is dispatched, the unsent draft is deleted (best effort) so retries
- * don't pile up copies in Drafts (R-8). Nothing is deleted once /send was dispatched: a lost /send response is exit 1
- * `outcome_unknown` with `maybeProcessed` and the correlation (AH-6(3)).
+ * Create a draft via `endpoint`, put `html` on top of its body (if given) and attach the files; return the created
+ * draft. If a step after the create fails, the draft is deleted (best effort) so retries don't pile up copies in
+ * Drafts (R-8).
  */
-async function sendViaDraft(
+async function prepareDraft(
   client: GraphClient, endpoint: string, body: unknown, files: FileToAttach[], html?: string,
-): Promise<SendCorrelation> {
+): Promise<Record<string, unknown>> {
   const draft = await createDraft(client, endpoint, body);
   const draftId = String(draft.id);
-  const correlation: SendCorrelation = {
-    draftId, internetMessageId: typeof draft.internetMessageId === 'string' ? draft.internetMessageId : null,
-  };
-  const draftPath = `/me/messages/${encodeURIComponent(draftId)}`;
   try {
     if (html !== undefined) await prependHtml(client, draftId, html);
     await addAttachments(client, draftId, files);
   } catch (err) {
-    const deleted = await client.request(draftPath, { method: 'DELETE' }).then(() => true, () => false);
+    const deleted = await client.request(`/me/messages/${encodeURIComponent(draftId)}`, { method: 'DELETE' }).then(() => true, () => false);
     if (err instanceof Error) {
       err.message += deleted
         ? ' The unsent draft was deleted.'
@@ -179,6 +176,47 @@ async function sendViaDraft(
     if (deleted && err instanceof CliError) err.maybeProcessed = undefined;
     throw err;
   }
+  return draft;
+}
+
+/** What `mail reply --draft` prints and its --idempotency-key stores: the draft's handles, no message content. */
+function draftHandles(draft: Record<string, unknown>): IdempotencyResult {
+  const handle = (k: string) => (typeof draft[k] === 'string' ? draft[k] : null);
+  return {
+    id: handle('id'), conversationId: handle('conversationId'), webLink: handle('webLink'),
+    internetMessageId: handle('internetMessageId'), createdDateTime: handle('createdDateTime'),
+  };
+}
+
+/**
+ * Create a draft under --idempotency-key (D23) and return its handles. A repeat with the same key and request returns
+ * the first draft's handles and calls Graph for nothing, so a retry never leaves a second draft. Dry-run and --plan
+ * never touch the ledger.
+ */
+async function idempotentDraft(
+  client: GraphClient, key: string | undefined, command: string, request: unknown, create: () => Promise<Record<string, unknown>>,
+): Promise<IdempotencyResult> {
+  const run = async () => draftHandles(await create());
+  if (!key || client.isDryRun() || planning()) return run();
+  const outcome = await withIdempotency(key, command, fingerprint(request), run);
+  if (outcome.status === 'replay') info(`Draft already created at ${outcome.ts}; not created again.`);
+  return outcome.result;
+}
+
+/**
+ * Create and fill a draft via `endpoint` (prepareDraft), then send it, and return its correlation. Nothing is deleted
+ * once /send was dispatched: a lost /send response is exit 1 `outcome_unknown` with `maybeProcessed` and the
+ * correlation (AH-6(3)).
+ */
+async function sendViaDraft(
+  client: GraphClient, endpoint: string, body: unknown, files: FileToAttach[], html?: string,
+): Promise<SendCorrelation> {
+  const draft = await prepareDraft(client, endpoint, body, files, html);
+  const draftId = String(draft.id);
+  const correlation: SendCorrelation = {
+    draftId, internetMessageId: typeof draft.internetMessageId === 'string' ? draft.internetMessageId : null,
+  };
+  const draftPath = `/me/messages/${encodeURIComponent(draftId)}`;
   try {
     await client.request(`${draftPath}/send`, { method: 'POST' });
   } catch (err) {
@@ -822,11 +860,13 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
 
   addBodyOptions(mail
     .command('reply <messageId>')
-    .description('Reply to a message'), 'Reply body', true)
+    .description('Reply to a message (--draft: create the reply draft and do not send it)'), 'Reply body', true)
     .option('--html', 'Send body as HTML (goes via a reply draft so the quoted thread is kept)')
     .option('--reply-all', 'Reply to all recipients')
     .option('--attach <path>', 'Attach a file (repeatable; over 3 MB total goes via a draft + upload session)', collect, [])
+    .option('--draft', 'Create the reply draft (threaded, with --body, --html and --attach) and print it; never send. Needs Mail.ReadWrite, not Mail.Send')
     .option('--idempotency-key <key>', IDEMPOTENCY_HELP)
+    .addOption(outputOption())
     .action(handleErrors(async (messageId: string, opts) => {
       const comment = bodyText(opts) ?? '';
       const files = prepareAttachments(opts.attach);
@@ -834,11 +874,17 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       const base = `/me/messages/${encodeURIComponent(messageId)}`;
       const create = `${base}/${opts.replyAll ? 'createReplyAll' : 'createReply'}`;
       const html = !!opts.html;
-      const request = { messageId, replyAll: !!opts.replyAll, comment, html, attachments: attachmentDigests(files) };
+      const request = { messageId, replyAll: !!opts.replyAll, comment, html, attachments: attachmentDigests(files), ...(opts.draft && { draft: true }) };
       await planTargetMessage(client, messageId, request);
+      if (opts.draft) {
+        // Graph treats `comment` as text and rejects it together with message.body, so --html patches the draft's body.
+        const created = await idempotentDraft(client, opts.idempotencyKey, 'mail reply', request,
+          () => prepareDraft(client, create, html ? {} : { comment }, files, html ? comment : undefined));
+        if (created && !planning() && !client.isDryRun()) console.log(formatOutput(created, opts.output as OutputFormat));
+        return;
+      }
       const sent = await idempotentSend(client, opts.idempotencyKey, 'mail reply', request, async () => {
         if (html) {
-          // Graph treats `comment` as text and rejects it together with message.body, so patch the draft's body.
           await sendViaDraft(client, create, {}, files, comment);
         } else if (needsUploadSession(files)) {
           await sendViaDraft(client, create, { comment }, files);

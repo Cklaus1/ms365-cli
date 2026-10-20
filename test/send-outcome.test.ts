@@ -11,7 +11,7 @@ import { registerDescribeCommand } from '../src/commands/describe.js';
 import type { GraphClient } from '../src/graph-client.js';
 import { setErrorFormat } from '../src/errors.js';
 import { listEntries } from '../src/idempotency.js';
-import type { Plan } from '../src/plan.js';
+import { requestCommand, type Plan } from '../src/plan.js';
 
 const TOKEN = fakeJwt({ tid: '11111111-2222-3333-4444-555555555555', oid: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', aud: 'https://graph.microsoft.com' });
 const IMID = '<m1@contoso.com>';
@@ -152,6 +152,20 @@ describe('plans for send, reply and forward (AH-5)', () => {
     const html = await run(['mail', 'reply', 'M1', '--body', '<p>x</p>', '--html'], { token: TOKEN, plan: { file: path.join(dir, 'h.json'), command: 'mail reply' }, routes });
     expect(html.exitCode).toBe(2);
     expect(lastError(html.stderr).message).toMatch(/cannot be planned/);
+  });
+
+  it('mail reply --draft plans only the createReply, which apply checks as a draft write (no /send)', async () => {
+    const file = path.join(dir, 'd.json');
+    const routes: Route[] = [['GET', '/me/messages/M1', () => ({ id: 'M1', '@odata.etag': 'W/"ck7"' })]];
+    const r = await run(['mail', 'reply', 'M1', '--body', 'Thanks.', '--draft', '-o', 'json'], { token: TOKEN, plan: { file, command: 'mail reply' }, routes });
+    expect(r.exitCode).toBe(0);
+    expect(JSON.parse(r.stdout)).toMatchObject({ command: 'mail reply', requests: 1 }); // the plan summary, no draft
+    expect(JSON.parse(r.stdout)).not.toHaveProperty('id');
+    const plan = planOf(file);
+    expect(plan.target).toEqual({ id: 'M1', version: 'W/"ck7"' });
+    expect(plan.payload).toMatchObject({ messageId: 'M1', comment: 'Thanks.', draft: true });
+    expect(plan.requests.map(q => `${q.method} ${q.path}`)).toEqual(['POST /me/messages/M1/createReply']);
+    expect(plan.requests.map(requestCommand)).toEqual(['mail update-draft']);
   });
 });
 

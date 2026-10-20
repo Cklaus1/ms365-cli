@@ -71,12 +71,19 @@ function keyOptions(c: CatalogCommand): string {
     .join(' ');
 }
 
-/** The scopes a command needs; a delegate read (`base` selector) names its `--mailbox` clause apart (AH-10). */
+/**
+ * The scopes a command needs; a delegate read (`base` selector) names its `--mailbox` clause apart (AH-10), and a
+ * boolean-flag selector names the scopes of each mode.
+ */
 function scopeNote(c: CatalogCommand): string {
   const base = c.scopesBy?.base;
   const extra = c.scopesBy?.withOption;
   if (Array.isArray(base) && extra && typeof extra === 'object' && 'option' in extra && 'scopes' in extra && Array.isArray(extra.scopes)) {
     return `${base.join(', ')} (${String(extra.option)}: + ${extra.scopes.join(', ')})`;
+  }
+  const { flag, with: given, without } = c.scopesBy ?? {};
+  if (typeof flag === 'string' && Array.isArray(given) && Array.isArray(without)) {
+    return `${without.join(', ')} (${flag}: ${given.join(', ')} instead)`;
   }
   return c.scopes?.join(', ') ?? '';
 }
@@ -336,6 +343,10 @@ function sharedSkill(catalog: Catalog, version: string): string {
     '### Send outcome and reconcile',
     '',
     '`mail send` always goes through a draft, so it has a handle before Graph answers. Graph\'s 202 means accepted, not delivered: `-o json` prints `{outcome: "ACCEPTED", acceptedAt, correlation{draftId, internetMessageId, idempotencyKey}, delivery: "unknown"}`, and the text output says "Accepted by Exchange". With `--idempotency-key` the ledger keeps the correlation. A lost `/send` response exits 1 `outcome_unknown` with `maybeProcessed: true` and `correlation` in the error JSON; do not resend. `ms365 mail reconcile --idempotency-key <k>` (or `--internet-message-id <id>`) looks in Sent Items, Outbox and Drafts and prints `{state: SENT|STILL_DRAFT|NOT_FOUND_YET, evidence{id, folder, sentDateTime, webLink, internetMessageId}, checkedAt}`. `SENT` moves the ledger entry from `unknown` to `done`. `NOT_FOUND_YET` (also for a copy still in the Outbox) never means "not sent": check again later.',
+    '',
+    '### Reply drafts',
+    '',
+    '`ms365 mail reply <messageId> --draft [--reply-all] --body <text>` creates the threaded reply draft (`createReply`/`createReplyAll` with the text as `comment`; with `--html` the HTML is patched above the quoted thread; `--attach` files are added to the draft) and never sends it. It needs Mail.ReadWrite, not Mail.Send: `describe --json` gives `mail reply` `scopesBy: {flag: "--draft", with: ["Mail.ReadWrite"], without: ["Mail.Send"]}`, and the profile ceiling and pre-flight check the clause of the mode run. It prints the draft\'s handles in the `-o` format: `{id, conversationId, webLink, internetMessageId, createdDateTime}` (a handle Graph did not return is `null`); open `webLink` to review and send it in Outlook. If a step after the create fails, the new draft is deleted. With `--idempotency-key` a repeat of the same request prints the first draft\'s handles and creates no second draft; the same key on another request is exit 2 `idempotency_conflict`. `--dry-run` previews the requests and prints no draft; `--plan` records the `createReply` (apply checks it as a draft write), and `--html` cannot be planned.',
     '',
     '### Calendar writes: series, notices, cancel',
     '',

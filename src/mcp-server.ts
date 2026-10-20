@@ -164,7 +164,7 @@ function underCeiling(tool: Tool, cmd: Command, ceiling: Set<string>): Tool | nu
   const { allowed, values } = ceilingSurface(tool.path, ceiling);
   if (!allowed) return null;
   const sel = commandMeta(tool.path)?.scopesBy;
-  if (!sel || !values || 'base' in sel) return tool;
+  if (!sel || !values || 'base' in sel || 'flag' in sel) return tool;
   const key = 'arg' in sel ? cmd.registeredArguments[sel.arg]?.name() : cmd.options.find(o => o.long === sel.option)?.attributeName();
   const prop = key ? tool.inputSchema.properties[key] : undefined;
   if (!prop) return tool;
