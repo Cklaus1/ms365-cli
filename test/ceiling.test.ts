@@ -55,22 +55,41 @@ describe('mail reply --draft scopes (boolean-flag selector)', () => {
   const writeOnly = profileCeiling({ type: 'host', tenantId: TENANT, scopes: ['Mail.ReadWrite'] })!;
   const sendOnly = profileCeiling({ type: 'host', tenantId: TENANT, scopes: ['Mail.Send'] })!;
 
-  it('--draft needs Mail.ReadWrite and not Mail.Send; without it the reply needs Mail.Send', () => {
-    expect(commandMeta('mail reply')).toMatchObject({ scopes: ['Mail.Send', 'Mail.ReadWrite'], scopesBy: { flag: '--draft', with: ['Mail.ReadWrite'], without: ['Mail.Send'] } });
-    expect(usedScopes('mail reply', { draft: true }, ['M1'])).toEqual([{ scopes: ['Mail.ReadWrite'], for: 'with --draft' }]);
+  it('--draft needs Mail.ReadWrite and not Mail.Send; sent, a non-empty body also needs Mail.ReadWrite (E37)', () => {
+    expect(commandMeta('mail reply')).toMatchObject({ scopes: ['Mail.Send', 'Mail.ReadWrite'],
+      scopesBy: { flag: '--draft', with: ['Mail.ReadWrite'], without: ['Mail.Send'], withoutOption: { option: '--body', scopes: ['Mail.ReadWrite'] } } });
+    expect(usedScopes('mail reply', { draft: true, body: 'hi' }, ['M1'])).toEqual([{ scopes: ['Mail.ReadWrite'], for: 'with --draft' }]);
+    expect(usedScopes('mail reply', { body: 'hi' }, ['M1'])).toEqual([{ scopes: ['Mail.Send'] }, { scopes: ['Mail.ReadWrite'], for: 'with --body' }]);
+    expect(usedScopes('mail reply', { body: '' }, ['M1'])).toEqual([{ scopes: ['Mail.Send'] }]);
     expect(usedScopes('mail reply', {}, ['M1'])).toEqual([{ scopes: ['Mail.Send'] }]);
     expect(requiredScopes('mail reply', { draft: true }, ['M1'])).toEqual(usedScopes('mail reply', { draft: true }, ['M1']));
+    expect(requiredScopes('mail reply', { body: 'hi' }, ['M1'])).toEqual(usedScopes('mail reply', { body: 'hi' }, ['M1']));
   });
 
-  it('a Mail.ReadWrite ceiling allows the draft and refuses the send; a Mail.Send ceiling the other way round', () => {
-    expect(() => assertWithinCeiling('mail reply', usedScopes('mail reply', { draft: true }), writeOnly, 'chief')).not.toThrow();
-    expect(refusal(() => assertWithinCeiling('mail reply', usedScopes('mail reply', {}), writeOnly, 'chief')).message).toContain('Mail.Send');
+  it('a Mail.ReadWrite ceiling allows the draft and refuses the send; a Mail.Send ceiling allows only an empty-body send', () => {
+    expect(() => assertWithinCeiling('mail reply', usedScopes('mail reply', { draft: true, body: 'hi' }), writeOnly, 'chief')).not.toThrow();
+    expect(refusal(() => assertWithinCeiling('mail reply', usedScopes('mail reply', { body: 'hi' }), writeOnly, 'chief')).message).toContain('Mail.Send');
     expect(refusal(() => assertWithinCeiling('mail reply', usedScopes('mail reply', { draft: true }), sendOnly, 'chief')).message)
       .toContain('"mail reply" with --draft needs Mail.ReadWrite');
-    expect(() => assertWithinCeiling('mail reply', usedScopes('mail reply', {}), sendOnly, 'chief')).not.toThrow();
+    expect(refusal(() => assertWithinCeiling('mail reply', usedScopes('mail reply', { body: 'hi' }), sendOnly, 'chief')).message)
+      .toContain('"mail reply" with --body needs Mail.ReadWrite');
+    expect(() => assertWithinCeiling('mail reply', usedScopes('mail reply', { body: '' }), sendOnly, 'chief')).not.toThrow();
+    expect(() => assertWithinCeiling('mail reply', usedScopes('mail reply', { body: 'hi' }), new Set(['Mail.Send', 'Mail.ReadWrite']), 'chief')).not.toThrow();
     // Listed (MCP, describe) when either mode fits; the Gate-2 read ceiling fits neither.
     expect([ceilingSurface('mail reply', writeOnly), ceilingSurface('mail reply', sendOnly), ceilingSurface('mail reply', ceiling)])
       .toEqual([{ allowed: true }, { allowed: true }, { allowed: false }]);
+  });
+
+  it('mail forward needs Mail.Send, and Mail.ReadWrite too with a non-empty --comment (E37)', () => {
+    expect(commandMeta('mail forward')).toMatchObject({ scopes: ['Mail.Send', 'Mail.ReadWrite'],
+      scopesBy: { base: ['Mail.Send'], withOption: { option: '--comment', scopes: ['Mail.ReadWrite'] } } });
+    expect(usedScopes('mail forward', { to: 'a@contoso.com' }, ['M1'])).toEqual([{ scopes: ['Mail.Send'] }]);
+    expect(usedScopes('mail forward', { to: 'a@contoso.com', comment: '' }, ['M1'])).toEqual([{ scopes: ['Mail.Send'] }]);
+    expect(usedScopes('mail forward', { to: 'a@contoso.com', comment: 'fyi' }, ['M1']))
+      .toEqual([{ scopes: ['Mail.Send'] }, { scopes: ['Mail.ReadWrite'], for: 'with --comment' }]);
+    expect(refusal(() => assertWithinCeiling('mail forward', usedScopes('mail forward', { comment: 'fyi' }), sendOnly, 'chief')).message)
+      .toContain('"mail forward" with --comment needs Mail.ReadWrite');
+    expect(() => assertWithinCeiling('mail forward', usedScopes('mail forward', {}), sendOnly, 'chief')).not.toThrow();
   });
 });
 
@@ -240,5 +259,31 @@ describe('through the real entry point (AC 1, spawned)', () => {
     expect(opaque.status, opaque.stderr).toBe(4);
     expect(opaque.error?.code).toBe('scope_ceiling');
     expect([...dry.fetches, ...opaque.fetches]).toEqual([]);
+  }, 30_000);
+
+  it('a sent mail reply with a body is refused before any Graph call when the profile or the token lacks Mail.ReadWrite (E37)', () => {
+    const { home, configDir } = entryHome();
+    fs.mkdirSync(path.join(configDir, 'profiles'));
+    fs.writeFileSync(path.join(configDir, 'profiles', 'sender.json'), JSON.stringify({ type: 'user', scopes: ['Mail.Send', 'User.Read'] }));
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    const env = (scp: string) => ({ MS365_CLI_TOKEN: fakeJwt({ scp, aud: 'https://graph.microsoft.com', exp }), MS365_CLI_CLIENT_ID: '00000000-0000-0000-0000-000000000000' });
+    const reply = ['mail', 'reply', 'M1', '--body', 'Thanks,\nchris'];
+    // The profile ceiling holds Mail.Send only; the token would allow the draft path, the ceiling does not.
+    const ceilinged = runEntry(['--profile', 'sender', ...reply], { home, configDir, env: env('Mail.Send Mail.ReadWrite User.Read') });
+    expect(ceilinged.status, ceilinged.stderr).toBe(4);
+    expect(ceilinged.error?.code).toBe('scope_ceiling');
+    expect(ceilinged.error?.message).toContain('"mail reply" with --body needs Mail.ReadWrite');
+    // No profile: the token's consent pre-flight refuses the same run.
+    const unconsented = runEntry(reply, { home, configDir, env: env('Mail.Send User.Read') });
+    expect(unconsented.status, unconsented.stderr).toBe(4);
+    expect(unconsented.error?.code).toBe('missing_scope');
+    expect(unconsented.error?.message).toContain('with --body needs Mail.ReadWrite');
+    expect([...ceilinged.fetches, ...unconsented.fetches]).toEqual([]);
+    // An empty body still goes as `comment` on /reply, which Mail.Send alone covers.
+    const empty = runEntry(['--profile', 'sender', 'mail', 'reply', 'M1', '--body', ''], {
+      home, configDir, env: env('Mail.Send User.Read'), routes: [{ method: 'POST', match: '/me/messages/M1/reply$', status: 202 }],
+    });
+    expect(empty.status, empty.stderr).toBe(0);
+    expect(empty.fetches).toEqual(['POST https://graph.microsoft.com/v1.0/me/messages/M1/reply']);
   }, 30_000);
 });

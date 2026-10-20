@@ -467,7 +467,7 @@ The reference below is generated from the live command tree (`ms365 describe --j
 | `mail flag` | Set follow-up flag on a message | `<messageId>` | `--due <when>` `--timezone <tz>` | Mail.ReadWrite |
 | `mail folder` | Find a folder by display name or path (e.g. "Drafts", "Sent Items", "Inbox/Projects") | `<name>` |  | Mail.Read |
 | `mail folders` | List mail folders |  | `--parent <name>` | Mail.Read |
-| `mail forward` | Forward a message | `<messageId>` | `--to <addresses>` (required) `--comment <text>` `--html` `--attach <path>` `--idempotency-key <key>` | not idempotent · Mail.Send |
+| `mail forward` | Forward a message | `<messageId>` | `--to <addresses>` (required) `--comment <text>` `--html` `--attach <path>` `--idempotency-key <key>` | not idempotent · Mail.Send (--comment: + Mail.ReadWrite) |
 | `mail get` | Get a specific message (marked untrusted; see --body, --unique, --wrap-untrusted) | `<messageId>` | `--select <fields>` `--unique` `--body <mode>` `--max-chars <n>` `--wrap-untrusted` `--mailbox <upn>` | Mail.Read (--mailbox: + Mail.Read.Shared) |
 | `mail list` | List inbox messages |  | `--filter <filter>` `--select <fields>` `--search <query>` `--folder <name>` `--body <mode>` `--max-chars <n>` `--wrap-untrusted` `--top <n>` `--mailbox <upn>` | Mail.Read (--mailbox: + Mail.Read.Shared) |
 | `mail mark-read` | Mark a message as read | `<messageId>` |  | Mail.ReadWrite |
@@ -475,7 +475,7 @@ The reference below is generated from the live command tree (`ms365 describe --j
 | `mail move` | Move a message to a folder | `<messageId>` | `--folder <name>` (required) | not idempotent · Mail.ReadWrite |
 | `mail read` | Read a message with full body, attachments info, and metadata | `<messageId>` | `--text` | Mail.Read |
 | `mail reconcile` | Find out what became of a send: SENT (in Sent Items), STILL_DRAFT or NOT_FOUND_YET (never "not sent") |  | `--idempotency-key <key>` `--internet-message-id <id>` | Mail.Read |
-| `mail reply` | Reply to a message (--draft: create the reply draft and do not send it) | `<messageId>` | `--body <body>` (required) `--body-file <path>` `--html` `--reply-all` `--attach <path>` `--draft` `--idempotency-key <key>` | not idempotent · Mail.Send (--draft: Mail.ReadWrite instead) |
+| `mail reply` | Reply to a message (--draft: create the reply draft and do not send it) | `<messageId>` | `--body <body>` (required) `--body-file <path>` `--html` `--reply-all` `--attach <path>` `--draft` `--idempotency-key <key>` | not idempotent · Mail.Send (--body: + Mail.ReadWrite; --draft: Mail.ReadWrite instead) |
 | `mail rule` | Get a specific inbox rule | `<ruleId>` |  | MailboxSettings.Read |
 | `mail rules` | List inbox rules |  |  | MailboxSettings.Read |
 | `mail send` | Send an email (via a draft, so the result carries its id and internetMessageId; accepted, not delivered) |  | `--to <addresses>` (required) `--cc <addresses>` `--bcc <addresses>` `--subject <subject>` (required) `--body <body>` (required) `--body-file <path>` `--html` `--attach <path>` `--idempotency-key <key>` | not idempotent · Mail.Send |
