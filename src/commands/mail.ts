@@ -1064,7 +1064,8 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .command('create-rule')
     .description('Create an inbox rule')
     .requiredOption('--name <name>', 'Rule display name')
-    .option('--from <addresses>', 'Comma-separated sender addresses to match')
+    .option('--from <addresses>', 'Comma-separated strings to match in the sender (Graph senderContains, substring)')
+    .option('--from-address <addresses>', 'Comma-separated exact sender addresses to match (Graph fromAddresses); excludes --from')
     .option('--subject-contains <words>', 'Comma-separated words to match in subject')
     .option('--move-to <name>', 'Move matching messages to this folder (name, path or ID)')
     .option('--forward-to <addresses>', 'Comma-separated addresses to forward to')
@@ -1076,7 +1077,15 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .option('--disabled', 'Create the rule disabled')
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
+      if (opts.from && opts.fromAddress) {
+        throw new CliError('--from and --from-address are mutually exclusive.',
+          { code: 'usage', exitCode: ExitCode.USAGE, fix: 'use --from-address for exact senders or --from for substring matches, not both' });
+      }
       const conditions: Record<string, unknown> = {};
+      if (opts.fromAddress) {
+        conditions.fromAddresses = opts.fromAddress.split(',').map((s: string) => s.trim()).filter(Boolean)
+          .map((address: string) => ({ emailAddress: { address } }));
+      }
       if (opts.from) {
         conditions.senderContains = opts.from.split(',').map((s: string) => s.trim());
       }
@@ -1086,7 +1095,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
 
       if (Object.keys(conditions).length === 0 && !opts.allMessages) {
         throw new CliError('Refusing to create a rule with no conditions: it would act on every incoming message.',
-          { code: 'usage', exitCode: ExitCode.USAGE, fix: 'add --from or --subject-contains, or pass --all-messages to confirm' });
+          { code: 'usage', exitCode: ExitCode.USAGE, fix: 'add --from-address, --from or --subject-contains, or pass --all-messages to confirm' });
       }
 
       const actions: Record<string, unknown> = {};

@@ -91,6 +91,26 @@ describe('mail create-rule (M-11, D11)', () => {
     const r3 = await run(['create-rule', '--name', 'x', '--from', 'a@b.com', '--mark-read', '-o', 'json']);
     expect(r3.calls[0].body).toMatchObject({ isEnabled: true });
   });
+
+  it('--from-address sends exact fromAddresses and no senderContains', async () => {
+    const r = await run(['create-rule', '--name', 'x', '--from-address', 'a@x.test, b@y.test', '--mark-read', '-o', 'json']);
+    expect(r.exitCode).toBe(0);
+    expect(r.calls[0].body.conditions).toEqual({
+      fromAddresses: [{ emailAddress: { address: 'a@x.test' } }, { emailAddress: { address: 'b@y.test' } }],
+    });
+  });
+
+  it('--from with --from-address is a usage error (exit 2, nothing sent)', async () => {
+    const r = await run(['create-rule', '--name', 'x', '--from', 'a@x.test', '--from-address', 'a@x.test', '--mark-read']);
+    expect(r.exitCode).toBe(2);
+    expect(r.calls).toHaveLength(0);
+    expect(r.stderr).toContain('mutually exclusive');
+  });
+
+  it('--from keeps its senderContains substring behaviour', async () => {
+    const r = await run(['create-rule', '--name', 'x', '--from', 'a@x.test,b', '--mark-read', '-o', 'json']);
+    expect(r.calls[0].body.conditions).toEqual({ senderContains: ['a@x.test', 'b'] });
+  });
 });
 
 describe('mail add-attachment (M-17)', () => {

@@ -1656,7 +1656,7 @@ exports[`dry-run endpoint snapshot (every command) > mail create-rule [optional 
 exports[`dry-run endpoint snapshot (every command) > mail create-rule 1`] = `
 {
   "argv": "mail create-rule --name x",
-  "error": "Error: Refusing to create a rule with no conditions: it would act on every incoming message. (fix: add --from or --subject-contains, or pass --all-messages to confirm)",
+  "error": "Error: Refusing to create a rule with no conditions: it would act on every incoming message. (fix: add --from-address, --from or --subject-contains, or pass --all-messages to confirm)",
   "exitCode": 2,
   "requests": [],
 }

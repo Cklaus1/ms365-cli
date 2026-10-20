@@ -2681,7 +2681,17 @@
           "flags": "--from <addresses>",
           "long": "--from",
           "short": null,
-          "description": "Comma-separated sender addresses to match",
+          "description": "Comma-separated strings to match in the sender (Graph senderContains, substring)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--from-address <addresses>",
+          "long": "--from-address",
+          "short": null,
+          "description": "Comma-separated exact sender addresses to match (Graph fromAddresses); excludes --from",
           "required": false,
           "takesValue": true,
           "choices": null,
