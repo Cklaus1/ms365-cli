@@ -236,12 +236,13 @@ describe('mail sends with --idempotency-key', () => {
   });
 
   it.each([
-    ['reply', ['mail', 'reply', 'M1', '--body', 'b']],
-    ['forward', ['mail', 'forward', 'M1', '--to', 'a@b.com']],
-    ['send-draft', ['mail', 'send-draft', 'M1']],
-  ])('mail %s replays without calling Graph', async (_name, argv) => {
+    // A plain reply body goes via the draft (E36): createReply, GET, PATCH, send.
+    ['reply', ['mail', 'reply', 'M1', '--body', 'b'], 4],
+    ['forward', ['mail', 'forward', 'M1', '--to', 'a@b.com'], 1],
+    ['send-draft', ['mail', 'send-draft', 'M1'], 1],
+  ] as const)('mail %s replays without calling Graph', async (_name, argv, firstCalls) => {
     const args = [...argv, '--idempotency-key', 'k-' + _name];
-    expect((await runCommand(registerMailCommands, args)).calls).toHaveLength(1);
+    expect((await runCommand(registerMailCommands, args)).calls).toHaveLength(firstCalls);
     const second = await runCommand(registerMailCommands, args);
     expect(second.exitCode).toBe(0);
     expect(second.calls).toHaveLength(0);

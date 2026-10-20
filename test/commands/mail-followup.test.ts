@@ -141,6 +141,36 @@ describe('RT-6: reply/forward --html go through a draft (R-2, R-3, F18)', () => 
     expect(second.exitCode).toBe(2);
     expect(second.calls).toHaveLength(0);
   });
+
+  it('reply with a plain body: createReply → GET → PATCH (escaped text, line breaks as <br>) → send (E36)', async () => {
+    const r = await run(['reply', 'M1', '--body', 'Millena,\n\nThanks, I will review.\r\nThanks,\nchris'], { routes: draftRoutes('/me/messages/M1/createReply', 'D1') });
+    expect(r.exitCode).toBe(0);
+    expect(seq(r)).toEqual(['POST /me/messages/M1/createReply', 'GET /me/messages/D1', 'PATCH /me/messages/D1', 'POST /me/messages/D1/send']);
+    expect(r.calls[0].body).toEqual({});
+    expect(r.calls[2].body).toEqual({ body: { contentType: 'HTML',
+      content: '<html><head></head><body dir="ltr"><div>Millena,<br><br>Thanks, I will review.<br>Thanks,<br>chris</div><p>quoted thread</p></body></html>' } });
+  });
+
+  it('forward with a plain --comment escapes it above the forwarded message (E36)', async () => {
+    const r = await run(['forward', 'M1', '--to', 'y@contoso.com', '--comment', 'fyi <b>\nsee below'], { routes: draftRoutes('/me/messages/M1/createForward', 'D3') });
+    expect(r.exitCode).toBe(0);
+    expect(seq(r)).toEqual(['POST /me/messages/M1/createForward', 'GET /me/messages/D3', 'PATCH /me/messages/D3', 'POST /me/messages/D3/send']);
+    expect(r.calls[0].body).toEqual({ toRecipients: [{ emailAddress: { address: 'y@contoso.com' } }] });
+    expect(r.calls[2].body).toMatchObject({ body: { content: expect.stringContaining('<body dir="ltr"><div>fyi &lt;b&gt;<br>see below</div><p>quoted thread</p>') } });
+  });
+
+  it('a plain-body reply whose PATCH fails deletes the draft and sends nothing (E36)', async () => {
+    const r = await run(['reply', 'M1', '--body', 'a\nb'], {
+      routes: [
+        ['PATCH', '/me/messages/D1', () => graphError(400)],
+        ['DELETE', '/me/messages/D1', () => new Response(null, { status: 204 })],
+        ...draftRoutes('/me/messages/M1/createReply', 'D1'),
+      ],
+    });
+    expect(r.exitCode).toBe(1);
+    expect(seq(r)).toEqual(['POST /me/messages/M1/createReply', 'GET /me/messages/D1', 'PATCH /me/messages/D1', 'DELETE /me/messages/D1']);
+    expect(r.stderr).toMatch(/draft was deleted/i);
+  });
 });
 
 describe('mail reply --draft: create the threaded reply draft, never send', () => {
@@ -153,22 +183,54 @@ describe('mail reply --draft: create the threaded reply draft, never send', () =
     return rest;
   };
 
-  it('POSTs createReply with the text as comment, sends nothing and prints the draft handles as JSON', async () => {
-    const r = await run(['reply', 'M1', '--body', 'Thanks, will do.', '--draft', '-o', 'json'],
-      { routes: [['POST', '/me/messages/M1/createReply', () => created('D1')]] });
+  it('POSTs createReply, patches the text above the quoted thread with its line breaks, sends nothing and prints the draft handles as JSON', async () => {
+    const r = await run(['reply', 'M1', '--body', 'Millena,\n\nThanks, will do.\n\nThanks,\nchris', '--draft', '-o', 'json'],
+      { routes: [['POST', '/me/messages/M1/createReply', () => created('D1')], ...draftRoutes('/me/messages/M1/createReply', 'D1')] });
     expect(r.exitCode).toBe(0);
-    expect(seq(r)).toEqual(['POST /me/messages/M1/createReply']);
-    expect(r.calls[0].body).toEqual({ comment: 'Thanks, will do.' });
+    expect(seq(r)).toEqual(['POST /me/messages/M1/createReply', 'GET /me/messages/D1', 'PATCH /me/messages/D1']);
+    expect(r.calls[0].body).toEqual({});
+    expect(r.calls[2].body).toEqual({ body: { contentType: 'HTML',
+      content: '<html><head></head><body dir="ltr"><div>Millena,<br><br>Thanks, will do.<br><br>Thanks,<br>chris</div><p>quoted thread</p></body></html>' } });
     expect(JSON.parse(r.stdout)).toEqual(handles('D1'));
     expect(r.stderr).not.toMatch(/sent/i);
   });
 
+  it('a plain body is HTML-escaped (& < > " \'), so markup in it stays text', async () => {
+    const r = await run(['reply', 'M1', '--body', `<script>alert("x")</script> & 'q'`, '--draft', '-o', 'json'],
+      { routes: draftRoutes('/me/messages/M1/createReply', 'D1') });
+    expect(r.exitCode).toBe(0);
+    expect(r.calls[2].body).toMatchObject({ body: { content: expect.stringContaining(
+      '<body dir="ltr"><div>&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; &amp; &#39;q&#39;</div><p>quoted thread</p>') } });
+    expect(JSON.stringify(r.calls)).not.toContain('<script>');
+  });
+
+  it('a plain body whose PATCH fails deletes the new draft and prints nothing', async () => {
+    const r = await run(['reply', 'M1', '--body', 'a\nb', '--draft', '-o', 'json'], {
+      routes: [
+        ['PATCH', '/me/messages/D1', () => graphError(400)],
+        ['DELETE', '/me/messages/D1', () => new Response(null, { status: 204 })],
+        ...draftRoutes('/me/messages/M1/createReply', 'D1'),
+      ],
+    });
+    expect(r.exitCode).toBe(1);
+    expect(seq(r)).toEqual(['POST /me/messages/M1/createReply', 'GET /me/messages/D1', 'PATCH /me/messages/D1', 'DELETE /me/messages/D1']);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toMatch(/draft was deleted/i);
+  });
+
   it('--reply-all uses createReplyAll; Graph omitting a handle prints it as null', async () => {
     const r = await run(['reply', 'M1', '--body', 'b', '--draft', '--reply-all', '-o', 'json'],
-      { routes: [['POST', '/me/messages/M1/createReplyAll', () => ({ id: 'D2', conversationId: 'CONV2' })]] });
+      { routes: [['POST', '/me/messages/M1/createReplyAll', () => ({ id: 'D2', conversationId: 'CONV2' })], ...draftRoutes('/me/messages/M1/createReplyAll', 'D2')] });
     expect(r.exitCode).toBe(0);
-    expect(seq(r)).toEqual(['POST /me/messages/M1/createReplyAll']);
+    expect(seq(r)).toEqual(['POST /me/messages/M1/createReplyAll', 'GET /me/messages/D2', 'PATCH /me/messages/D2']);
     expect(JSON.parse(r.stdout)).toEqual({ id: 'D2', conversationId: 'CONV2', webLink: null, internetMessageId: null, createdDateTime: null });
+  });
+
+  it('an empty plain body still goes as the createReply comment (nothing to patch)', async () => {
+    const r = await run(['reply', 'M1', '--body', '', '--draft', '-o', 'json'], { routes: draftRoutes('/me/messages/M1/createReply', 'D1') });
+    expect(r.exitCode).toBe(0);
+    expect(seq(r)).toEqual(['POST /me/messages/M1/createReply']);
+    expect(r.calls[0].body).toEqual({ comment: '' });
   });
 
   it('--html patches the HTML above the quoted thread; --attach adds the file to the draft; neither sends', async () => {
@@ -216,11 +278,13 @@ describe('mail reply --draft: create the threaded reply draft, never send', () =
     }
   });
 
-  it('under --dry-run previews createReply only and prints no draft', async () => {
+  it('under --dry-run previews createReply and the body PATCH, sends nothing and prints no draft', async () => {
     const r = await run(['reply', 'M', '--body', 'b', '--draft', '-o', 'json'], { dryRun: true });
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toBe('');
     expect(r.stderr).toContain('[dry-run] POST https://graph.microsoft.com/v1.0/me/messages/M/createReply');
+    expect(r.stderr).toContain('[dry-run] PATCH https://graph.microsoft.com/v1.0/me/messages/DRAFT_ID');
+    expect(r.stderr).toContain('<div>b</div>');
     expect(r.stderr).not.toMatch(/\/send|\/reply\b/);
   });
 });

@@ -1825,7 +1825,11 @@ exports[`dry-run endpoint snapshot (every command) > mail forward [optional flag
   "error": "",
   "exitCode": 0,
   "requests": [
-    "[dry-run] POST https://graph.microsoft.com/v1.0/me/messages/MESSAGEID/forward",
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/messages/MESSAGEID/createForward",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/messages/DRAFT_ID?$select=body",
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/messages/DRAFT_ID",
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/messages/DRAFT_ID/attachments",
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/messages/DRAFT_ID/send",
   ],
 }
 `;
@@ -1963,7 +1967,11 @@ exports[`dry-run endpoint snapshot (every command) > mail reply [optional flags]
   "error": "",
   "exitCode": 0,
   "requests": [
-    "[dry-run] POST https://graph.microsoft.com/v1.0/me/messages/MESSAGEID/reply",
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/messages/MESSAGEID/createReply",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/messages/DRAFT_ID?$select=body",
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/messages/DRAFT_ID",
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/messages/DRAFT_ID/attachments",
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/messages/DRAFT_ID/send",
   ],
 }
 `;
@@ -1974,7 +1982,10 @@ exports[`dry-run endpoint snapshot (every command) > mail reply 1`] = `
   "error": "",
   "exitCode": 0,
   "requests": [
-    "[dry-run] POST https://graph.microsoft.com/v1.0/me/messages/MESSAGEID/reply",
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/messages/MESSAGEID/createReply",
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/messages/DRAFT_ID?$select=body",
+    "[dry-run] PATCH https://graph.microsoft.com/v1.0/me/messages/DRAFT_ID",
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/messages/DRAFT_ID/send",
   ],
 }
 `;

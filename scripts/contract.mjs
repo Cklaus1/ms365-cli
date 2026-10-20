@@ -173,10 +173,13 @@ export const CASES = [
     routes: [ORG, { match: '/chats/[^/?]+/messages', body: page(chatMessages, `${G}/chats/${encodeURIComponent(CHAT_ID)}/messages?$top=2&$skiptoken=m2`) }] },
   { file: 'channel-messages.json', argv: ['--error-format', 'json', 'teams', 'channel-messages', TEAM_ID, CHANNEL_ID, '--top', '2', '--body', 'none', '-o', 'json'], exit: 0, capture: 'stdout', token: TEAMS,
     routes: [ORG, { match: '/teams/[^/?]+/channels/[^/?]+/messages', body: page(channelMessages) }] },
-  // Chief's mailbox assist, no profile: `mail reply --draft` creates the threaded reply draft and prints its handles
+  // Chief's mailbox assist, no profile: `mail reply --draft` creates the threaded reply draft, patches the escaped body
+  // above its quoted thread (E36) and prints its handles
   { file: 'mail-reply-draft.json', argv: ['--error-format', 'json', 'mail', 'reply', 'm1', '--draft', '--body', 'Thanks, will do.', '-o', 'json'], exit: 0, capture: 'stdout', token: DRAFTS,
     routes: [{ match: '/me/messages/m1/createReply$', body: msg('d1', { conversationId: 'conv-m1', internetMessageId: '<d1@contoso.com>', isDraft: true, subject: 'RE: Subject m1',
-      body: { contentType: 'html', content: '<p>Thanks, will do.</p>' } }) }] },
+      body: { contentType: 'html', content: '<html><body><p>quoted thread</p></body></html>' } }) },
+    { method: 'GET', match: '/me/messages/d1\\?', body: { id: 'd1', body: { contentType: 'html', content: '<html><body><p>quoted thread</p></body></html>' } } },
+    { method: 'PATCH', match: '/me/messages/d1$', body: { id: 'd1' } }] },
 ];
 
 const sha256 = data => crypto.createHash('sha256').update(data).digest('hex');
