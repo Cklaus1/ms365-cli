@@ -349,7 +349,7 @@ The reference below is generated from the live command tree (`ms365 describe --j
 |---|---|---|---|---|
 | `chat create` | Create a 1:1 chat (one member) or group chat (two or more) |  | `--members <emails>` (required) `--topic <topic>` | not idempotent · Chat.Create, User.Read |
 | `chat get` | Get chat details | `<chatId>` |  | Chat.Read |
-| `chat list` | List chats |  | `--top <n>` | Chat.Read |
+| `chat list` | List chats (marked untrusted; --recent: newest activity first, with the last message preview) |  | `--recent` `--body <mode>` `--max-chars <n>` `--wrap-untrusted` `--top <n>` | Chat.Read |
 | `chat messages` | List chat messages (marked untrusted; see --body, --wrap-untrusted) | `<chatId>` | `--body <mode>` `--max-chars <n>` `--wrap-untrusted` `--top <n>` | ChatMessage.Read |
 | `chat reply` | Reply to a chat message | `<chatId> <messageId>` | `--body <body>` (required) `--body-file <path>` `--html` `--idempotency-key <key>` | not idempotent · ChatMessage.Read, ChatMessage.Send |
 | `chat send` | Send a chat message | `<chatId>` | `--body <body>` (required) `--body-file <path>` `--html` `--mention <upn>` `--idempotency-key <key>` | not idempotent · ChatMessage.Send, User.ReadBasic.All |
@@ -475,7 +475,7 @@ The reference below is generated from the live command tree (`ms365 describe --j
 | `mail move` | Move a message to a folder | `<messageId>` | `--folder <name>` (required) | not idempotent · Mail.ReadWrite |
 | `mail read` | Read a message with full body, attachments info, and metadata | `<messageId>` | `--text` | Mail.Read |
 | `mail reconcile` | Find out what became of a send: SENT (in Sent Items), STILL_DRAFT or NOT_FOUND_YET (never "not sent") |  | `--idempotency-key <key>` `--internet-message-id <id>` | Mail.Read |
-| `mail reply` | Reply to a message | `<messageId>` | `--body <body>` (required) `--body-file <path>` `--html` `--reply-all` `--attach <path>` `--idempotency-key <key>` | not idempotent · Mail.Send |
+| `mail reply` | Reply to a message (--draft: create the reply draft and do not send it) | `<messageId>` | `--body <body>` (required) `--body-file <path>` `--html` `--reply-all` `--attach <path>` `--draft` `--idempotency-key <key>` | not idempotent · Mail.Send (--draft: Mail.ReadWrite instead) |
 | `mail rule` | Get a specific inbox rule | `<ruleId>` |  | MailboxSettings.Read |
 | `mail rules` | List inbox rules |  |  | MailboxSettings.Read |
 | `mail send` | Send an email (via a draft, so the result carries its id and internetMessageId; accepted, not delivered) |  | `--to <addresses>` (required) `--cc <addresses>` `--bcc <addresses>` `--subject <subject>` (required) `--body <body>` (required) `--body-file <path>` `--html` `--attach <path>` `--idempotency-key <key>` | not idempotent · Mail.Send |

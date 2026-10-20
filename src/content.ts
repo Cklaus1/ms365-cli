@@ -231,9 +231,10 @@ function shapeText(text: string, opts: ContentOptions): string {
 export function shapeBodies(item: Record<string, unknown>, opts: ContentOptions): Record<string, unknown> {
   const out = { ...item };
   for (const key of ['body', 'uniqueBody']) {
+    // --body none drops the key whatever its value (a null body too, E33).
+    if (opts.body === 'none') { delete out[key]; continue; }
     const body = out[key] as { contentType?: string; content?: unknown } | undefined;
     if (!body || typeof body !== 'object') continue;
-    if (opts.body === 'none') { delete out[key]; continue; }
     if (typeof body.content !== 'string') continue;
     let { contentType, content } = body as { contentType?: string; content: string };
     const isHtml = contentType?.toLowerCase() === 'html';
@@ -309,6 +310,23 @@ export function messageTransform(client: GraphClient, kind: 'mail' | 'teams', op
       if (!isMessage(item)) return item;
       const shaped = shapeBodies(item, opts);
       return kind === 'mail' ? markMailMessage(shaped, id) : markTeamsMessage(shaped, id);
+    });
+  };
+}
+
+/**
+ * Build `chat list`'s transform (TMS-2): every chat is marked untrusted (topic and member names are settable by
+ * anyone in the chat), and the content options shape the expanded `lastMessagePreview.body` like a message body.
+ * No identity lookup: a chat has no sender to compare. Under --dry-run the placeholder passes through.
+ */
+export function chatTransform(client: GraphClient, opts: ContentOptions): ItemTransform {
+  return async (items) => {
+    if (client.isDryRun()) return items;
+    return items.map((item) => {
+      if (!isMessage(item)) return item;
+      const out: Record<string, unknown> = { ...item, untrusted: true };
+      if (isMessage(item.lastMessagePreview)) out.lastMessagePreview = shapeBodies(item.lastMessagePreview, opts);
+      return out;
     });
   };
 }

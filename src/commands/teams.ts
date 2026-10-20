@@ -5,7 +5,7 @@ import { addListOptions, outputOption, success, odataQuote, validateEmail, addBo
 import { idempotentSend, IDEMPOTENCY_HELP } from '../idempotency.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { resolve } from '../resolve.js';
-import { addContentOptions, contentOptions, htmlToText, messageTransform } from '../content.js';
+import { addContentOptions, chatTransform, contentOptions, htmlToText, messageTransform } from '../content.js';
 
 export function registerTeamsCommands(program: Command, getClient: () => GraphClient): void {
   const teams = program.command('teams').description('Microsoft Teams (requires --org-mode)');
@@ -137,18 +137,23 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
   // Chats
   const chat = program.command('chat').description('Teams chat (requires --org-mode)');
 
-  addListOptions(chat
+  addListOptions(addContentOptions(chat
     .command('list')
-    .description('List chats'), { description: 'Number of chats' })
+    .description('List chats (marked untrusted; --recent: newest activity first, with the last message preview)')
+    .option('--recent', 'Order by the last message, newest first, and include its preview (lastMessagePreview)')), { description: 'Number of chats' })
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       const client = getClient();
       const queryParams: Record<string, string> = {};
       if (opts.top) queryParams['$top'] = opts.top;
       // topic is null for 1:1 chats; the table's members column tells them apart (X-13).
-      if (opts.output === 'table') queryParams['$expand'] = 'members($select=displayName)';
+      const expand = opts.output === 'table' ? ['members($select=displayName)'] : [];
+      // TMS-1: Graph orders /me/chats only by lastMessagePreview/createdDateTime desc.
+      if (opts.recent) expand.push('lastMessagePreview');
+      if (expand.length) queryParams['$expand'] = expand.join(',');
+      if (opts.recent) queryParams['$orderby'] = 'lastMessagePreview/createdDateTime desc';
 
-      await printList(client, '/me/chats', { queryParams }, opts);
+      await printList(client, '/me/chats', { queryParams }, opts, { transform: chatTransform(client, contentOptions(opts)) });
     }));
 
   chat

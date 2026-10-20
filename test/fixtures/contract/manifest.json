@@ -1,9 +1,9 @@
 {
   "v": 1,
   "ms365": {
-    "commit": "7e0c2c5be0fc1707b7bd13bfa211466963e71355",
+    "commit": "d961b9c6ca0ae66f8e3162f55911fe6db9caffed",
     "dirty": false,
-    "distSha256": "cb84ed9fd2aed0eb9dc19629a386670e86c44155a2d0ccee53dd507d76ff8a0a"
+    "distSha256": "292f53d81d1858db9fbc18c2759cf400e20ee6838af35141e7b56233509a16b6"
   },
   "clock": "2026-10-17T12:00:00.000Z",
   "profile": {
@@ -395,6 +395,89 @@
       "exitCode": 0,
       "capture": "stdout",
       "sha256": "eb8fb24eedde715ecd75893afbe851a2c384bd620acd7dd3f804488be57af62d"
+    },
+    "describe-unfiltered.json": {
+      "argv": [
+        "--error-format",
+        "json",
+        "describe",
+        "--json"
+      ],
+      "exitCode": 0,
+      "capture": "stdout",
+      "sha256": "45f945799ba86c6e4cfcf7198ee11bd4a5696c99976d547f97f4719e135aa1f9"
+    },
+    "chat-list-recent.json": {
+      "argv": [
+        "--error-format",
+        "json",
+        "chat",
+        "list",
+        "--recent",
+        "--top",
+        "2",
+        "--body",
+        "none",
+        "-o",
+        "json"
+      ],
+      "exitCode": 0,
+      "capture": "stdout",
+      "sha256": "a4a895eb1bd84f9d7fe5664096b03d019a9b97d7df8158123bb7ec6842db79de"
+    },
+    "chat-messages.json": {
+      "argv": [
+        "--error-format",
+        "json",
+        "chat",
+        "messages",
+        "19:fixturechat@thread.v2",
+        "--top",
+        "2",
+        "--body",
+        "none",
+        "-o",
+        "json"
+      ],
+      "exitCode": 0,
+      "capture": "stdout",
+      "sha256": "9e0d154afd073fe8924a34ef8a97d824963bb40ee741987ef6e3385d7c28505a"
+    },
+    "channel-messages.json": {
+      "argv": [
+        "--error-format",
+        "json",
+        "teams",
+        "channel-messages",
+        "44444444-5555-6666-7777-888888888888",
+        "19:fixturechannel@thread.tacv2",
+        "--top",
+        "2",
+        "--body",
+        "none",
+        "-o",
+        "json"
+      ],
+      "exitCode": 0,
+      "capture": "stdout",
+      "sha256": "91dcc78abf5b6a98235b67be0e8639aad399d660c4ee7dd5644fb1087a86cbd4"
+    },
+    "mail-reply-draft.json": {
+      "argv": [
+        "--error-format",
+        "json",
+        "mail",
+        "reply",
+        "m1",
+        "--draft",
+        "--body",
+        "Thanks, will do.",
+        "-o",
+        "json"
+      ],
+      "exitCode": 0,
+      "capture": "stdout",
+      "sha256": "0d3584294a41606a7ca20433a822dde9494f5cb28ee63c03db4051310f7f3ca1"
     }
   }
 }

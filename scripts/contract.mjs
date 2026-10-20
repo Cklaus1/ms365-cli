@@ -33,6 +33,10 @@ const LIVE = jwt({ aud: 'https://graph.microsoft.com', tid: TENANT, oid: OID, up
 const EXPIRED = jwt({ aud: 'https://graph.microsoft.com', tid: TENANT, oid: OID, scp: 'Mail.Read', exp: 1 });
 const OTHER_TENANT = jwt({ aud: 'https://graph.microsoft.com', tid: '99999999-2222-3333-4444-555555555555', oid: OID, scp: 'Mail.Read', exp: EXP });
 const TASKS = jwt({ aud: 'https://graph.microsoft.com', tid: TENANT, oid: OID, scp: 'Tasks.ReadWrite', exp: EXP });
+// Chief's Teams brief (TMS-3): runs without a profile, like Chief's session describe.
+const TEAMS = jwt({ aud: 'https://graph.microsoft.com', tid: TENANT, oid: OID, upn: UPN, scp: 'User.Read Chat.Read ChatMessage.Read ChannelMessage.Read.All', exp: EXP });
+// Chief's mailbox assist (reply drafts): Mail.ReadWrite only, never Mail.Send.
+const DRAFTS = jwt({ aud: 'https://graph.microsoft.com', tid: TENANT, oid: OID, upn: UPN, scp: 'User.Read Mail.ReadWrite', exp: EXP });
 
 const G = 'https://graph.microsoft.com/v1.0';
 const ME = { match: '/me\\?', body: { id: OID, userPrincipalName: UPN, mail: UPN } };
@@ -45,6 +49,56 @@ const mailCheckpoint = b64({ v: 1, resource: 'mail', endpoint: '/me/mailFolders/
 const eventsCheckpoint = b64({ v: 1, resource: 'events', endpoint: '/me/calendarView/delta', deltaLink: `${G}/me/calendarView/delta?$deltatoken=e1`, syncedAt: '2026-10-17T11:00:00.000Z', coverageStart: '2026-09-20T00:00:00.000Z', window: { start: '2026-09-20T00:00:00.000Z', end: '2026-10-20T00:00:00.000Z' } });
 const driveCursor = Buffer.from(`${G}/me/drive/root/children?$skiptoken=x`).toString('base64url');
 const page = (items, next) => ({ value: items, ...(next && { '@odata.nextLink': next }) });
+
+// Teams samples (TMS-3): Graph chat / chatMessage shapes with a user sender, an @mention, a bot preview and a
+// system message (no from.user).
+const TEAM_ID = '44444444-5555-6666-7777-888888888888';
+const CHAT_ID = '19:fixturechat@thread.v2';
+const CHANNEL_ID = '19:fixturechannel@thread.tacv2';
+const MEGAN = '33333333-4444-5555-6666-777777777777';
+const PARTNER_TENANT = '88888888-2222-3333-4444-555555555555';
+const teamsUser = (id, displayName, tenantId = TENANT) => ({ application: null, device: null,
+  user: { '@odata.type': '#microsoft.graph.teamworkUserIdentity', id, displayName, userIdentityType: 'aadUser', tenantId } });
+const mention = (id, user, displayName) => ({ id, mentionText: displayName, mentioned: { application: null, device: null, conversation: null, tag: null,
+  user: { '@odata.type': '#microsoft.graph.teamworkUserIdentity', id: user, displayName, userIdentityType: 'aadUser' } } });
+const teamsMsg = (id, at, extra) => ({
+  id, replyToId: null, etag: id, messageType: 'message', createdDateTime: at, lastModifiedDateTime: at, lastEditedDateTime: null, deletedDateTime: null,
+  subject: null, summary: null, chatId: null, importance: 'normal', locale: 'en-us', webUrl: null, channelIdentity: null, policyViolation: null,
+  eventDetail: null, from: teamsUser(OID, 'Chief Executive'), body: { contentType: 'html', content: `<p>Message ${id}</p>` },
+  attachments: [], mentions: [], reactions: [], ...extra,
+});
+const systemMsg = (id, at, extra) => teamsMsg(id, at, { messageType: 'unknownFutureValue', from: null, body: { contentType: 'html', content: '<systemEventMessage/>' },
+  eventDetail: { '@odata.type': '#microsoft.graph.membersAddedEventMessageDetail', visibleHistoryStartDateTime: '0001-01-01T00:00:00Z',
+    members: [{ id: MEGAN, displayName: null, userIdentityType: 'aadUser', tenantId: TENANT }], initiator: { application: null, device: null, user: { id: OID, displayName: null, userIdentityType: 'aadUser', tenantId: TENANT } } },
+  ...extra });
+const chatWebUrl = id => `https://teams.microsoft.com/l/chat/${encodeURIComponent(id)}/0?tenantId=${TENANT}`;
+const chats = [
+  { id: CHAT_ID, topic: 'Q3 close', createdDateTime: '2026-09-01T08:00:00Z', lastUpdatedDateTime: '2026-10-17T10:15:00Z', chatType: 'group',
+    webUrl: chatWebUrl(CHAT_ID), tenantId: TENANT, onlineMeetingInfo: null, isHiddenForAllMembers: false,
+    viewpoint: { isHidden: false, lastMessageReadDateTime: '2026-10-17T09:00:00Z' },
+    lastMessagePreview: { id: '1760696100000', createdDateTime: '2026-10-17T10:15:00Z', isDeleted: false, messageType: 'message', eventDetail: null,
+      body: { contentType: 'text', content: 'Numbers attached, please review' }, from: teamsUser(MEGAN, 'Megan Bowen', PARTNER_TENANT) } },
+  { id: `19:${OID}_${MEGAN}@unq.gbl.spaces`, topic: null, createdDateTime: '2026-08-12T08:00:00Z', lastUpdatedDateTime: '2026-10-17T07:30:00Z', chatType: 'oneOnOne',
+    webUrl: chatWebUrl(`19:${OID}_${MEGAN}@unq.gbl.spaces`), tenantId: TENANT, onlineMeetingInfo: null, isHiddenForAllMembers: false,
+    viewpoint: { isHidden: false, lastMessageReadDateTime: '2026-10-17T07:30:00Z' },
+    lastMessagePreview: { id: '1760686200000', createdDateTime: '2026-10-17T07:30:00Z', isDeleted: false, messageType: 'message', eventDetail: null,
+      body: { contentType: 'html', content: '<p>Approval requested</p>' },
+      from: { application: { '@odata.type': '#microsoft.graph.teamworkApplicationIdentity', id: '66666666-7777-8888-9999-000000000000', displayName: 'Workflows', applicationIdentityType: 'bot' }, device: null, user: null } } },
+];
+const chatMessages = [
+  teamsMsg('1760696100000', '2026-10-17T10:15:00Z', { chatId: CHAT_ID, from: teamsUser(MEGAN, 'Megan Bowen', PARTNER_TENANT),
+    body: { contentType: 'html', content: '<p><at id="0">Chief Executive</at> numbers attached, please review</p>' }, mentions: [mention(0, OID, 'Chief Executive')] }),
+  systemMsg('1760695200000', '2026-10-17T10:00:00Z', { chatId: CHAT_ID }),
+];
+const channelUrl = (id, parent) => `https://teams.microsoft.com/l/message/${encodeURIComponent(CHANNEL_ID)}/${id}?groupId=${TEAM_ID}&tenantId=${TENANT}&createdTime=${id}&parentMessageId=${parent}`;
+const channelMessages = [
+  teamsMsg('1760692500000', '2026-10-17T09:15:00Z', { subject: 'Q3 forecast', webUrl: channelUrl('1760692500000', '1760692500000'),
+    lastModifiedDateTime: '2026-10-17T09:20:00Z', lastEditedDateTime: '2026-10-17T09:20:00Z', channelIdentity: { teamId: TEAM_ID, channelId: CHANNEL_ID },
+    from: teamsUser(MEGAN, 'Megan Bowen'), mentions: [mention(0, OID, 'Chief Executive')],
+    body: { contentType: 'html', content: '<p><at id="0">Chief Executive</at> forecast updated</p>' } }),
+  systemMsg('1760691600000', '2026-10-17T09:00:00Z', { webUrl: channelUrl('1760691600000', '1760691600000'), channelIdentity: { teamId: TEAM_ID, channelId: CHANNEL_ID } }),
+];
+const ORG = { match: '/organization', body: { value: [{ id: TENANT }] } };
 
 const host = ['--profile', 'chief', '--error-format', 'json'];
 
@@ -109,6 +163,20 @@ export const CASES = [
   { file: 'watch-events-window-rolled.ndjson', argv: [...host, '--refs', 'watch', 'events', '--checkpoint', eventsCheckpoint], exit: 0, capture: 'stdout',
     routes: [ME, { match: '/calendarView/delta', body: { value: [{ id: 'e1', changeKey: 'ck-e1', subject: 'Board', lastModifiedDateTime: '2026-10-10T09:00:00Z' }],
       '@odata.deltaLink': `${G}/me/calendarView/delta?$deltatoken=e2` } }] },
+  // Chief's Teams brief (TMS-3), no profile: the session describe, and the three reads (the chat route answers only
+  // the --recent query; the chat pages carry a nextLink, so complete:false)
+  { file: 'describe-unfiltered.json', argv: ['--error-format', 'json', 'describe', '--json'], exit: 0, capture: 'stdout', token: TEAMS },
+  { file: 'chat-list-recent.json', argv: ['--error-format', 'json', 'chat', 'list', '--recent', '--top', '2', '--body', 'none', '-o', 'json'], exit: 0, capture: 'stdout', token: TEAMS,
+    routes: [{ match: '/me/chats\\?.*expand=lastMessagePreview.*orderby=lastMessagePreview', body: page(chats,
+      `${G}/me/chats?$top=2&$expand=lastMessagePreview&$orderby=lastMessagePreview%2FcreatedDateTime+desc&$skiptoken=c2`) }] },
+  { file: 'chat-messages.json', argv: ['--error-format', 'json', 'chat', 'messages', CHAT_ID, '--top', '2', '--body', 'none', '-o', 'json'], exit: 0, capture: 'stdout', token: TEAMS,
+    routes: [ORG, { match: '/chats/[^/?]+/messages', body: page(chatMessages, `${G}/chats/${encodeURIComponent(CHAT_ID)}/messages?$top=2&$skiptoken=m2`) }] },
+  { file: 'channel-messages.json', argv: ['--error-format', 'json', 'teams', 'channel-messages', TEAM_ID, CHANNEL_ID, '--top', '2', '--body', 'none', '-o', 'json'], exit: 0, capture: 'stdout', token: TEAMS,
+    routes: [ORG, { match: '/teams/[^/?]+/channels/[^/?]+/messages', body: page(channelMessages) }] },
+  // Chief's mailbox assist, no profile: `mail reply --draft` creates the threaded reply draft and prints its handles
+  { file: 'mail-reply-draft.json', argv: ['--error-format', 'json', 'mail', 'reply', 'm1', '--draft', '--body', 'Thanks, will do.', '-o', 'json'], exit: 0, capture: 'stdout', token: DRAFTS,
+    routes: [{ match: '/me/messages/m1/createReply$', body: msg('d1', { conversationId: 'conv-m1', internetMessageId: '<d1@contoso.com>', isDraft: true, subject: 'RE: Subject m1',
+      body: { contentType: 'html', content: '<p>Thanks, will do.</p>' } }) }] },
 ];
 
 const sha256 = data => crypto.createHash('sha256').update(data).digest('hex');

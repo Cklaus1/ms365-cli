@@ -143,6 +143,88 @@ describe('RT-6: reply/forward --html go through a draft (R-2, R-3, F18)', () => 
   });
 });
 
+describe('mail reply --draft: create the threaded reply draft, never send', () => {
+  const created = (id: string) => ({
+    id, conversationId: 'CONV1', webLink: `https://outlook.office365.com/owa/?ItemID=${id}`, internetMessageId: `<${id}@acme-fund.example>`,
+    createdDateTime: '2026-10-20T09:00:00Z', subject: 'RE: Q3', body: { contentType: 'html', content: quoted },
+  });
+  const handles = (id: string) => {
+    const { body: _body, subject: _subject, ...rest } = created(id);
+    return rest;
+  };
+
+  it('POSTs createReply with the text as comment, sends nothing and prints the draft handles as JSON', async () => {
+    const r = await run(['reply', 'M1', '--body', 'Thanks, will do.', '--draft', '-o', 'json'],
+      { routes: [['POST', '/me/messages/M1/createReply', () => created('D1')]] });
+    expect(r.exitCode).toBe(0);
+    expect(seq(r)).toEqual(['POST /me/messages/M1/createReply']);
+    expect(r.calls[0].body).toEqual({ comment: 'Thanks, will do.' });
+    expect(JSON.parse(r.stdout)).toEqual(handles('D1'));
+    expect(r.stderr).not.toMatch(/sent/i);
+  });
+
+  it('--reply-all uses createReplyAll; Graph omitting a handle prints it as null', async () => {
+    const r = await run(['reply', 'M1', '--body', 'b', '--draft', '--reply-all', '-o', 'json'],
+      { routes: [['POST', '/me/messages/M1/createReplyAll', () => ({ id: 'D2', conversationId: 'CONV2' })]] });
+    expect(r.exitCode).toBe(0);
+    expect(seq(r)).toEqual(['POST /me/messages/M1/createReplyAll']);
+    expect(JSON.parse(r.stdout)).toEqual({ id: 'D2', conversationId: 'CONV2', webLink: null, internetMessageId: null, createdDateTime: null });
+  });
+
+  it('--html patches the HTML above the quoted thread; --attach adds the file to the draft; neither sends', async () => {
+    fs.writeFileSync('a.txt', 'x');
+    const r = await run(['reply', 'M1', '--body', '<b>Approved</b>', '--html', '--attach', 'a.txt', '--draft', '-o', 'json'], {
+      routes: [['POST', '/me/messages/D1/attachments', () => ({ id: 'A1' })], ...draftRoutes('/me/messages/M1/createReply', 'D1')],
+    });
+    expect(r.exitCode).toBe(0);
+    expect(seq(r)).toEqual(['POST /me/messages/M1/createReply', 'GET /me/messages/D1', 'PATCH /me/messages/D1', 'POST /me/messages/D1/attachments']);
+    expect(r.calls[0].body ?? {}).not.toHaveProperty('comment');
+    expect(r.calls[2].body).toEqual({ body: { contentType: 'HTML', content: '<html><head></head><body dir="ltr"><b>Approved</b><p>quoted thread</p></body></html>' } });
+    expect(JSON.parse(r.stdout)).toMatchObject({ id: 'D1' });
+  });
+
+  it('a failed PATCH deletes the new draft and prints nothing', async () => {
+    const r = await run(['reply', 'M1', '--body', '<b>x</b>', '--html', '--draft', '-o', 'json'], {
+      routes: [
+        ['PATCH', '/me/messages/D1', () => graphError(400)],
+        ['DELETE', '/me/messages/D1', () => new Response(null, { status: 204 })],
+        ...draftRoutes('/me/messages/M1/createReply', 'D1'),
+      ],
+    });
+    expect(r.exitCode).toBe(1);
+    expect(seq(r)).toContain('DELETE /me/messages/D1');
+    expect(seq(r)).not.toContain('POST /me/messages/D1/send');
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toMatch(/draft was deleted/i);
+  });
+
+  it('--idempotency-key: a repeat returns the first draft without calling Graph; another request with the key conflicts', async () => {
+    const key = newKey();
+    const routes: Route[] = [['POST', '/me/messages/M1/createReply', () => created('D1')]];
+    const first = await run(['reply', 'M1', '--body', 'b', '--draft', '--idempotency-key', key, '-o', 'json'], { routes });
+    expect(first.exitCode).toBe(0);
+    const second = await run(['reply', 'M1', '--body', 'b', '--draft', '--idempotency-key', key, '-o', 'json'], { routes });
+    expect(second.exitCode).toBe(0);
+    expect(second.calls).toHaveLength(0);
+    expect(JSON.parse(second.stdout)).toEqual(JSON.parse(first.stdout));
+    expect(second.stderr).toMatch(/Draft already created at .*; not created again/);
+    for (const argv of [['reply', 'M1', '--body', 'b', '--idempotency-key', key], ['reply', 'M1', '--body', 'other', '--draft', '--idempotency-key', key]]) {
+      const other = await run(argv, { routes });
+      expect(other.exitCode, argv.join(' ')).toBe(2);
+      expect(other.stderr).toMatch(/different request/);
+      expect(other.calls).toHaveLength(0);
+    }
+  });
+
+  it('under --dry-run previews createReply only and prints no draft', async () => {
+    const r = await run(['reply', 'M', '--body', 'b', '--draft', '-o', 'json'], { dryRun: true });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('[dry-run] POST https://graph.microsoft.com/v1.0/me/messages/M/createReply');
+    expect(r.stderr).not.toMatch(/\/send|\/reply\b/);
+  });
+});
+
 describe('RT-8: a failed attachment upload deletes the unsent draft (R-8)', () => {
   it('a failing chunk upload triggers one DELETE of the draft and no send', async () => {
     fs.writeFileSync('big.bin', Buffer.alloc(3 * MB + 1, 1));
@@ -301,6 +383,7 @@ describe('DR-T4/DR-T5/DR-T6: dry-run prints no invented outcomes (DR-1, DR-12, D
       ['send-draft', 'M'],
       ['reply', 'M', '--body', 'b'],
       ['reply', 'M', '--body', '<b>b</b>', '--html'],
+      ['reply', 'M', '--body', 'b', '--draft'],
       ['forward', 'M', '--to', 'a@b.com'],
       ['mark-read', 'M'], ['mark-unread', 'M'], ['flag', 'M'], ['unflag', 'M'], ['complete', 'M'],
       ['categorize', 'M', '--categories', 'Red'],

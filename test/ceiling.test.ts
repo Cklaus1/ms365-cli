@@ -51,6 +51,29 @@ describe('catalog uses (AH-1(2), AC 4)', () => {
   });
 });
 
+describe('mail reply --draft scopes (boolean-flag selector)', () => {
+  const writeOnly = profileCeiling({ type: 'host', tenantId: TENANT, scopes: ['Mail.ReadWrite'] })!;
+  const sendOnly = profileCeiling({ type: 'host', tenantId: TENANT, scopes: ['Mail.Send'] })!;
+
+  it('--draft needs Mail.ReadWrite and not Mail.Send; without it the reply needs Mail.Send', () => {
+    expect(commandMeta('mail reply')).toMatchObject({ scopes: ['Mail.Send', 'Mail.ReadWrite'], scopesBy: { flag: '--draft', with: ['Mail.ReadWrite'], without: ['Mail.Send'] } });
+    expect(usedScopes('mail reply', { draft: true }, ['M1'])).toEqual([{ scopes: ['Mail.ReadWrite'], for: 'with --draft' }]);
+    expect(usedScopes('mail reply', {}, ['M1'])).toEqual([{ scopes: ['Mail.Send'] }]);
+    expect(requiredScopes('mail reply', { draft: true }, ['M1'])).toEqual(usedScopes('mail reply', { draft: true }, ['M1']));
+  });
+
+  it('a Mail.ReadWrite ceiling allows the draft and refuses the send; a Mail.Send ceiling the other way round', () => {
+    expect(() => assertWithinCeiling('mail reply', usedScopes('mail reply', { draft: true }), writeOnly, 'chief')).not.toThrow();
+    expect(refusal(() => assertWithinCeiling('mail reply', usedScopes('mail reply', {}), writeOnly, 'chief')).message).toContain('Mail.Send');
+    expect(refusal(() => assertWithinCeiling('mail reply', usedScopes('mail reply', { draft: true }), sendOnly, 'chief')).message)
+      .toContain('"mail reply" with --draft needs Mail.ReadWrite');
+    expect(() => assertWithinCeiling('mail reply', usedScopes('mail reply', {}), sendOnly, 'chief')).not.toThrow();
+    // Listed (MCP, describe) when either mode fits; the Gate-2 read ceiling fits neither.
+    expect([ceilingSurface('mail reply', writeOnly), ceilingSurface('mail reply', sendOnly), ceilingSurface('mail reply', ceiling)])
+      .toEqual([{ allowed: true }, { allowed: true }, { allowed: false }]);
+  });
+});
+
 describe('profile ceiling (AH-1, AC 1-2)', () => {
   it('ignores OIDC scopes and the Graph resource prefix; admin profiles and profiles without scopes have none', () => {
     expect([...profileCeiling({ scopes: ['https://graph.microsoft.com/Mail.Read', 'openid', 'profile', 'email', 'offline_access'] })!]).toEqual(['Mail.Read']);

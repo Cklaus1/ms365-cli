@@ -1,0 +1,74 @@
+{
+  "value": [
+    {
+      "id": "19:fixturechat@thread.v2",
+      "topic": "Q3 close",
+      "createdDateTime": "2026-09-01T08:00:00Z",
+      "lastUpdatedDateTime": "2026-10-17T10:15:00Z",
+      "chatType": "group",
+      "webUrl": "https://teams.microsoft.com/l/chat/19%3Afixturechat%40thread.v2/0?tenantId=11111111-2222-3333-4444-555555555555",
+      "tenantId": "11111111-2222-3333-4444-555555555555",
+      "onlineMeetingInfo": null,
+      "isHiddenForAllMembers": false,
+      "viewpoint": {
+        "isHidden": false,
+        "lastMessageReadDateTime": "2026-10-17T09:00:00Z"
+      },
+      "lastMessagePreview": {
+        "id": "1760696100000",
+        "createdDateTime": "2026-10-17T10:15:00Z",
+        "isDeleted": false,
+        "messageType": "message",
+        "eventDetail": null,
+        "from": {
+          "application": null,
+          "device": null,
+          "user": {
+            "@odata.type": "#microsoft.graph.teamworkUserIdentity",
+            "id": "33333333-4444-5555-6666-777777777777",
+            "displayName": "Megan Bowen",
+            "userIdentityType": "aadUser",
+            "tenantId": "88888888-2222-3333-4444-555555555555"
+          }
+        }
+      },
+      "untrusted": true
+    },
+    {
+      "id": "19:22222222-3333-4444-5555-666666666666_33333333-4444-5555-6666-777777777777@unq.gbl.spaces",
+      "topic": null,
+      "createdDateTime": "2026-08-12T08:00:00Z",
+      "lastUpdatedDateTime": "2026-10-17T07:30:00Z",
+      "chatType": "oneOnOne",
+      "webUrl": "https://teams.microsoft.com/l/chat/19%3A22222222-3333-4444-5555-666666666666_33333333-4444-5555-6666-777777777777%40unq.gbl.spaces/0?tenantId=11111111-2222-3333-4444-555555555555",
+      "tenantId": "11111111-2222-3333-4444-555555555555",
+      "onlineMeetingInfo": null,
+      "isHiddenForAllMembers": false,
+      "viewpoint": {
+        "isHidden": false,
+        "lastMessageReadDateTime": "2026-10-17T07:30:00Z"
+      },
+      "lastMessagePreview": {
+        "id": "1760686200000",
+        "createdDateTime": "2026-10-17T07:30:00Z",
+        "isDeleted": false,
+        "messageType": "message",
+        "eventDetail": null,
+        "from": {
+          "application": {
+            "@odata.type": "#microsoft.graph.teamworkApplicationIdentity",
+            "id": "66666666-7777-8888-9999-000000000000",
+            "displayName": "Workflows",
+            "applicationIdentityType": "bot"
+          },
+          "device": null,
+          "user": null
+        }
+      },
+      "untrusted": true
+    }
+  ],
+  "complete": false,
+  "incompleteReason": "next_cursor",
+  "nextCursor": "aHR0cHM6Ly9ncmFwaC5taWNyb3NvZnQuY29tL3YxLjAvbWUvY2hhdHM_JHRvcD0yJiRleHBhbmQ9bGFzdE1lc3NhZ2VQcmV2aWV3JiRvcmRlcmJ5PWxhc3RNZXNzYWdlUHJldmlldyUyRmNyZWF0ZWREYXRlVGltZStkZXNjJiRza2lwdG9rZW49YzI"
+}
