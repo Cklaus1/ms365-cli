@@ -60,12 +60,22 @@ describe('--attach (PM-6): inline for small files', () => {
     expect((r.calls[0].body as any).attachments[0]).toMatchObject({ name: 'a.txt', contentBytes: 'eA==' });
   });
 
-  it('mail reply sends attachments in the message property', async () => {
+  it('mail reply with an empty body sends attachments in the message property', async () => {
     fs.writeFileSync('a.txt', 'x');
-    const r = await run(['reply', 'M1', '--body', 'thanks', '--attach', 'a.txt']);
+    const r = await run(['reply', 'M1', '--body', '', '--attach', 'a.txt']);
     expect(r.exitCode).toBe(0);
     expect(seq(r)).toEqual(['POST /me/messages/M1/reply']);
-    expect(r.calls[0].body).toMatchObject({ comment: 'thanks', message: { attachments: [{ name: 'a.txt' }] } });
+    expect(r.calls[0].body).toMatchObject({ comment: '', message: { attachments: [{ name: 'a.txt' }] } });
+  });
+
+  it('mail reply with a body and a small file adds the file to the reply draft (E36)', async () => {
+    fs.writeFileSync('a.txt', 'x');
+    const r = await run(['reply', 'M1', '--body', 'thanks', '--attach', 'a.txt'], {
+      routes: [['POST', '/me/messages/M1/createReply', () => ({ id: 'D1' })]],
+    });
+    expect(r.exitCode).toBe(0);
+    expect(seq(r)).toEqual(['POST /me/messages/M1/createReply', 'GET /me/messages/D1', 'PATCH /me/messages/D1', 'POST /me/messages/D1/attachments', 'POST /me/messages/D1/send']);
+    expect(r.calls[3].body).toMatchObject({ name: 'a.txt' });
   });
 
   it('mail forward sends attachments in the message property', async () => {
@@ -77,8 +87,8 @@ describe('--attach (PM-6): inline for small files', () => {
   });
 
   it('without --attach the request bodies are unchanged', async () => {
-    const r = await run(['reply', 'M1', '--body', 'thanks']);
-    expect(r.calls[0].body).toEqual({ comment: 'thanks' });
+    const r = await run(['reply', 'M1', '--body', '']);
+    expect(r.calls[0].body).toEqual({ comment: '' });
   });
 });
 
@@ -127,25 +137,27 @@ describe('--attach (PM-6): draft + upload session above 3 MB', () => {
     expect(JSON.parse(r.stdout)).toMatchObject({ id: 'D1' });
   });
 
-  it('mail reply --reply-all with a large file uses createReplyAll then send', async () => {
+  it('mail reply --reply-all with a large file uses createReplyAll, patches the body, uploads, then sends', async () => {
     fs.writeFileSync('big.bin', Buffer.alloc(3 * MB + 1, 1));
     const r = await run(['reply', 'M1', '--body', 'see attached', '--reply-all', '--attach', 'big.bin'], {
       routes: [...uploadRoutes('D2'), ['POST', '/me/messages/M1/createReplyAll', () => ({ id: 'D2' })]],
     });
     expect(r.exitCode).toBe(0);
-    expect(seq(r)[0]).toBe('POST /me/messages/M1/createReplyAll');
-    expect(r.calls[0].body).toEqual({ comment: 'see attached' });
+    expect(seq(r).slice(0, 4)).toEqual(['POST /me/messages/M1/createReplyAll', 'GET /me/messages/D2', 'PATCH /me/messages/D2', 'POST /me/messages/D2/attachments/createUploadSession']);
+    expect(r.calls[0].body).toEqual({});
+    expect(r.calls[2].body).toMatchObject({ body: { contentType: 'HTML', content: expect.stringContaining('<div>see attached</div>') } });
     expect(seq(r).at(-1)).toBe('POST /me/messages/D2/send');
   });
 
-  it('mail forward with a large file uses createForward then send', async () => {
+  it('mail forward without a comment and a large file uses createForward then send', async () => {
     fs.writeFileSync('big.bin', Buffer.alloc(3 * MB + 1, 1));
-    const r = await run(['forward', 'M1', '--to', 'y@contoso.com', '--comment', 'fyi', '--attach', 'big.bin'], {
+    const r = await run(['forward', 'M1', '--to', 'y@contoso.com', '--attach', 'big.bin'], {
       routes: [...uploadRoutes('D3'), ['POST', '/me/messages/M1/createForward', () => ({ id: 'D3' })]],
     });
     expect(r.exitCode).toBe(0);
     expect(seq(r)[0]).toBe('POST /me/messages/M1/createForward');
-    expect(r.calls[0].body).toMatchObject({ comment: 'fyi', toRecipients: [{ emailAddress: { address: 'y@contoso.com' } }] });
+    expect(seq(r)[1]).toBe('POST /me/messages/D3/attachments/createUploadSession');
+    expect(r.calls[0].body).toMatchObject({ comment: '', toRecipients: [{ emailAddress: { address: 'y@contoso.com' } }] });
     expect(seq(r).at(-1)).toBe('POST /me/messages/D3/send');
   });
 });

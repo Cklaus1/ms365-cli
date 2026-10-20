@@ -138,10 +138,10 @@ describe('plans for send, reply and forward (AH-5)', () => {
     expect(plan.payload).toMatchObject({ subject: 'Q3', toRecipients: [{ emailAddress: { address: 'cfo@contoso.com' } }], attachments: [] });
   });
 
-  it('mail reply binds the original message (id and version) without If-Match; --html cannot be planned', async () => {
+  it('mail reply binds the original message (id and version) without If-Match; a body (plain or --html) cannot be planned', async () => {
     const file = path.join(dir, 'r.json');
     const routes: Route[] = [['GET', '/me/messages/M1', () => ({ id: 'M1', '@odata.etag': 'W/"ck7"' })]];
-    const r = await run(['mail', 'reply', 'M1', '--body', 'Thanks.'], { token: TOKEN, plan: { file, command: 'mail reply' }, routes });
+    const r = await run(['mail', 'reply', 'M1', '--body', ''], { token: TOKEN, plan: { file, command: 'mail reply' }, routes });
     expect(r.exitCode).toBe(0);
     const plan = planOf(file);
     expect(plan.target).toEqual({ id: 'M1', version: 'W/"ck7"' });
@@ -149,21 +149,26 @@ describe('plans for send, reply and forward (AH-5)', () => {
     expect(plan.requests[0]).toMatchObject({ method: 'POST', path: '/me/messages/M1/reply' });
     expect(plan.requests[0].headers['If-Match']).toBeUndefined();
 
-    const html = await run(['mail', 'reply', 'M1', '--body', '<p>x</p>', '--html'], { token: TOKEN, plan: { file: path.join(dir, 'h.json'), command: 'mail reply' }, routes });
-    expect(html.exitCode).toBe(2);
-    expect(lastError(html.stderr).message).toMatch(/cannot be planned/);
+    // A body goes above the new draft's quoted thread (E36), which a plan cannot read.
+    for (const [name, argv] of [['h.json', ['--body', '<p>x</p>', '--html']], ['t.json', ['--body', 'Thanks.']], ['d.json', ['--body', 'Thanks.', '--draft']]] as const) {
+      const refused = await run(['mail', 'reply', 'M1', ...argv], { token: TOKEN, plan: { file: path.join(dir, name), command: 'mail reply' }, routes });
+      expect(refused.exitCode, argv.join(' ')).toBe(2);
+      expect(lastError(refused.stderr).message).toMatch(/cannot be planned/);
+    }
+    const forward = await run(['mail', 'forward', 'M1', '--to', 'cfo@contoso.com', '--comment', 'fyi'], { token: TOKEN, plan: { file: path.join(dir, 'f.json'), command: 'mail forward' }, routes });
+    expect(forward.exitCode).toBe(2);
   });
 
-  it('mail reply --draft plans only the createReply, which apply checks as a draft write (no /send)', async () => {
+  it('mail reply --draft with an empty body plans only the createReply, which apply checks as a draft write (no /send)', async () => {
     const file = path.join(dir, 'd.json');
     const routes: Route[] = [['GET', '/me/messages/M1', () => ({ id: 'M1', '@odata.etag': 'W/"ck7"' })]];
-    const r = await run(['mail', 'reply', 'M1', '--body', 'Thanks.', '--draft', '-o', 'json'], { token: TOKEN, plan: { file, command: 'mail reply' }, routes });
+    const r = await run(['mail', 'reply', 'M1', '--body', '', '--draft', '-o', 'json'], { token: TOKEN, plan: { file, command: 'mail reply' }, routes });
     expect(r.exitCode).toBe(0);
     expect(JSON.parse(r.stdout)).toMatchObject({ command: 'mail reply', requests: 1 }); // the plan summary, no draft
     expect(JSON.parse(r.stdout)).not.toHaveProperty('id');
     const plan = planOf(file);
     expect(plan.target).toEqual({ id: 'M1', version: 'W/"ck7"' });
-    expect(plan.payload).toMatchObject({ messageId: 'M1', comment: 'Thanks.', draft: true });
+    expect(plan.payload).toMatchObject({ messageId: 'M1', comment: '', draft: true });
     expect(plan.requests.map(q => `${q.method} ${q.path}`)).toEqual(['POST /me/messages/M1/createReply']);
     expect(plan.requests.map(requestCommand)).toEqual(['mail update-draft']);
   });

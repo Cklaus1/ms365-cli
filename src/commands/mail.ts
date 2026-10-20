@@ -116,7 +116,7 @@ async function draftVersion(client: GraphClient, messageId: string): Promise<str
  */
 async function prependHtml(client: GraphClient, draftId: string, html: string): Promise<void> {
   if (planning()) {
-    throw usage('--html on a reply or forward reads the new draft\'s quoted thread, which does not exist yet, so it cannot be planned. Plan it without --html.');
+    throw usage('A reply or forward body (plain text or --html) goes above the new draft\'s quoted thread, which does not exist yet, so it cannot be planned. Plan it with an empty body (forward: no --comment).');
   }
   const endpoint = `/me/messages/${encodeURIComponent(draftId)}`;
   const current = await client.request(endpoint, {
@@ -128,6 +128,22 @@ async function prependHtml(client: GraphClient, draftId: string, html: string): 
   const open = /<body[^>]*>/i.exec(existing);
   const content = open ? existing.slice(0, open.index + open[0].length) + html + existing.slice(open.index + open[0].length) : html + existing;
   await client.request(endpoint, { method: 'PATCH', body: JSON.stringify({ body: { contentType: 'HTML', content } }) });
+}
+
+const HTML_ENTITIES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
+/**
+ * A plain-text reply/forward body as HTML: escaped, line breaks as `<br>`. Graph's `comment` drops the line breaks
+ * (the text renders as one line), so plain text goes through the same draft path as --html (E36).
+ */
+function plainTextHtml(text: string): string {
+  return `<div>${text.replace(/[&<>"']/g, c => HTML_ENTITIES[c]).replace(/\r\n|\r|\n/g, '<br>')}</div>`;
+}
+
+/** The HTML a reply/forward puts above the quoted thread: --html as given, plain text escaped; none for an empty plain body. */
+function replyHtml(text: string, html: boolean): string | undefined {
+  if (html) return text;
+  return text ? plainTextHtml(text) : undefined;
 }
 
 /**
@@ -861,7 +877,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
   addBodyOptions(mail
     .command('reply <messageId>')
     .description('Reply to a message (--draft: create the reply draft and do not send it)'), 'Reply body', true)
-    .option('--html', 'Send body as HTML (goes via a reply draft so the quoted thread is kept)')
+    .option('--html', 'Body is HTML (otherwise plain text, sent escaped with its line breaks kept)')
     .option('--reply-all', 'Reply to all recipients')
     .option('--attach <path>', 'Attach a file (repeatable; over 3 MB total goes via a draft + upload session)', collect, [])
     .option('--draft', 'Create the reply draft (threaded, with --body, --html and --attach) and print it; never send. Needs Mail.ReadWrite, not Mail.Send')
@@ -875,17 +891,19 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       const create = `${base}/${opts.replyAll ? 'createReplyAll' : 'createReply'}`;
       const html = !!opts.html;
       const request = { messageId, replyAll: !!opts.replyAll, comment, html, attachments: attachmentDigests(files), ...(opts.draft && { draft: true }) };
+      // Graph's `comment` loses line breaks and is rejected together with message.body, so a body (plain text escaped,
+      // or --html) is patched above the draft's quoted thread; only an empty plain body still goes as `comment`.
+      const content = replyHtml(comment, html);
       await planTargetMessage(client, messageId, request);
       if (opts.draft) {
-        // Graph treats `comment` as text and rejects it together with message.body, so --html patches the draft's body.
         const created = await idempotentDraft(client, opts.idempotencyKey, 'mail reply', request,
-          () => prepareDraft(client, create, html ? {} : { comment }, files, html ? comment : undefined));
+          () => prepareDraft(client, create, content === undefined ? { comment } : {}, files, content));
         if (created && !planning() && !client.isDryRun()) console.log(formatOutput(created, opts.output as OutputFormat));
         return;
       }
       const sent = await idempotentSend(client, opts.idempotencyKey, 'mail reply', request, async () => {
-        if (html) {
-          await sendViaDraft(client, create, {}, files, comment);
+        if (content !== undefined) {
+          await sendViaDraft(client, create, {}, files, content);
         } else if (needsUploadSession(files)) {
           await sendViaDraft(client, create, { comment }, files);
         } else {
@@ -903,7 +921,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .description('Forward a message')
     .requiredOption('--to <addresses>', 'Comma-separated recipient emails')
     .option('--comment <text>', 'Comment to include with forward')
-    .option('--html', 'Send --comment as HTML (goes via a forward draft so the forwarded message is kept)')
+    .option('--html', 'Send --comment as HTML (otherwise plain text, sent escaped with its line breaks kept)')
     .option('--attach <path>', 'Attach a file (repeatable; over 3 MB total goes via a draft + upload session)', collect, [])
     .option('--idempotency-key <key>', IDEMPOTENCY_HELP)
     .action(handleErrors(async (messageId: string, opts) => {
@@ -914,10 +932,11 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       const html = !!opts.html;
       const body: Record<string, unknown> = { comment: opts.comment || '', toRecipients };
       const request = { messageId, ...body, html, attachments: attachmentDigests(files) };
+      const content = replyHtml(opts.comment || '', html);
       await planTargetMessage(client, messageId, request);
       const sent = await idempotentSend(client, opts.idempotencyKey, 'mail forward', request, async () => {
-        if (html) {
-          await sendViaDraft(client, `${base}/createForward`, { toRecipients }, files, opts.comment || '');
+        if (content !== undefined) {
+          await sendViaDraft(client, `${base}/createForward`, { toRecipients }, files, content);
         } else if (needsUploadSession(files)) {
           await sendViaDraft(client, `${base}/createForward`, body, files);
         } else {
