@@ -223,3 +223,11 @@ Branch base: origin/main d2c42b2 lacked E32/E33 (they were committed to `build/a
 Gate: 70 files / 2009 passed; tsc 0; smoke 36/0/0 (with a dummy `MS365_CLI_CLIENT_ID`, opportunities P3); docs:check ok; contract:check ok (30 files unchanged).
 
 **Final dist sha256 (pin for Chief runners):** `292f53d81d1858db9fbc18c2759cf400e20ee6838af35141e7b56233509a16b6` — built from d961b9c (69412ef changes only the fixture); `manifest.json` names `commit: d961b9c`, `dirty: false`. package.json/package-lock.json unchanged since E31, so the runtime deps equal a6b4414's.
+
+## E35: mail create-rule --from-address for Chief's mailbox assist (2026-10-20)
+
+Chief's mailbox assist files mail from known senders with Chief-owned inbox rules; `--from` maps to Graph `senderContains`, a substring match, so a rule for `a@x.com` also caught `ba@x.com.evil` (Chief MBX review finding 1). 6451acb: `mail create-rule --from-address <addresses>` sends comma-separated exact addresses as `conditions.fromAddresses: [{emailAddress: {address}}]`; with `--from` as well it is a usage error (exit 2, nothing sent); `--from` keeps `senderContains` unchanged. `mail rules`/`mail rule` already print Graph `conditions`, so `fromAddresses` shows there as returned. Contract: `describe-unfiltered.json` changes only for `mail create-rule` (new option); the host-profile `describe.json` is byte-identical; d993d5a regenerates fixture and manifest (`commit: 6451acb`). The dry-run snapshot's all-optional-flags sample leaves out `--from-address` like `--body-file` (372afe1).
+
+**Fail-first evidence:** `--from-address sends exact fromAddresses …` and `--from with --from-address is a usage error …` in `test/commands/mail.test.ts` are red on 8b150a9's `src/` (stash of `src/`) and green after; `--from keeps its senderContains …` is green on both.
+
+Gate: 70 files / 2012 passed; tsc 0; smoke 36/0/0 (dummy `MS365_CLI_CLIENT_ID`); docs:check ok; contract:check ok (30 files unchanged). package.json/package-lock.json unchanged, so runtime deps equal 8b150a9's.
