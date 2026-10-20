@@ -27,8 +27,9 @@ afterAll(() => { process.chdir(cwd); vi.unstubAllEnvs(); vi.useRealTimers(); fs.
 const REQUEST = /^\[dry-run\] (GET|POST|PUT|PATCH|DELETE) /;
 const TRAILER = /^\[dry-run\] (\d+) request\(s\) previewed; nothing was sent(; bodies use placeholders for values read from Graph)?\.$/;
 
-/** Every optional option that takes a value, sampled like the mandatory ones (--body-file replaces --body, so not both). */
-const optionalValues = (cmd: Command) => cmd.options.filter(o => !o.mandatory && (o.required || o.optional) && o.long !== '--body-file').flatMap(sampleOption);
+/** Every optional option that takes a value, sampled like the mandatory ones (--body-file replaces --body and create-rule's --from-address excludes --from, so not both). */
+const EXCLUSIVE = new Set(['--body-file', '--from-address']);
+const optionalValues = (cmd: Command) => cmd.options.filter(o => !o.mandatory && (o.required || o.optional) && !EXCLUSIVE.has(o.long ?? '')).flatMap(sampleOption);
 
 async function snapshotRun(register: Register, argv: string[]) {
   const r = await runCommand(register, argv, { dryRun: true });
