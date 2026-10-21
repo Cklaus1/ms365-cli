@@ -78,7 +78,7 @@ export function sampleOption(o: Option): string[] {
   if (/percent/i.test(flag)) return [flag, '50'];
   if (/interval/i.test(flag)) return [flag, '15'];
   if (flag === '--from') return [flag, '0'];
-  if (/top|limit|delay|priority|size|max-|timeout/i.test(flag)) return [flag, '5'];
+  if (/top|limit|delay|priority|size|max-|timeout|sequence/i.test(flag)) return [flag, '5'];
   if (/attach/i.test(flag)) return [flag, samples.file];
   if (/entity/i.test(flag)) return [flag, 'message'];
   if (/duration/i.test(flag)) return [flag, '30m'];

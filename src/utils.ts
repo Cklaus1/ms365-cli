@@ -63,7 +63,7 @@ export function bodyText(opts: { body?: string; bodyFile?: string }): string | u
 }
 
 /** A commander parser for an integer in [min, max]; bad input is a usage error (exit 2, V-22). Keeps the value a string. */
-function intParser(min: number, max = Number.MAX_SAFE_INTEGER) {
+export function intParser(min: number, max = Number.MAX_SAFE_INTEGER) {
   return (value: string): string => {
     const n = Number(value);
     if (!/^-?\d+$/.test(value.trim()) || n < min || n > max) {

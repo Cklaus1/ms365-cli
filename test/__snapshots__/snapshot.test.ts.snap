@@ -1643,7 +1643,7 @@ exports[`dry-run endpoint snapshot (every command) > mail create-folder 1`] = `
 
 exports[`dry-run endpoint snapshot (every command) > mail create-rule [optional flags] 1`] = `
 {
-  "argv": "mail create-rule --name x --from 0 --subject-contains x --move-to a@contoso.com --forward-to a@contoso.com --importance low --output json",
+  "argv": "mail create-rule --name x --from 0 --subject-contains x --move-to a@contoso.com --forward-to a@contoso.com --importance low --sequence 5 --output json",
   "error": "",
   "exitCode": 0,
   "requests": [
