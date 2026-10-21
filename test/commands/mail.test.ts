@@ -69,6 +69,14 @@ describe('mail triage (M-3)', () => {
 });
 
 describe('mail create-rule (M-11, D11)', () => {
+  const RULES = '/me/mailFolders/inbox/messageRules';
+  /** The rule create: the POST after the GET of the existing rules' sequences. */
+  const created = (r: { calls: Array<{ method: string; path: string; body?: unknown }> }) => {
+    const post = r.calls.find(c => c.method === 'POST' && c.path === RULES);
+    expect(post).toBeDefined();
+    return post!.body as Record<string, unknown>;
+  };
+
   it('refuses a rule with no conditions (exit 2, nothing sent)', async () => {
     const r = await run(['create-rule', '--name', 'x', '--delete']);
     expect(r.exitCode).toBe(2);
@@ -79,23 +87,23 @@ describe('mail create-rule (M-11, D11)', () => {
   it('--all-messages allows an unconditioned rule', async () => {
     const r = await run(['create-rule', '--name', 'x', '--mark-read', '--all-messages', '-o', 'json']);
     expect(r.exitCode).toBe(0);
-    expect(r.calls[0].body).toMatchObject({ conditions: {}, actions: { markAsRead: true }, isEnabled: true });
+    expect(created(r)).toMatchObject({ conditions: {}, actions: { markAsRead: true }, isEnabled: true });
   });
 
   it('--disabled creates the rule disabled; --enabled no longer exists (D29)', async () => {
     const r1 = await run(['create-rule', '--name', 'x', '--from', 'a@b.com', '--mark-read', '--disabled', '-o', 'json']);
-    expect(r1.calls[0].body).toMatchObject({ isEnabled: false, conditions: { senderContains: ['a@b.com'] } });
+    expect(created(r1)).toMatchObject({ isEnabled: false, conditions: { senderContains: ['a@b.com'] } });
     const r2 = await run(['create-rule', '--name', 'x', '--from', 'a@b.com', '--mark-read', '--enabled', '-o', 'json']);
     expect(r2.exitCode).toBe(2);
     expect(r2.calls).toHaveLength(0);
     const r3 = await run(['create-rule', '--name', 'x', '--from', 'a@b.com', '--mark-read', '-o', 'json']);
-    expect(r3.calls[0].body).toMatchObject({ isEnabled: true });
+    expect(created(r3)).toMatchObject({ isEnabled: true });
   });
 
   it('--from-address sends exact fromAddresses and no senderContains', async () => {
     const r = await run(['create-rule', '--name', 'x', '--from-address', 'a@x.test, b@y.test', '--mark-read', '-o', 'json']);
     expect(r.exitCode).toBe(0);
-    expect(r.calls[0].body.conditions).toEqual({
+    expect(created(r).conditions).toEqual({
       fromAddresses: [{ emailAddress: { address: 'a@x.test' } }, { emailAddress: { address: 'b@y.test' } }],
     });
   });
@@ -109,7 +117,55 @@ describe('mail create-rule (M-11, D11)', () => {
 
   it('--from keeps its senderContains substring behaviour', async () => {
     const r = await run(['create-rule', '--name', 'x', '--from', 'a@x.test,b', '--mark-read', '-o', 'json']);
-    expect(r.calls[0].body.conditions).toEqual({ senderContains: ['a@x.test', 'b'] });
+    expect(created(r).conditions).toEqual({ senderContains: ['a@x.test', 'b'] });
+  });
+
+  it('defaults sequence to 1 + the highest existing one over every page (7; 3, none → 8) (E38)', async () => {
+    const r = await run(['create-rule', '--name', 'x', '--from-address', 'a@x.test', '--mark-read', '-o', 'json'], {
+      routes: [
+        ['GET', /messageRules.*skiptoken=p2/, () => ({ value: [{ id: 'R2', sequence: 3 }, { id: 'R3' }] })],
+        ['GET', RULES, () => ({ value: [{ id: 'R1', sequence: 7 }], '@odata.nextLink': `https://graph.microsoft.com/v1.0${RULES}?$skiptoken=p2` })],
+      ],
+    });
+    expect(r.exitCode, r.stderr).toBe(0);
+    expect(r.calls.map(c => c.method)).toEqual(['GET', 'GET', 'POST']);
+    expect(r.calls[0].path).toContain('$select=sequence');
+    expect(created(r).sequence).toBe(8);
+  });
+
+  it('defaults sequence to 1 when the inbox has no rules (E38)', async () => {
+    const r = await run(['create-rule', '--name', 'x', '--from-address', 'a@x.test', '--mark-read', '-o', 'json'],
+      { routes: [['GET', RULES, () => ({ value: [] })]] });
+    expect(r.exitCode).toBe(0);
+    expect(created(r).sequence).toBe(1);
+  });
+
+  it('--sequence 5 is sent as given without reading the existing rules (E38)', async () => {
+    const r = await run(['create-rule', '--name', 'x', '--from-address', 'a@x.test', '--mark-read', '--sequence', '5', '-o', 'json']);
+    expect(r.exitCode).toBe(0);
+    expect(r.calls.map(c => `${c.method} ${c.path}`)).toEqual([`POST ${RULES}`]);
+    expect(created(r).sequence).toBe(5);
+  });
+
+  it.each(['0', '-1', '1.5', 'x', '2147483648'])('--sequence %s is a usage error (exit 2, nothing sent) (E38)', async (value) => {
+    const r = await run(['create-rule', '--name', 'x', '--from-address', 'a@x.test', '--mark-read', '--sequence', value]);
+    expect(r.exitCode).toBe(2);
+    expect(r.calls).toHaveLength(0);
+  });
+
+  it('the body always carries a sequence ≥ 1, also when existing rules have none (E38)', async () => {
+    const r = await run(['create-rule', '--name', 'x', '--from-address', 'a@x.test', '--mark-read', '-o', 'json'],
+      { routes: [['GET', RULES, () => ({ value: [{ id: 'R1' }, { id: 'R2', sequence: null }] })]] });
+    expect(r.exitCode).toBe(0);
+    expect(created(r).sequence).toBe(1);
+  });
+
+  it('under --dry-run previews the GET and the POST with a <from GET> sequence (E38)', async () => {
+    const r = await run(['create-rule', '--name', 'x', '--from-address', 'a@x.test', '--mark-read'], { dryRun: true });
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).toContain(`[dry-run] GET https://graph.microsoft.com/v1.0${RULES}?$select=sequence`);
+    expect(r.stderr).toContain(`[dry-run] POST https://graph.microsoft.com/v1.0${RULES}`);
+    expect(r.stderr).toContain('"sequence":"<from GET>"');
   });
 });
 

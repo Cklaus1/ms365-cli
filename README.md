@@ -458,7 +458,7 @@ The reference below is generated from the live command tree (`ms365 describe --j
 | `mail categorize` | Set categories on a message | `<messageId>` | `--categories <names>` (required) | Mail.ReadWrite |
 | `mail complete` | Mark a flagged message as complete | `<messageId>` |  | Mail.ReadWrite |
 | `mail create-folder` | Create a mail folder |  | `--name <name>` (required) `--parent <name>` | not idempotent · Mail.ReadWrite |
-| `mail create-rule` | Create an inbox rule |  | `--name <name>` (required) `--from <addresses>` `--from-address <addresses>` `--subject-contains <words>` `--move-to <name>` `--forward-to <addresses>` `--delete` `--mark-read` `--importance <level>` `--stop-processing` `--all-messages` `--disabled` | not idempotent · MailboxSettings.ReadWrite |
+| `mail create-rule` | Create an inbox rule |  | `--name <name>` (required) `--from <addresses>` `--from-address <addresses>` `--subject-contains <words>` `--move-to <name>` `--forward-to <addresses>` `--delete` `--mark-read` `--importance <level>` `--stop-processing` `--all-messages` `--disabled` `--sequence <n>` | not idempotent · MailboxSettings.ReadWrite |
 | `mail delete` | Delete a message | `<messageId>` |  | **destructive** · Mail.ReadWrite |
 | `mail delete-attachment` | Delete an attachment | `<messageId> <attachmentId>` |  | **destructive** · Mail.ReadWrite |
 | `mail download-attachment` | Download an attachment to a file | `<messageId> <attachmentId>` | `--out <path>` `--force` | Mail.Read |

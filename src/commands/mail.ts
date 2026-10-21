@@ -6,7 +6,7 @@ import { formatOutput, type OutputFormat, printList } from '../formatter.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import {
   truncate, parseRecipients, formatSize, addListOptions, outputOption, confirm, info, success,
-  kqlQuote, odataQuote, safeOutputPath, resolveTimeZone, parseTime, toGraphDateTime, fromGet, addBodyOptions, bodyText, mailboxOption, userPath,
+  kqlQuote, odataQuote, safeOutputPath, resolveTimeZone, parseTime, toGraphDateTime, fromGet, addBodyOptions, bodyText, mailboxOption, userPath, intParser,
 } from '../utils.js';
 import { detectMimeType } from '../mime.js';
 import {
@@ -147,6 +147,29 @@ function plainTextHtml(text: string): string {
 function replyHtml(text: string, html: boolean): string | undefined {
   if (!text) return undefined;
   return html ? text : plainTextHtml(text);
+}
+
+/**
+ * The sequence that puts a new inbox rule after every existing one: 1 + the highest `sequence` over all pages, 1 when
+ * there are none. Graph rejects a rule without a sequence (0) as `InvalidValue` (E38). Under --dry-run the listing is
+ * not read, so the preview shows `<from GET>`.
+ */
+async function nextRuleSequence(client: GraphClient): Promise<number | string> {
+  const endpoint = '/me/mailFolders/inbox/messageRules';
+  let highest = 0;
+  let next: string | undefined = endpoint;
+  while (next) {
+    const response: GraphResponse = await client.request(next, next === endpoint ? { queryParams: { '$select': 'sequence' } } : {});
+    if (client.isPreview(response)) return fromGet();
+    const data: unknown = response.data;
+    const value: unknown = data && typeof data === 'object' ? Reflect.get(data, 'value') : undefined;
+    for (const item of Array.isArray(value) ? value : []) {
+      const sequence: unknown = item && typeof item === 'object' ? Reflect.get(item, 'sequence') : undefined;
+      if (typeof sequence === 'number' && sequence > highest) highest = sequence;
+    }
+    next = response.nextLink;
+  }
+  return highest + 1;
 }
 
 /**
@@ -1097,6 +1120,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     .option('--stop-processing', 'Stop processing subsequent rules')
     .option('--all-messages', 'Apply the rule to every incoming message (required when no condition is given)')
     .option('--disabled', 'Create the rule disabled')
+    .option('--sequence <n>', 'Order among the inbox rules (1 runs first; default: after every existing rule)', intParser(1, 2_147_483_647))
     .addOption(outputOption())
     .action(handleErrors(async (opts) => {
       if (opts.from && opts.fromAddress) {
@@ -1144,6 +1168,7 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
 
       const rule: Record<string, unknown> = {
         displayName: opts.name,
+        sequence: opts.sequence === undefined ? await nextRuleSequence(client) : Number(opts.sequence),
         conditions,
         actions,
         isEnabled: !opts.disabled,
