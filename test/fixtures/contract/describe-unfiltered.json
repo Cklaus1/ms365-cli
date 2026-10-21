@@ -2809,6 +2809,16 @@
           "default": null
         },
         {
+          "flags": "--sequence <n>",
+          "long": "--sequence",
+          "short": null,
+          "description": "Order among the inbox rules (1 runs first; default: after every existing rule)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
           "flags": "-o, --output <format>",
           "long": "--output",
           "short": "-o",
