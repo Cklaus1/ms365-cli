@@ -131,8 +131,9 @@ const COMMANDS: Record<string, Entry> = {
   // --draft creates the reply draft and never sends it (createReply/createReplyAll, then PATCH/attachments). Sent, a
   // non-empty body goes through a draft too (createReply, PATCH above the quoted thread, send; E36/E37).
   'mail reply': ['action', { flag: '--draft', with: ['Mail.ReadWrite'], without: ['Mail.Send'], withoutOption: { option: '--body', scopes: ['Mail.ReadWrite'] } }],
-  // A non-empty --comment goes through a forward draft (createForward, PATCH, send; E36/E37).
-  'mail forward': ['action', { base: ['Mail.Send'], withOption: { option: '--comment', scopes: ['Mail.ReadWrite'] } }],
+  // A non-empty --comment goes through a forward draft (createForward, PATCH, send; E36/E37). --draft creates the
+  // forward draft and never sends (E39).
+  'mail forward': ['action', { flag: '--draft', with: ['Mail.ReadWrite'], without: ['Mail.Send'], withoutOption: { option: '--comment', scopes: ['Mail.ReadWrite'] } }],
   'mail mark-read': 'update',
   'mail reconcile': 'read',
   'mail mark-unread': 'update',

@@ -82,7 +82,7 @@ describe('mail reply --draft scopes (boolean-flag selector)', () => {
 
   it('mail forward needs Mail.Send, and Mail.ReadWrite too with a non-empty --comment (E37)', () => {
     expect(commandMeta('mail forward')).toMatchObject({ scopes: ['Mail.Send', 'Mail.ReadWrite'],
-      scopesBy: { base: ['Mail.Send'], withOption: { option: '--comment', scopes: ['Mail.ReadWrite'] } } });
+      scopesBy: { flag: '--draft', with: ['Mail.ReadWrite'], without: ['Mail.Send'], withoutOption: { option: '--comment', scopes: ['Mail.ReadWrite'] } } });
     expect(usedScopes('mail forward', { to: 'a@contoso.com' }, ['M1'])).toEqual([{ scopes: ['Mail.Send'] }]);
     expect(usedScopes('mail forward', { to: 'a@contoso.com', comment: '' }, ['M1'])).toEqual([{ scopes: ['Mail.Send'] }]);
     expect(usedScopes('mail forward', { to: 'a@contoso.com', comment: 'fyi' }, ['M1']))
@@ -90,6 +90,17 @@ describe('mail reply --draft scopes (boolean-flag selector)', () => {
     expect(refusal(() => assertWithinCeiling('mail forward', usedScopes('mail forward', { comment: 'fyi' }), sendOnly, 'chief')).message)
       .toContain('"mail forward" with --comment needs Mail.ReadWrite');
     expect(() => assertWithinCeiling('mail forward', usedScopes('mail forward', {}), sendOnly, 'chief')).not.toThrow();
+  });
+
+  it('mail forward --draft needs only Mail.ReadWrite, with or without --comment (E39)', () => {
+    const writeOnly = profileCeiling({ type: 'host', tenantId: TENANT, scopes: ['Mail.ReadWrite'] })!;
+    for (const opts of [{ draft: true, to: 'a@contoso.com' }, { draft: true, to: 'a@contoso.com', comment: 'fyi' }]) {
+      expect(usedScopes('mail forward', opts, ['M1'])).toEqual([{ scopes: ['Mail.ReadWrite'], for: 'with --draft' }]);
+      expect(() => assertWithinCeiling('mail forward', usedScopes('mail forward', opts), writeOnly, 'chief')).not.toThrow();
+    }
+    expect(refusal(() => assertWithinCeiling('mail forward', usedScopes('mail forward', { draft: true }), sendOnly, 'chief')).message)
+      .toContain('"mail forward" with --draft needs Mail.ReadWrite');
+    expect(refusal(() => assertWithinCeiling('mail forward', usedScopes('mail forward', {}), writeOnly, 'chief')).message).toContain('Mail.Send');
   });
 });
 

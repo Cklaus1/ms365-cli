@@ -1821,7 +1821,7 @@ exports[`dry-run endpoint snapshot (every command) > mail folders 1`] = `
 
 exports[`dry-run endpoint snapshot (every command) > mail forward [optional flags] 1`] = `
 {
-  "argv": "mail forward MESSAGEID --to a@contoso.com --comment x --attach <tmp>/sample.txt --idempotency-key x",
+  "argv": "mail forward MESSAGEID --to a@contoso.com --comment x --attach <tmp>/sample.txt --idempotency-key x --output json",
   "error": "",
   "exitCode": 0,
   "requests": [
