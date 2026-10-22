@@ -299,6 +299,103 @@ describe('mail reply --draft: create the threaded reply draft, never send', () =
   });
 });
 
+describe('mail forward --draft: create the forward draft to any recipient, never send (E39)', () => {
+  const created = (id: string) => ({
+    id, conversationId: 'CONV1', webLink: `https://outlook.office365.com/owa/?ItemID=${id}`, internetMessageId: `<${id}@acme-fund.example>`,
+    createdDateTime: '2026-10-22T09:00:00Z', subject: 'FW: Q3', body: { contentType: 'html', content: quoted },
+  });
+  const handles = (id: string) => {
+    const { body: _body, subject: _subject, ...rest } = created(id);
+    return rest;
+  };
+  const to = [{ emailAddress: { address: 'cfo@contoso.com' } }, { emailAddress: { address: 'ops@fabrikam.example' } }];
+  const noSend = (r: { calls: Array<{ method: string; path: string }> }) =>
+    expect(seq(r).filter(s => /\/send$|\/forward$/.test(s))).toEqual([]);
+
+  it('POSTs createForward with the recipients, patches the comment above the quoted original, sends nothing and prints the draft handles', async () => {
+    const r = await run(['forward', 'M1', '--draft', '--to', 'cfo@contoso.com,ops@fabrikam.example', '--comment', 'FYI,\n\nsee below <b>', '-o', 'json'],
+      { routes: [['POST', '/me/messages/M1/createForward', () => created('D1')], ...draftRoutes('/me/messages/M1/createForward', 'D1')] });
+    expect(r.exitCode).toBe(0);
+    expect(seq(r)).toEqual(['POST /me/messages/M1/createForward', 'GET /me/messages/D1', 'PATCH /me/messages/D1']);
+    expect(r.calls[0].body).toEqual({ toRecipients: to });
+    expect(r.calls[2].body).toEqual({ body: { contentType: 'HTML',
+      content: '<html><head></head><body dir="ltr"><div>FYI,<br><br>see below &lt;b&gt;</div><p>quoted thread</p></body></html>' } });
+    expect(JSON.parse(r.stdout)).toEqual(handles('D1'));
+    noSend(r);
+    expect(r.stderr).not.toMatch(/forwarded|sent/i);
+  });
+
+  it('no --comment: createForward alone (empty comment, recipients), no PATCH', async () => {
+    const r = await run(['forward', 'M1', '--draft', '--to', 'cfo@contoso.com', '-o', 'json'],
+      { routes: [['POST', '/me/messages/M1/createForward', () => created('D1')]] });
+    expect(r.exitCode).toBe(0);
+    expect(seq(r)).toEqual(['POST /me/messages/M1/createForward']);
+    expect(r.calls[0].body).toEqual({ comment: '', toRecipients: [to[0]] });
+    expect(JSON.parse(r.stdout)).toEqual(handles('D1'));
+  });
+
+  it('--html and --attach go on the draft; still nothing is sent', async () => {
+    fs.writeFileSync('a.txt', 'x');
+    const r = await run(['forward', 'M1', '--draft', '--to', 'cfo@contoso.com', '--comment', '<i>fyi</i>', '--html', '--attach', 'a.txt', '-o', 'json'], {
+      routes: [['POST', '/me/messages/D1/attachments', () => ({ id: 'A1' })], ...draftRoutes('/me/messages/M1/createForward', 'D1')],
+    });
+    expect(r.exitCode).toBe(0);
+    expect(seq(r)).toEqual(['POST /me/messages/M1/createForward', 'GET /me/messages/D1', 'PATCH /me/messages/D1', 'POST /me/messages/D1/attachments']);
+    expect(r.calls[2].body).toEqual({ body: { contentType: 'HTML', content: '<html><head></head><body dir="ltr"><i>fyi</i><p>quoted thread</p></body></html>' } });
+    noSend(r);
+  });
+
+  it('a failed PATCH deletes the new draft and prints nothing', async () => {
+    const r = await run(['forward', 'M1', '--draft', '--to', 'cfo@contoso.com', '--comment', 'x', '-o', 'json'], {
+      routes: [
+        ['PATCH', '/me/messages/D1', () => graphError(400)],
+        ['DELETE', '/me/messages/D1', () => new Response(null, { status: 204 })],
+        ...draftRoutes('/me/messages/M1/createForward', 'D1'),
+      ],
+    });
+    expect(r.exitCode).toBe(1);
+    expect(seq(r)).toContain('DELETE /me/messages/D1');
+    noSend(r);
+    expect(r.stdout).toBe('');
+  });
+
+  it('--idempotency-key: a repeat returns the first draft and calls Graph once in total; a different request conflicts', async () => {
+    const key = newKey();
+    const routes: Route[] = [['POST', '/me/messages/M1/createForward', () => created('D1')], ...draftRoutes('/me/messages/M1/createForward', 'D1')];
+    const argv = ['forward', 'M1', '--draft', '--to', 'cfo@contoso.com', '--idempotency-key', key, '-o', 'json'];
+    const first = await run(argv, { routes });
+    expect(first.exitCode).toBe(0);
+    expect(seq(first)).toEqual(['POST /me/messages/M1/createForward']);
+    const second = await run(argv, { routes });
+    expect(second.exitCode).toBe(0);
+    expect(second.calls).toHaveLength(0);
+    expect(JSON.parse(second.stdout)).toEqual(JSON.parse(first.stdout));
+    expect(second.stderr).toMatch(/Draft already created at .*; not created again/);
+    for (const other of [['forward', 'M1', '--to', 'cfo@contoso.com', '--idempotency-key', key], ['forward', 'M1', '--draft', '--to', 'x@contoso.com', '--idempotency-key', key]]) {
+      const o = await run(other, { routes });
+      expect(o.exitCode, other.join(' ')).toBe(2);
+      expect(o.calls).toHaveLength(0);
+    }
+  });
+
+  it('under --dry-run previews createForward and the PATCH, sends nothing and prints no draft', async () => {
+    const r = await run(['forward', 'M', '--draft', '--to', 'cfo@contoso.com', '--comment', 'c', '-o', 'json'], { dryRun: true });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('[dry-run] POST https://graph.microsoft.com/v1.0/me/messages/M/createForward');
+    expect(r.stderr).toContain('[dry-run] PATCH https://graph.microsoft.com/v1.0/me/messages/DRAFT_ID');
+    expect(r.stderr).not.toMatch(/\/send|\/forward\b/);
+  });
+
+  it('without --draft forward still sends: /forward with comment and recipients', async () => {
+    const r = await run(['forward', 'M1', '--to', 'cfo@contoso.com', '--comment', '']);
+    expect(r.exitCode).toBe(0);
+    expect(seq(r)).toEqual(['POST /me/messages/M1/forward']);
+    expect(r.calls[0].body).toEqual({ comment: '', toRecipients: [to[0]] });
+    expect(r.stderr).toContain('Message forwarded.');
+  });
+});
+
 describe('RT-8: a failed attachment upload deletes the unsent draft (R-8)', () => {
   it('a failing chunk upload triggers one DELETE of the draft and no send', async () => {
     fs.writeFileSync('big.bin', Buffer.alloc(3 * MB + 1, 1));
