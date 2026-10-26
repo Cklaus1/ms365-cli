@@ -2256,7 +2256,7 @@
     },
     {
       "path": "mail forward",
-      "description": "Forward a message",
+      "description": "Forward a message (--draft: create the forward draft and do not send it)",
       "arguments": [
         {
           "name": "messageId",
@@ -2306,6 +2306,16 @@
           "default": []
         },
         {
+          "flags": "--draft",
+          "long": "--draft",
+          "short": null,
+          "description": "Create the forward draft (addressed to --to, with --comment, --html and --attach) and print it; never send. Needs Mail.ReadWrite, not Mail.Send",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
           "flags": "--idempotency-key <key>",
           "long": "--idempotency-key",
           "short": null,
@@ -2314,6 +2324,23 @@
           "takesValue": true,
           "choices": null,
           "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
         }
       ],
       "scopes": [
@@ -2321,10 +2348,14 @@
         "Mail.ReadWrite"
       ],
       "scopesBy": {
-        "base": [
+        "flag": "--draft",
+        "with": [
+          "Mail.ReadWrite"
+        ],
+        "without": [
           "Mail.Send"
         ],
-        "withOption": {
+        "withoutOption": {
           "option": "--comment",
           "scopes": [
             "Mail.ReadWrite"

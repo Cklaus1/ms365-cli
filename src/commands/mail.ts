@@ -221,7 +221,7 @@ async function prepareDraft(
   return draft;
 }
 
-/** What `mail reply --draft` prints and its --idempotency-key stores: the draft's handles, no message content. */
+/** What `mail reply --draft`/`mail forward --draft` print and their --idempotency-key stores: the draft's handles, no message content. */
 function draftHandles(draft: Record<string, unknown>): IdempotencyResult {
   const handle = (k: string) => (typeof draft[k] === 'string' ? draft[k] : null);
   return {
@@ -944,12 +944,14 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
   // ── Forward ──────────────────────────────────────────────────
   mail
     .command('forward <messageId>')
-    .description('Forward a message')
+    .description('Forward a message (--draft: create the forward draft and do not send it)')
     .requiredOption('--to <addresses>', 'Comma-separated recipient emails')
     .option('--comment <text>', 'Comment to include with forward')
     .option('--html', 'Send --comment as HTML (otherwise plain text, sent escaped with its line breaks kept)')
     .option('--attach <path>', 'Attach a file (repeatable; over 3 MB total goes via a draft + upload session)', collect, [])
+    .option('--draft', 'Create the forward draft (addressed to --to, with --comment, --html and --attach) and print it; never send. Needs Mail.ReadWrite, not Mail.Send')
     .option('--idempotency-key <key>', IDEMPOTENCY_HELP)
+    .addOption(outputOption())
     .action(handleErrors(async (messageId: string, opts) => {
       const files = prepareAttachments(opts.attach);
       const client = getClient();
@@ -957,9 +959,15 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       const base = `/me/messages/${encodeURIComponent(messageId)}`;
       const html = !!opts.html;
       const body: Record<string, unknown> = { comment: opts.comment || '', toRecipients };
-      const request = { messageId, ...body, html, attachments: attachmentDigests(files) };
+      const request = { messageId, ...body, html, attachments: attachmentDigests(files), ...(opts.draft && { draft: true }) };
       const content = replyHtml(opts.comment || '', html);
       await planTargetMessage(client, messageId, request);
+      if (opts.draft) {
+        const created = await idempotentDraft(client, opts.idempotencyKey, 'mail forward', request,
+          () => prepareDraft(client, `${base}/createForward`, content === undefined ? body : { toRecipients }, files, content));
+        if (created && !planning() && !client.isDryRun()) console.log(formatOutput(created, opts.output as OutputFormat));
+        return;
+      }
       const sent = await idempotentSend(client, opts.idempotencyKey, 'mail forward', request, async () => {
         if (content !== undefined) {
           await sendViaDraft(client, `${base}/createForward`, { toRecipients }, files, content);

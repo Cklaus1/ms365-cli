@@ -172,6 +172,20 @@ describe('plans for send, reply and forward (AH-5)', () => {
     expect(plan.requests.map(q => `${q.method} ${q.path}`)).toEqual(['POST /me/messages/M1/createReply']);
     expect(plan.requests.map(requestCommand)).toEqual(['mail update-draft']);
   });
+
+  it('mail forward --draft plans only the createForward with its recipients, which apply checks as a draft write (no /send, no /forward)', async () => {
+    const file = path.join(dir, 'f.json');
+    const routes: Route[] = [['GET', '/me/messages/M1', () => ({ id: 'M1', '@odata.etag': 'W/"ck7"' })]];
+    const r = await run(['mail', 'forward', 'M1', '--to', 'cfo@contoso.com', '--draft', '-o', 'json'], { token: TOKEN, plan: { file, command: 'mail forward' }, routes });
+    expect(r.exitCode).toBe(0);
+    expect(JSON.parse(r.stdout)).toMatchObject({ command: 'mail forward', requests: 1 });
+    expect(JSON.parse(r.stdout)).not.toHaveProperty('id');
+    const plan = planOf(file);
+    expect(plan.target).toEqual({ id: 'M1', version: 'W/"ck7"' });
+    expect(plan.payload).toMatchObject({ messageId: 'M1', comment: '', draft: true, toRecipients: [{ emailAddress: { address: 'cfo@contoso.com' } }] });
+    expect(plan.requests.map(q => `${q.method} ${q.path}`)).toEqual(['POST /me/messages/M1/createForward']);
+    expect(plan.requests.map(requestCommand)).toEqual(['mail update-draft']);
+  });
 });
 
 describe('describe (AH-6(5))', () => {

@@ -467,7 +467,7 @@ The reference below is generated from the live command tree (`ms365 describe --j
 | `mail flag` | Set follow-up flag on a message | `<messageId>` | `--due <when>` `--timezone <tz>` | Mail.ReadWrite |
 | `mail folder` | Find a folder by display name or path (e.g. "Drafts", "Sent Items", "Inbox/Projects") | `<name>` |  | Mail.Read |
 | `mail folders` | List mail folders |  | `--parent <name>` | Mail.Read |
-| `mail forward` | Forward a message | `<messageId>` | `--to <addresses>` (required) `--comment <text>` `--html` `--attach <path>` `--idempotency-key <key>` | not idempotent · Mail.Send (--comment: + Mail.ReadWrite) |
+| `mail forward` | Forward a message (--draft: create the forward draft and do not send it) | `<messageId>` | `--to <addresses>` (required) `--comment <text>` `--html` `--attach <path>` `--draft` `--idempotency-key <key>` | not idempotent · Mail.Send (--comment: + Mail.ReadWrite; --draft: Mail.ReadWrite instead) |
 | `mail get` | Get a specific message (marked untrusted; see --body, --unique, --wrap-untrusted) | `<messageId>` | `--select <fields>` `--unique` `--body <mode>` `--max-chars <n>` `--wrap-untrusted` `--mailbox <upn>` | Mail.Read (--mailbox: + Mail.Read.Shared) |
 | `mail list` | List inbox messages |  | `--filter <filter>` `--select <fields>` `--search <query>` `--folder <name>` `--body <mode>` `--max-chars <n>` `--wrap-untrusted` `--top <n>` `--mailbox <upn>` | Mail.Read (--mailbox: + Mail.Read.Shared) |
 | `mail mark-read` | Mark a message as read | `<messageId>` |  | Mail.ReadWrite |
