@@ -221,7 +221,7 @@ async function prepareDraft(
   return draft;
 }
 
-/** What `mail reply --draft` prints and its --idempotency-key stores: the draft's handles, no message content. */
+/** What `mail reply --draft`/`mail forward --draft` print and their --idempotency-key stores: the draft's handles, no message content. */
 function draftHandles(draft: Record<string, unknown>): IdempotencyResult {
   const handle = (k: string) => (typeof draft[k] === 'string' ? draft[k] : null);
   return {

@@ -24,10 +24,10 @@ export interface CommandMeta {
  * `option` reads the option's value (comma-separated when `split`); `arg` reads a positional argument by index.
  * `withOption` adds a second clause for the selected argument value when that option is given. `base` is one fixed
  * clause, and `withOption` adds its `scopes` as a second one when the option is given a non-empty value (`--mailbox`,
- * AH-10; `mail forward --comment` goes through a draft, E37). `flag` picks one clause by whether a boolean option is
- * given: `with` when it is, `without` when not (`mail reply --draft` creates a draft with Mail.ReadWrite instead of
- * sending with Mail.Send); without the flag, `withoutOption` adds its `scopes` as a second clause when that option is
- * given a non-empty value (a sent `mail reply --body` also creates and patches a draft, E37).
+ * AH-10). `flag` picks one clause by whether a boolean option is given: `with` when it is, `without` when not
+ * (`mail reply --draft`/`mail forward --draft` create a draft with Mail.ReadWrite instead of sending with Mail.Send);
+ * without the flag, `withoutOption` adds its `scopes` as a second clause when that option is given a non-empty value
+ * (a sent `mail reply --body` or `mail forward --comment` also creates and patches a draft, E37).
  */
 export type ScopeSelector =
   | { option: string; split?: ','; map: Record<string, string[]> }
