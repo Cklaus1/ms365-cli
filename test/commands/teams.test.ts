@@ -262,3 +262,58 @@ describe('chat list --recent and content options (TMS-1, TMS-2)', () => {
     expect(JSON.parse(asReturned.stdout).value[0]).toMatchObject({ id: 'm1', body: null, untrusted: true });
   });
 });
+
+describe('teams channel-messages --replies (E40)', () => {
+  const org = ['GET', '/organization', () => ({ value: [{ id: 'T1' }] })] as const;
+  const msg = (id: string, tenant: string, html: string, extra: Record<string, unknown> = {}) => ({
+    id, from: { user: { id: `u${id}`, displayName: `User ${id}`, tenantId: tenant } }, body: { contentType: 'html', content: html }, ...extra,
+  });
+  const root = () => msg('1', 'T1', '<p>Root <b>post</b></p>', { replies: [msg('2', 'T2', '<p>Reply <i>one</i></p>'), msg('3', 'T1', '<p>Two</p>', { uniqueBody: { contentType: 'html', content: '<p>u</p>' } })] });
+  const run = (argv: string[], value: unknown[] = [root()]) =>
+    runCommand(registerTeamsCommands, ['teams', 'channel-messages', TEAM_ID, CHANNEL_ID, ...argv],
+      { routes: [org as never, ['GET', `/teams/${TEAM_ID}/channels/`, () => ({ value })]] });
+
+  it('sends $expand=replies only with the flag', async () => {
+    const withFlag = await run(['--replies', '--top', '50', '-o', 'json']);
+    expect(withFlag.exitCode).toBe(0);
+    expect(withFlag.calls[0].path).toContain('$top=50');
+    expect(withFlag.calls[0].path).toContain('$expand=replies');
+    const without = await run(['--top', '50', '-o', 'json']);
+    expect(without.calls[0].path).not.toContain('$expand');
+  });
+
+  it('--body none drops reply body and uniqueBody; replies are marked untrusted with sender.external', async () => {
+    const r = await run(['--replies', '--body', 'none', '-o', 'json']);
+    const [m] = JSON.parse(r.stdout).value;
+    expect(m).not.toHaveProperty('body');
+    expect(m.untrusted).toBe(true);
+    for (const reply of m.replies) {
+      expect(reply).not.toHaveProperty('body');
+      expect(reply).not.toHaveProperty('uniqueBody');
+      expect(reply.untrusted).toBe(true);
+    }
+    expect(m.replies[0].sender).toEqual({ external: true });
+    expect(m.replies[1].sender).toEqual({ external: false });
+  });
+
+  it('--body text --max-chars --wrap-untrusted shapes reply bodies like roots', async () => {
+    const r = await run(['--replies', '--body', 'text', '--max-chars', '5', '--wrap-untrusted', '-o', 'json']);
+    const [m] = JSON.parse(r.stdout).value;
+    expect(m.body).toEqual({ contentType: 'text', content: '<<<UNTRUSTED_CONTENT\nRoot …[truncated 4 chars]\nUNTRUSTED_CONTENT>>>' });
+    expect(m.replies[0].body).toEqual({ contentType: 'text', content: '<<<UNTRUSTED_CONTENT\nReply…[truncated 4 chars]\nUNTRUSTED_CONTENT>>>' });
+    expect(m.replies[1].uniqueBody).toEqual({ contentType: 'text', content: '<<<UNTRUSTED_CONTENT\nu\nUNTRUSTED_CONTENT>>>' });
+  });
+
+  it('without the flag replies returned by Graph pass through unshaped', async () => {
+    const r = await run(['--body', 'none', '-o', 'json']);
+    const [m] = JSON.parse(r.stdout).value;
+    expect(m).not.toHaveProperty('body');
+    expect(m.replies[0].body).toEqual({ contentType: 'html', content: '<p>Reply <i>one</i></p>' });
+  });
+
+  it('--dry-run shows the $expand param and sends nothing', async () => {
+    const r = await runCommand(registerTeamsCommands, ['teams', 'channel-messages', TEAM_ID, CHANNEL_ID, '--replies', '-o', 'json'], { dryRun: true });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout + r.stderr).toContain('$expand=replies');
+  });
+});
