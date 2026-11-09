@@ -152,7 +152,7 @@ exports[`dry-run endpoint snapshot (every command) > calendar cancel 1`] = `
 
 exports[`dry-run endpoint snapshot (every command) > calendar create [optional flags] 1`] = `
 {
-  "argv": "calendar create --subject x --start 2026-10-20T10:00 --end 2026-10-20T10:00 --timezone America/Los_Angeles --body x --location x --attendees a@contoso.com --calendar 2026-10-20T10:00 --idempotency-key x --output json",
+  "argv": "calendar create --subject x --start 2026-10-20T10:00 --end 2026-10-20T10:00 --timezone America/Los_Angeles --body x --location x --reminder-minutes 5 --attendees a@contoso.com --calendar 2026-10-20T10:00 --idempotency-key x --output json",
   "error": "",
   "exitCode": 0,
   "requests": [
@@ -442,7 +442,7 @@ exports[`dry-run endpoint snapshot (every command) > calendar tentative 1`] = `
 
 exports[`dry-run endpoint snapshot (every command) > calendar update [optional flags] 1`] = `
 {
-  "argv": "calendar update EVENTID --subject x --start 2026-10-20T10:00 --end 2026-10-20T10:00 --timezone America/Los_Angeles --body x --location x --calendar 2026-10-20T10:00 --if-match x --output json",
+  "argv": "calendar update EVENTID --subject x --start 2026-10-20T10:00 --end 2026-10-20T10:00 --timezone America/Los_Angeles --body x --location x --reminder-minutes 5 --calendar 2026-10-20T10:00 --if-match x --output json",
   "error": "",
   "exitCode": 0,
   "requests": [

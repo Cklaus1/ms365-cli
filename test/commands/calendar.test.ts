@@ -83,6 +83,53 @@ describe('cal update (M-9)', () => {
   });
 });
 
+describe('cal create/update --reminder-minutes', () => {
+  const CREATE = ['cal', 'create', '--subject', 'S', '--start', '2026-10-20T09:00', '--end', '2026-10-20T09:30'];
+
+  it('create turns the reminder on at the given lead time', async () => {
+    const r = await runCommand(registerCalendarCommands, [...CREATE, '--reminder-minutes', '15'], { env });
+    expect(r.exitCode).toBe(0);
+    expect(r.calls).toHaveLength(1);
+    expect(r.calls[0].body).toMatchObject({ isReminderOn: true, reminderMinutesBeforeStart: 15 });
+  });
+
+  it('create accepts both bounds, 0 and 40320', async () => {
+    for (const n of [0, 40320]) {
+      const r = await runCommand(registerCalendarCommands, [...CREATE, '--reminder-minutes', String(n)], { env });
+      expect(r.exitCode).toBe(0);
+      expect(r.calls[0].body).toMatchObject({ isReminderOn: true, reminderMinutesBeforeStart: n });
+    }
+  });
+
+  it('create without it leaves the reminder fields out', async () => {
+    const r = await runCommand(registerCalendarCommands, CREATE, { env });
+    expect(r.exitCode).toBe(0);
+    const body = r.calls[0].body as Record<string, unknown>;
+    expect(body).not.toHaveProperty('isReminderOn');
+    expect(body).not.toHaveProperty('reminderMinutesBeforeStart');
+  });
+
+  it('update patches the reminder on at the given lead time', async () => {
+    const r = await runCommand(registerCalendarCommands, ['cal', 'update', 'E1', '--reminder-minutes', '30'], {
+      env, routes: [['GET', '/me/events/E1', () => ({ type: 'singleInstance' })]],
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.calls.map(c => c.method)).toEqual(['GET', 'PATCH']);
+    expect(r.calls[1].body).toEqual({ isReminderOn: true, reminderMinutesBeforeStart: 30 });
+  });
+
+  for (const bad of ['-1', '40321', '1.5', 'x', '', ' ']) {
+    it(`refuses --reminder-minutes "${bad}" before any request (exit 2), create and update`, async () => {
+      const created = await runCommand(registerCalendarCommands, [...CREATE, '--reminder-minutes', bad], { env });
+      expect(created.exitCode).toBe(2);
+      expect(created.calls).toHaveLength(0);
+      const updated = await runCommand(registerCalendarCommands, ['cal', 'update', 'E1', '--reminder-minutes', bad], { env });
+      expect(updated.exitCode).toBe(2);
+      expect(updated.calls).toHaveLength(0);
+    });
+  }
+});
+
 describe('cal free-busy (M-9)', () => {
   it('defaults to the local zone', async () => {
     const r = await runCommand(registerCalendarCommands,

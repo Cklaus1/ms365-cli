@@ -326,7 +326,7 @@ The reference below is generated from the live command tree (`ms365 describe --j
 |---|---|---|---|---|
 | `calendar accept` | Accept a meeting invite | `<eventId>` | `--comment <text>` `--no-notify` | not idempotent · Calendars.ReadWrite |
 | `calendar cancel` | Cancel a meeting you organize: every attendee gets a cancellation with --comment (attendees: use decline) | `<eventId>` | `--comment <text>` `--calendar <calendarId>` `--series` `--if-match <etag>` | **destructive** · Calendars.ReadWrite |
-| `calendar create` | Create a calendar event |  | `--subject <subject>` (required) `--start <datetime>` (required) `--end <datetime>` (required) `--timezone <tz>` `--body <body>` `--body-file <path>` `--location <location>` `--attendees <emails>` `--calendar <calendarId>` `--html` `--teams` `--idempotency-key <key>` | not idempotent · Calendars.ReadWrite |
+| `calendar create` | Create a calendar event |  | `--subject <subject>` (required) `--start <datetime>` (required) `--end <datetime>` (required) `--timezone <tz>` `--body <body>` `--body-file <path>` `--location <location>` `--reminder-minutes <n>` `--attendees <emails>` `--calendar <calendarId>` `--html` `--teams` `--idempotency-key <key>` | not idempotent · Calendars.ReadWrite |
 | `calendar create-calendar` | Create a secondary calendar |  | `--name <name>` (required) `--color <color>` | not idempotent · Calendars.ReadWrite |
 | `calendar decline` | Decline a meeting invite | `<eventId>` | `--comment <text>` `--no-notify` `--propose-start <datetime>` `--propose-end <datetime>` `--timezone <tz>` | not idempotent · Calendars.ReadWrite |
 | `calendar delete` | Delete a calendar event (as organizer this sends cancellations; a series master needs --series) | `<eventId>` | `--calendar <calendarId>` `--series` `--if-match <etag>` | **destructive** · Calendars.ReadWrite |
@@ -339,7 +339,7 @@ The reference below is generated from the live command tree (`ms365 describe --j
 | `calendar room-lists` | List room lists / buildings (requires --org-mode) |  |  | Place.Read.All |
 | `calendar rooms` | List meeting rooms (requires --org-mode) |  |  | Place.Read.All |
 | `calendar tentative` | Tentatively accept a meeting invite | `<eventId>` | `--comment <text>` `--no-notify` | not idempotent · Calendars.ReadWrite |
-| `calendar update` | Update a calendar event (a series master needs --series; the organizer's change notifies every attendee) | `<eventId>` | `--subject <subject>` `--start <datetime>` `--end <datetime>` `--timezone <tz>` `--body <body>` `--body-file <path>` `--location <location>` `--calendar <calendarId>` `--series` `--if-match <etag>` | Calendars.ReadWrite |
+| `calendar update` | Update a calendar event (a series master needs --series; the organizer's change notifies every attendee) | `<eventId>` | `--subject <subject>` `--start <datetime>` `--end <datetime>` `--timezone <tz>` `--body <body>` `--body-file <path>` `--location <location>` `--reminder-minutes <n>` `--calendar <calendarId>` `--series` `--if-match <etag>` | Calendars.ReadWrite |
 | `calendar update-calendar` | Update a calendar | `<calendarId>` | `--name <name>` `--color <color>` | Calendars.ReadWrite |
 | `calendar view` | Get calendar view (time range) |  | `--start <datetime>` (required) `--end <datetime>` (required) `--select <fields>` `--timezone <tz>` `--mailbox <upn>` | Calendars.Read (--mailbox: + Calendars.Read.Shared) |
 

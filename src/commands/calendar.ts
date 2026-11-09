@@ -113,6 +113,18 @@ function parseInterval(value: string): string {
   return String(n);
 }
 
+/** Graph's reminderMinutesBeforeStart: whole minutes, 0 to 40320 (4 weeks, Outlook's longest reminder). */
+function parseReminderMinutes(value: string): number {
+  const n = Number(value);
+  if (!/^\d+$/.test(value.trim()) || n > 40320) throw new InvalidArgumentError('must be an integer from 0 to 40320.');
+  return n;
+}
+const REMINDER_HELP = 'Turn the reminder on, this many minutes before the start (0-40320)';
+
+/** `--reminder-minutes` as Graph event fields: the reminder on, at that lead time. */
+const reminderFields = (minutes: number | undefined): Record<string, unknown> =>
+  (minutes === undefined ? {} : { isReminderOn: true, reminderMinutesBeforeStart: minutes });
+
 
 const CALENDAR_COLORS = ['auto', 'lightBlue', 'lightGreen', 'lightOrange', 'lightGray', 'lightYellow', 'lightTeal', 'lightPink', 'lightBrown', 'lightRed', 'maxColor'];
 const colorOption = () => new Option('--color <color>', 'Calendar color').choices(CALENDAR_COLORS);
@@ -205,6 +217,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     .requiredOption('--end <datetime>', `End: ${TIME_HELP}`)
     .option('--timezone <tz>', TZ_HELP), 'Event body/description')
     .option('--location <location>', 'Event location')
+    .option('--reminder-minutes <n>', REMINDER_HELP, parseReminderMinutes)
     .option('--attendees <emails>', 'Comma-separated attendee emails')
     .option('--calendar <calendarId>', 'Calendar ID')
     .option('--html', 'Body is HTML')
@@ -236,6 +249,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
         event.isOnlineMeeting = true;
         event.onlineMeetingProvider = 'teamsForBusiness';
       }
+      Object.assign(event, reminderFields(opts.reminderMinutes));
 
       const client = getClient();
       const endpoint = opts.calendar
@@ -275,6 +289,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     .option('--end <datetime>', `End: ${TIME_HELP}`)
     .option('--timezone <tz>', 'IANA time zone for --start/--end (default: the event\'s own zone)'), 'Event body')
     .option('--location <location>', 'Event location')
+    .option('--reminder-minutes <n>', REMINDER_HELP, parseReminderMinutes)
     .option('--calendar <calendarId>', 'Specific calendar ID')
     .option('--series', SERIES_HELP)
     .option('--if-match <etag>', IF_MATCH_HELP)
@@ -304,6 +319,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
       const body = bodyText(opts);
       if (body) patch.body = { contentType: 'Text', content: body };
       if (opts.location) patch.location = { displayName: opts.location };
+      Object.assign(patch, reminderFields(opts.reminderMinutes));
 
       if (planning()) planEvent(eventId, check, { patch });
       const ifMatch = await ifMatchFor(opts.ifMatch, async () => check.version);
