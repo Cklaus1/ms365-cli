@@ -130,6 +130,96 @@ describe('cal create/update --reminder-minutes', () => {
   }
 });
 
+describe('cal create/update --show-as, --sensitivity, --categories', () => {
+  const CREATE = ['cal', 'create', '--subject', 'S', '--start', '2026-10-20T09:00', '--end', '2026-10-20T09:30'];
+  const FLAGS = ['--show-as', 'free', '--sensitivity', 'private', '--categories', 'Chief prep, Travel'];
+  const GET_E1: Route[] = [['GET', '/me/events/E1', () => ({ type: 'singleInstance' })]];
+
+  it('create sends showAs, sensitivity and the trimmed category list', async () => {
+    const r = await runCommand(registerCalendarCommands, [...CREATE, ...FLAGS, '--reminder-minutes', '0'], { env });
+    expect(r.exitCode).toBe(0);
+    expect(r.calls).toHaveLength(1);
+    expect(r.calls[0].body).toMatchObject({
+      showAs: 'free', sensitivity: 'private', categories: ['Chief prep', 'Travel'],
+      isReminderOn: true, reminderMinutesBeforeStart: 0,
+    });
+  });
+
+  it('create without them leaves the fields out', async () => {
+    const r = await runCommand(registerCalendarCommands, CREATE, { env });
+    const body = r.calls[0].body as Record<string, unknown>;
+    for (const field of ['showAs', 'sensitivity', 'categories']) expect(body).not.toHaveProperty(field);
+  });
+
+  it('update patches exactly the given fields', async () => {
+    const r = await runCommand(registerCalendarCommands, ['cal', 'update', 'E1', ...FLAGS], { env, routes: GET_E1 });
+    expect(r.exitCode).toBe(0);
+    expect(r.calls.map(c => c.method)).toEqual(['GET', 'PATCH']);
+    expect(r.calls[1].body).toEqual({ showAs: 'free', sensitivity: 'private', categories: ['Chief prep', 'Travel'] });
+  });
+
+  it('accepts every Graph showAs and sensitivity value', async () => {
+    for (const showAs of ['free', 'tentative', 'busy', 'oof', 'workingElsewhere']) {
+      const r = await runCommand(registerCalendarCommands, [...CREATE, '--show-as', showAs], { env });
+      expect(r.exitCode).toBe(0);
+      expect(r.calls[0].body).toMatchObject({ showAs });
+    }
+    for (const sensitivity of ['normal', 'personal', 'private', 'confidential']) {
+      const r = await runCommand(registerCalendarCommands, [...CREATE, '--sensitivity', sensitivity], { env });
+      expect(r.exitCode).toBe(0);
+      expect(r.calls[0].body).toMatchObject({ sensitivity });
+    }
+  });
+
+  for (const [flag, bad] of [['--show-as', 'away'], ['--sensitivity', 'secret'], ['--categories', 'a,,b'],
+    ['--categories', ' '], ['--categories', 'a,a']]) {
+    it(`refuses ${flag} "${bad}" before any request (exit 2), create and update`, async () => {
+      const created = await runCommand(registerCalendarCommands, [...CREATE, flag, bad], { env });
+      expect(created.exitCode).toBe(2);
+      expect(created.calls).toHaveLength(0);
+      const updated = await runCommand(registerCalendarCommands, ['cal', 'update', 'E1', flag, bad], { env });
+      expect(updated.exitCode).toBe(2);
+      expect(updated.calls).toHaveLength(0);
+    });
+  }
+});
+
+describe('cal categories / create-category (the Outlook master list)', () => {
+  it('lists the master categories', async () => {
+    const r = await runCommand(registerCalendarCommands, ['cal', 'categories', '-o', 'json'], {
+      env, routes: [['GET', '/me/outlook/masterCategories', () => ({ value: [{ id: 'c1', displayName: 'Red', color: 'preset0' }] })]],
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.calls.map(c => c.method)).toEqual(['GET']);
+    expect(r.calls[0].path.split('?')[0]).toBe('/me/outlook/masterCategories');
+    expect(JSON.stringify(JSON.parse(r.stdout))).toContain('"displayName":"Red"');
+  });
+
+  it('creates one category with its color', async () => {
+    const r = await runCommand(registerCalendarCommands,
+      ['cal', 'create-category', '--name', ' Chief prep ', '--color', 'preset12', '-o', 'json'], { env });
+    expect(r.exitCode).toBe(0);
+    expect(r.calls).toHaveLength(1);
+    expect(r.calls[0].method).toBe('POST');
+    expect(r.calls[0].path).toBe('/me/outlook/masterCategories');
+    expect(r.calls[0].body).toEqual({ displayName: 'Chief prep', color: 'preset12' });
+  });
+
+  it('leaves the color to Graph when none is given', async () => {
+    const r = await runCommand(registerCalendarCommands, ['cal', 'create-category', '--name', 'X'], { env });
+    expect(r.exitCode).toBe(0);
+    expect(r.calls[0].body).toEqual({ displayName: 'X' });
+  });
+
+  for (const args of [['--name', ' '], ['--name', 'a,b'], ['--name', 'X', '--color', 'preset25'], ['--name', 'X', '--color', 'red']]) {
+    it(`refuses ${args.join(' ')} before any request (exit 2)`, async () => {
+      const r = await runCommand(registerCalendarCommands, ['cal', 'create-category', ...args], { env });
+      expect(r.exitCode).toBe(2);
+      expect(r.calls).toHaveLength(0);
+    });
+  }
+});
+
 describe('cal free-busy (M-9)', () => {
   it('defaults to the local zone', async () => {
     const r = await runCommand(registerCalendarCommands,

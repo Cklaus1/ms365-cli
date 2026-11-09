@@ -150,9 +150,31 @@ exports[`dry-run endpoint snapshot (every command) > calendar cancel 1`] = `
 }
 `;
 
+exports[`dry-run endpoint snapshot (every command) > calendar categories [optional flags] 1`] = `
+{
+  "argv": "calendar categories --page-limit 5 --page-delay 5 --output json",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/outlook/masterCategories",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > calendar categories 1`] = `
+{
+  "argv": "calendar categories",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] GET https://graph.microsoft.com/v1.0/me/outlook/masterCategories",
+  ],
+}
+`;
+
 exports[`dry-run endpoint snapshot (every command) > calendar create [optional flags] 1`] = `
 {
-  "argv": "calendar create --subject x --start 2026-10-20T10:00 --end 2026-10-20T10:00 --timezone America/Los_Angeles --body x --location x --reminder-minutes 5 --attendees a@contoso.com --calendar 2026-10-20T10:00 --idempotency-key x --output json",
+  "argv": "calendar create --subject x --start 2026-10-20T10:00 --end 2026-10-20T10:00 --timezone America/Los_Angeles --body x --location x --reminder-minutes 5 --show-as free --sensitivity normal --categories {} --attendees a@contoso.com --calendar 2026-10-20T10:00 --idempotency-key x --output json",
   "error": "",
   "exitCode": 0,
   "requests": [
@@ -190,6 +212,28 @@ exports[`dry-run endpoint snapshot (every command) > calendar create-calendar 1`
   "exitCode": 0,
   "requests": [
     "[dry-run] POST https://graph.microsoft.com/v1.0/me/calendars",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > calendar create-category [optional flags] 1`] = `
+{
+  "argv": "calendar create-category --name x --color none --output json",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/outlook/masterCategories",
+  ],
+}
+`;
+
+exports[`dry-run endpoint snapshot (every command) > calendar create-category 1`] = `
+{
+  "argv": "calendar create-category --name x",
+  "error": "",
+  "exitCode": 0,
+  "requests": [
+    "[dry-run] POST https://graph.microsoft.com/v1.0/me/outlook/masterCategories",
   ],
 }
 `;
@@ -442,7 +486,7 @@ exports[`dry-run endpoint snapshot (every command) > calendar tentative 1`] = `
 
 exports[`dry-run endpoint snapshot (every command) > calendar update [optional flags] 1`] = `
 {
-  "argv": "calendar update EVENTID --subject x --start 2026-10-20T10:00 --end 2026-10-20T10:00 --timezone America/Los_Angeles --body x --location x --reminder-minutes 5 --calendar 2026-10-20T10:00 --if-match x --output json",
+  "argv": "calendar update EVENTID --subject x --start 2026-10-20T10:00 --end 2026-10-20T10:00 --timezone America/Los_Angeles --body x --location x --reminder-minutes 5 --show-as free --sensitivity normal --categories {} --calendar 2026-10-20T10:00 --if-match x --output json",
   "error": "",
   "exitCode": 0,
   "requests": [

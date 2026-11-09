@@ -167,6 +167,8 @@ const COMMANDS: Record<string, Entry> = {
   'calendar room-lists': ['read', ['Place.Read.All']],
   'calendar create-calendar': 'action',
   'calendar update-calendar': 'update',
+  'calendar categories': ['read', MAILBOX_READ],
+  'calendar create-category': ['action', MAILBOX_WRITE],
 
   'drive list': 'read',
   'drive root': 'read',

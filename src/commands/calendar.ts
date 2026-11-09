@@ -125,6 +125,30 @@ const REMINDER_HELP = 'Turn the reminder on, this many minutes before the start 
 const reminderFields = (minutes: number | undefined): Record<string, unknown> =>
   (minutes === undefined ? {} : { isReminderOn: true, reminderMinutesBeforeStart: minutes });
 
+const SHOW_AS = ['free', 'tentative', 'busy', 'oof', 'workingElsewhere'];
+const SENSITIVITY = ['normal', 'personal', 'private', 'confidential'];
+const showAsOption = () => new Option('--show-as <status>', 'How the time shows in free/busy').choices(SHOW_AS);
+const sensitivityOption = () => new Option('--sensitivity <level>', 'Event sensitivity (private hides the details from delegates and shared views)').choices(SENSITIVITY);
+const CATEGORIES_HELP = 'Comma-separated Outlook category names (replaces the event\'s categories)';
+
+/** `--categories`: comma-separated names, each trimmed and non-empty, no repeats. */
+function parseCategories(value: string): string[] {
+  const names = value.split(',').map(c => c.trim());
+  if (names.some(c => !c)) throw new InvalidArgumentError('category names must be non-empty and comma-separated.');
+  if (new Set(names).size !== names.length) throw new InvalidArgumentError('a category is named twice.');
+  return names;
+}
+
+/** `--show-as`, `--sensitivity` and `--categories` as Graph event fields (only those given). */
+const eventFlags = (opts: { showAs?: string; sensitivity?: string; categories?: string[] }): Record<string, unknown> => ({
+  ...(opts.showAs !== undefined && { showAs: opts.showAs }),
+  ...(opts.sensitivity !== undefined && { sensitivity: opts.sensitivity }),
+  ...(opts.categories !== undefined && { categories: opts.categories }),
+});
+
+/** Graph's preset colors of an Outlook category (outlookCategory.color). */
+const CATEGORY_COLORS = ['none', ...Array.from({ length: 25 }, (_, i) => `preset${i}`)];
+
 
 const CALENDAR_COLORS = ['auto', 'lightBlue', 'lightGreen', 'lightOrange', 'lightGray', 'lightYellow', 'lightTeal', 'lightPink', 'lightBrown', 'lightRed', 'maxColor'];
 const colorOption = () => new Option('--color <color>', 'Calendar color').choices(CALENDAR_COLORS);
@@ -218,6 +242,9 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     .option('--timezone <tz>', TZ_HELP), 'Event body/description')
     .option('--location <location>', 'Event location')
     .option('--reminder-minutes <n>', REMINDER_HELP, parseReminderMinutes)
+    .addOption(showAsOption())
+    .addOption(sensitivityOption())
+    .option('--categories <names>', CATEGORIES_HELP, parseCategories)
     .option('--attendees <emails>', 'Comma-separated attendee emails')
     .option('--calendar <calendarId>', 'Calendar ID')
     .option('--html', 'Body is HTML')
@@ -249,7 +276,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
         event.isOnlineMeeting = true;
         event.onlineMeetingProvider = 'teamsForBusiness';
       }
-      Object.assign(event, reminderFields(opts.reminderMinutes));
+      Object.assign(event, reminderFields(opts.reminderMinutes), eventFlags(opts));
 
       const client = getClient();
       const endpoint = opts.calendar
@@ -290,6 +317,9 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
     .option('--timezone <tz>', 'IANA time zone for --start/--end (default: the event\'s own zone)'), 'Event body')
     .option('--location <location>', 'Event location')
     .option('--reminder-minutes <n>', REMINDER_HELP, parseReminderMinutes)
+    .addOption(showAsOption())
+    .addOption(sensitivityOption())
+    .option('--categories <names>', CATEGORIES_HELP, parseCategories)
     .option('--calendar <calendarId>', 'Specific calendar ID')
     .option('--series', SERIES_HELP)
     .option('--if-match <etag>', IF_MATCH_HELP)
@@ -319,7 +349,7 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
       const body = bodyText(opts);
       if (body) patch.body = { contentType: 'Text', content: body };
       if (opts.location) patch.location = { displayName: opts.location };
-      Object.assign(patch, reminderFields(opts.reminderMinutes));
+      Object.assign(patch, reminderFields(opts.reminderMinutes), eventFlags(opts));
 
       if (planning()) planEvent(eventId, check, { patch });
       const ifMatch = await ifMatchFor(opts.ifMatch, async () => check.version);
@@ -631,4 +661,28 @@ export function registerCalendarCommands(program: Command, getClient: () => Grap
       console.log(formatOutput(response.data, opts.output as OutputFormat));
     }));
 
+  // ── Outlook categories (the mailbox's master list, shared by mail and calendar) ──
+  addListOptions(cal
+    .command('categories')
+    .description('List the Outlook master category list (names and colors)'))
+    .addOption(outputOption())
+    .action(handleErrors(async (opts) => {
+      await printList(getClient(), '/me/outlook/masterCategories', {}, opts);
+    }));
+
+  cal
+    .command('create-category')
+    .description('Add a category to the Outlook master category list (Graph refuses a name already there)')
+    .requiredOption('--name <name>', 'Category display name')
+    .addOption(new Option('--color <preset>', 'Category color: none or preset0-preset24').choices(CATEGORY_COLORS))
+    .addOption(outputOption())
+    .action(handleErrors(async (opts) => {
+      const name = String(opts.name).trim();
+      if (!name || name.includes(',')) throw usage('--name must be non-empty and must not contain a comma.');
+      const response = await getClient().request('/me/outlook/masterCategories', {
+        method: 'POST',
+        body: JSON.stringify({ displayName: name, ...(opts.color && { color: opts.color }) }),
+      });
+      console.log(formatOutput(response.data, opts.output as OutputFormat));
+    }));
 }
