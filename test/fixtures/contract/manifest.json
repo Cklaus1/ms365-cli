@@ -1,9 +1,9 @@
 {
   "v": 1,
   "ms365": {
-    "commit": "a91a43846b33a95903d21ecb467f91d11dc97f99",
-    "dirty": true,
-    "distSha256": "d91136c85d09dbe5e9dc3149c2110a9e6110f07dc979b3debc467def1cef2365"
+    "commit": "d4ac8411b5085c8ec561bfdb3b373393a1add325",
+    "dirty": false,
+    "distSha256": "4859e66e6de9b968270ab62a65f5547107dd457c164c9ffa01b8b2592db48bc4"
   },
   "clock": "2026-10-17T12:00:00.000Z",
   "profile": {
@@ -405,7 +405,7 @@
       ],
       "exitCode": 0,
       "capture": "stdout",
-      "sha256": "35e40415a84737203b2d72daab50ab374a44ec6f15c05ae50a39e2b966a137c4"
+      "sha256": "9f632684ca9255fd0c576350967b5f0b626956eac60517806c77e9d6db698743"
     },
     "chat-list-recent.json": {
       "argv": [

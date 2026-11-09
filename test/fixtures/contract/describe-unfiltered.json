@@ -3344,6 +3344,16 @@
           "default": null
         },
         {
+          "flags": "--reminder-minutes <n>",
+          "long": "--reminder-minutes",
+          "short": null,
+          "description": "Turn the reminder on, this many minutes before the start (0-40320)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
           "flags": "--attendees <emails>",
           "long": "--attendees",
           "short": null,
@@ -3497,6 +3507,16 @@
           "long": "--location",
           "short": null,
           "description": "Event location",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--reminder-minutes <n>",
+          "long": "--reminder-minutes",
+          "short": null,
+          "description": "Turn the reminder on, this many minutes before the start (0-40320)",
           "required": false,
           "takesValue": true,
           "choices": null,
