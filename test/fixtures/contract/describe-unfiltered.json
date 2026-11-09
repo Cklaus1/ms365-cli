@@ -3354,6 +3354,47 @@
           "default": null
         },
         {
+          "flags": "--show-as <status>",
+          "long": "--show-as",
+          "short": null,
+          "description": "How the time shows in free/busy",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "free",
+            "tentative",
+            "busy",
+            "oof",
+            "workingElsewhere"
+          ],
+          "default": null
+        },
+        {
+          "flags": "--sensitivity <level>",
+          "long": "--sensitivity",
+          "short": null,
+          "description": "Event sensitivity (private hides the details from delegates and shared views)",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "normal",
+            "personal",
+            "private",
+            "confidential"
+          ],
+          "default": null
+        },
+        {
+          "flags": "--categories <names>",
+          "long": "--categories",
+          "short": null,
+          "description": "Comma-separated Outlook category names (replaces the event's categories)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
           "flags": "--attendees <emails>",
           "long": "--attendees",
           "short": null,
@@ -3517,6 +3558,47 @@
           "long": "--reminder-minutes",
           "short": null,
           "description": "Turn the reminder on, this many minutes before the start (0-40320)",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--show-as <status>",
+          "long": "--show-as",
+          "short": null,
+          "description": "How the time shows in free/busy",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "free",
+            "tentative",
+            "busy",
+            "oof",
+            "workingElsewhere"
+          ],
+          "default": null
+        },
+        {
+          "flags": "--sensitivity <level>",
+          "long": "--sensitivity",
+          "short": null,
+          "description": "Event sensitivity (private hides the details from delegates and shared views)",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "normal",
+            "personal",
+            "private",
+            "confidential"
+          ],
+          "default": null
+        },
+        {
+          "flags": "--categories <names>",
+          "long": "--categories",
+          "short": null,
+          "description": "Comma-separated Outlook category names (replaces the event's categories)",
           "required": false,
           "takesValue": true,
           "choices": null,
@@ -4528,6 +4610,149 @@
       "scopesBy": null,
       "destructive": false,
       "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null
+    },
+    {
+      "path": "calendar categories",
+      "description": "List the Outlook master category list (names and colors)",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--all",
+          "long": "--all",
+          "short": null,
+          "description": "Fetch all pages",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--page-limit <n>",
+          "long": "--page-limit",
+          "short": null,
+          "description": "Max pages when using --all",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--page-delay <ms>",
+          "long": "--page-delay",
+          "short": null,
+          "description": "Delay between pages in ms",
+          "required": false,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [
+        "MailboxSettings.Read"
+      ],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": true,
+      "offline": false,
+      "plan": false,
+      "providerIdempotency": null
+    },
+    {
+      "path": "calendar create-category",
+      "description": "Add a category to the Outlook master category list (Graph refuses a name already there)",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--name <name>",
+          "long": "--name",
+          "short": null,
+          "description": "Category display name",
+          "required": true,
+          "takesValue": true,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--color <preset>",
+          "long": "--color",
+          "short": null,
+          "description": "Category color: none or preset0-preset24",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "none",
+            "preset0",
+            "preset1",
+            "preset2",
+            "preset3",
+            "preset4",
+            "preset5",
+            "preset6",
+            "preset7",
+            "preset8",
+            "preset9",
+            "preset10",
+            "preset11",
+            "preset12",
+            "preset13",
+            "preset14",
+            "preset15",
+            "preset16",
+            "preset17",
+            "preset18",
+            "preset19",
+            "preset20",
+            "preset21",
+            "preset22",
+            "preset23",
+            "preset24"
+          ],
+          "default": null
+        },
+        {
+          "flags": "-o, --output <format>",
+          "long": "--output",
+          "short": "-o",
+          "description": "Output format: json, ndjson, table, csv, text, yaml",
+          "required": false,
+          "takesValue": true,
+          "choices": [
+            "json",
+            "ndjson",
+            "table",
+            "csv",
+            "text",
+            "yaml"
+          ],
+          "default": "json"
+        }
+      ],
+      "scopes": [
+        "MailboxSettings.ReadWrite"
+      ],
+      "scopesBy": null,
+      "destructive": false,
+      "idempotent": false,
       "offline": false,
       "plan": false,
       "providerIdempotency": null
