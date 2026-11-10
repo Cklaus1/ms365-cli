@@ -7501,6 +7501,16 @@
       ],
       "options": [
         {
+          "flags": "--replies",
+          "long": "--replies",
+          "short": null,
+          "description": "Include each message's thread replies ($expand=replies; Graph inlines up to 200 per message), shaped and marked like roots",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
           "flags": "--body <mode>",
           "long": "--body",
           "short": null,
