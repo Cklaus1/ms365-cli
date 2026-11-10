@@ -5,7 +5,7 @@ import { addListOptions, outputOption, success, odataQuote, validateEmail, addBo
 import { idempotentSend, IDEMPOTENCY_HELP } from '../idempotency.js';
 import { handleErrors, CliError, ExitCode } from '../errors.js';
 import { resolve } from '../resolve.js';
-import { addContentOptions, chatTransform, contentOptions, htmlToText, messageTransform } from '../content.js';
+import { addContentOptions, chatTransform, contentOptions, htmlToText, messageTransform, type ItemTransform } from '../content.js';
 
 export function registerTeamsCommands(program: Command, getClient: () => GraphClient): void {
   const teams = program.command('teams').description('Microsoft Teams (requires --org-mode)');
@@ -72,7 +72,8 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
     .command('channel-messages')
     .argument('<teamId>', 'Team ID or name')
     .argument('<channelId>', 'Channel ID or name')
-    .description('List channel messages (marked untrusted; see --body, --wrap-untrusted)')), { description: 'Number of messages' })
+    .description('List channel messages (marked untrusted; see --body, --wrap-untrusted)')
+    .option('--replies', 'Include each message\'s thread replies ($expand=replies; Graph inlines up to 200 per message), shaped and marked like roots')), { description: 'Number of messages' })
     .addOption(outputOption())
     .action(handleErrors(async (teamArg: string, channelArg: string, opts) => {
       const client = getClient();
@@ -80,9 +81,11 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       const channelId = await resolve(client, 'channel', channelArg, teamId);
       const queryParams: Record<string, string> = {};
       if (opts.top) queryParams['$top'] = opts.top;
+      if (opts.replies) queryParams['$expand'] = 'replies';
 
       const endpoint = `/teams/${encodeURIComponent(teamId)}/channels/${encodeURIComponent(channelId)}/messages`;
-      await printList(client, endpoint, { queryParams }, opts, { transform: messageTransform(client, 'teams', contentOptions(opts)) });
+      const transform = messageTransform(client, 'teams', contentOptions(opts));
+      await printList(client, endpoint, { queryParams }, opts, { transform: opts.replies ? withReplies(transform) : transform });
     }));
 
   addBodyOptions(teams
@@ -259,6 +262,14 @@ export function registerTeamsCommands(program: Command, getClient: () => GraphCl
       });
       if (sent) success('Reply sent.');
     }));
+}
+
+/** Apply a message transform to each root message's expanded `replies` too (E40). Under --dry-run the base transform is a no-op. */
+function withReplies(transform: ItemTransform): ItemTransform {
+  return async (items) => Promise.all((await transform(items)).map(async (item) => {
+    const replies = (item as { replies?: unknown } | null)?.replies;
+    return Array.isArray(replies) ? { ...(item as object), replies: await transform(replies) } : item;
+  }));
 }
 
 function escapeHtml(text: string): string {

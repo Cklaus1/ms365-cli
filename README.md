@@ -602,7 +602,7 @@ The reference below is generated from the live command tree (`ms365 describe --j
 | Command | Description | Arguments | Key options | Notes |
 |---|---|---|---|---|
 | `teams channel` | Get channel details | `<teamId> <channelId>` |  | Channel.ReadBasic.All |
-| `teams channel-messages` | List channel messages (marked untrusted; see --body, --wrap-untrusted) | `<teamId> <channelId>` | `--body <mode>` `--max-chars <n>` `--wrap-untrusted` `--top <n>` | ChannelMessage.Read.All |
+| `teams channel-messages` | List channel messages (marked untrusted; see --body, --wrap-untrusted) | `<teamId> <channelId>` | `--replies` `--body <mode>` `--max-chars <n>` `--wrap-untrusted` `--top <n>` | ChannelMessage.Read.All |
 | `teams channels` | List team channels | `<teamId>` |  | Channel.ReadBasic.All |
 | `teams get` | Get team details | `<teamId>` |  | Team.ReadBasic.All |
 | `teams list` | List joined teams |  |  | Team.ReadBasic.All |
