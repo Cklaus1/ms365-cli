@@ -36,6 +36,16 @@ interface FileToAttach { filePath: string; name: string; contentType: string; si
 const TEXT_BODY_HEADER = { Prefer: 'outlook.body-content-type="text"' };
 const textBodyHeaders = (body: BodyMode | undefined): Record<string, string> => (body === 'text' ? TEXT_BODY_HEADER : {});
 
+// `mail get --batch`: one Graph JSON batch holds at most 20 requests.
+const GET_BATCH_MAX = 20;
+
+/** The Graph error code of one batch item's body (e.g. "ErrorItemNotFound"), else null. */
+const batchErrorCode = (body: unknown): string | null => {
+  const error = body && typeof body === 'object' && 'error' in body ? body.error : undefined;
+  const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+  return typeof code === 'string' ? code : null;
+};
+
 // Default $select for `mail get --unique` (uniqueBody is only returned when selected).
 const UNIQUE_SELECT = 'id,subject,from,sender,toRecipients,ccRecipients,bccRecipients,replyTo,receivedDateTime,sentDateTime,' +
   'bodyPreview,uniqueBody,hasAttachments,importance,categories,flag,isRead,isDraft,conversationId,internetMessageId,parentFolderId,webLink';
@@ -313,13 +323,23 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
     }));
 
   addContentOptions(mail
-    .command('get <messageId>')
-    .description('Get a specific message (marked untrusted; see --body, --unique, --wrap-untrusted)')
+    .command('get <messageId> [moreIds...]')
+    .description('Get a specific message (marked untrusted; see --body, --unique, --wrap-untrusted); with --batch, '
+      + `up to ${GET_BATCH_MAX} messages in one JSON batch request`)
     .option('--select <fields>', 'Comma-separated fields to return')
-    .option('--unique', 'Return uniqueBody (the new part of a thread reply, without quoted history) instead of body'))
+    .option('--unique', 'Return uniqueBody (the new part of a thread reply, without quoted history) instead of body')
+    .option('--batch', `Read 1-${GET_BATCH_MAX} messages through one POST /$batch; prints {"value": [message...], `
+      + '"errors": [{"id", "status", "code"}]} (a message Graph did not return is an error entry, not a failure)'))
     .addOption(mailboxOption('Mail.Read.Shared'))
     .addOption(outputOption())
-    .action(handleErrors(async (messageId: string, opts) => {
+    .action(handleErrors(async (messageId: string, moreIds: string[], opts) => {
+      const messageIds = [messageId, ...moreIds];
+      if (!opts.batch && moreIds.length > 0) {
+        throw new CliError('Several message ids need --batch', { code: 'usage', exitCode: ExitCode.USAGE });
+      }
+      if (messageIds.length > GET_BATCH_MAX) {
+        throw new CliError(`--batch reads at most ${GET_BATCH_MAX} messages`, { code: 'usage', exitCode: ExitCode.USAGE });
+      }
       const client = getClient();
       const queryParams: Record<string, string> = {};
       if (opts.unique) {
@@ -329,11 +349,29 @@ export function registerMailCommands(program: Command, getClient: () => GraphCli
       } else if (opts.select) {
         queryParams['$select'] = opts.select;
       }
+      const transform = messageTransform(client, 'mail', contentOptions(opts));
+
+      if (opts.batch) {
+        const query = Object.entries(queryParams).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+        const results = await client.batch(messageIds.map(id => ({
+          method: 'GET', url: `${userPath(opts.mailbox)}/messages/${encodeURIComponent(id)}${query ? `?${query}` : ''}`,
+          headers: textBodyHeaders(opts.body),
+        })));
+        const found: unknown[] = [];
+        const errors: Array<{ id: string; status: number; code: string | null }> = [];
+        results.forEach((r, i) => {
+          if (r.status >= 200 && r.status < 300 && r.body && typeof r.body === 'object') found.push(r.body);
+          else errors.push({ id: messageIds[i], status: r.status, code: batchErrorCode(r.body) });
+        });
+        const value = found.length > 0 ? await transform(found) : [];
+        console.log(formatOutput({ value, errors }, opts.output as OutputFormat));
+        return;
+      }
 
       const response = await client.request(`${userPath(opts.mailbox)}/messages/${encodeURIComponent(messageId)}`, {
         queryParams, headers: textBodyHeaders(opts.body),
       });
-      const data = await transformData(response.data, messageTransform(client, 'mail', contentOptions(opts)));
+      const data = await transformData(response.data, transform);
       console.log(formatOutput(data, opts.output as OutputFormat));
     }));
 

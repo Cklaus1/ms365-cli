@@ -274,6 +274,47 @@ describe('status lines go to stderr (C-19)', () => {
   });
 });
 
+describe('mail get --batch', () => {
+  type Req = { id: string; url: string; headers?: Record<string, string> };
+  const batchRoute = (status: (url: string) => number) => ['POST', '/$batch', (c: { body?: unknown }) => ({
+    responses: (c.body as { requests: Req[] }).requests.map(q => status(q.url) === 200
+      ? { id: q.id, status: 200, body: { id: q.url.split('/')[3].split('?')[0], body: { contentType: 'text', content: 'x'.repeat(50) } } }
+      : { id: q.id, status: status(q.url), body: { error: { code: 'ErrorItemNotFound', message: 'gone' } } }),
+  })] as [string, string, (c: { body?: unknown }) => unknown];
+
+  it('reads every id through one POST /$batch with the select, text body and caps of mail get', async () => {
+    const r = await run(['get', 'M1', 'M2', 'M3', '--batch', '--select', 'id,body', '--body', 'text', '--max-chars', '10',
+      '-o', 'json'], { routes: [batchRoute(url => (url.includes('M2') ? 404 : 200))] });
+    expect(r.exitCode).toBe(0);
+    const batches = r.calls.filter(c => c.path.startsWith('/$batch'));
+    expect(batches).toHaveLength(1);
+    const requests = (batches[0].body as { requests: Req[] }).requests;
+    expect(requests.map(q => q.url)).toEqual(['/me/messages/M1?$select=id%2Cbody', '/me/messages/M2?$select=id%2Cbody',
+      '/me/messages/M3?$select=id%2Cbody']);
+    expect(requests[0].headers?.Prefer).toContain('outlook.body-content-type="text"');
+    const out = JSON.parse(r.stdout);
+    expect(out.value.map((m: { id: string }) => m.id)).toEqual(['M1', 'M3']);
+    expect(out.value[0].body.content).not.toContain('x'.repeat(11));   // --max-chars 10 cut the 50-character body
+    expect(out.errors).toEqual([{ id: 'M2', status: 404, code: 'ErrorItemNotFound' }]);
+  });
+
+  it('refuses several ids without --batch and more than 20 with it, before any request', async () => {
+    const several = await run(['get', 'M1', 'M2']);
+    expect(several.exitCode).toBe(2);
+    const many = await run(['get', ...Array.from({ length: 21 }, (_, i) => `M${i}`), '--batch']);
+    expect(many.exitCode).toBe(2);
+    expect([...several.calls, ...many.calls]).toHaveLength(0);
+  });
+
+  it('one id without --batch is the single GET as before', async () => {
+    const r = await run(['get', 'M1', '-o', 'json'], { routes: [['GET', '/me/messages/M1', () => ({ id: 'M1' })]] });
+    expect(r.exitCode).toBe(0);
+    expect(r.calls.filter(c => c.path.startsWith('/me/messages')).map(c => `${c.method} ${c.path}`))
+      .toEqual(['GET /me/messages/M1']);
+    expect(JSON.parse(r.stdout).id).toBe('M1');
+  });
+});
+
 describe('mail update-draft (G-1)', () => {
   it('refuses to PATCH a non-draft message', async () => {
     const r = await run(['update-draft', 'M', '--subject', 'x'], {

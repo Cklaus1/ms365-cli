@@ -123,7 +123,8 @@ describe('ms365 describe --json', () => {
     const cmd = json.commands[0];
     expect(cmd.path).toBe('mail get');
     expect(cmd.description).toMatch(/message/i);
-    expect(cmd.arguments).toEqual([{ name: 'messageId', required: true, variadic: false }]);
+    expect(cmd.arguments).toEqual([{ name: 'messageId', required: true, variadic: false },
+      { name: 'moreIds', required: false, variadic: true }]);
     const output = cmd.options.find((o: { long: string }) => o.long === '--output');
     expect(output).toMatchObject({ short: '-o', takesValue: true, required: false });
     expect(output.choices).toContain('json');
