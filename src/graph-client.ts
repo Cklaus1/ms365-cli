@@ -104,6 +104,20 @@ const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'PUT', 'DELETE', '
 /** CliError codes raised before anything was sent to Graph (not audited). */
 const NOT_SENT_CODES = new Set<string | undefined>(['read_only', 'untrusted_url', 'auth_required']);
 
+/** A `POST /$batch` whose every item is a GET reads only, so --read-only and --plan let it through. */
+function isReadBatch(endpoint: string, method: string, body: GraphRequestOptions['body']): boolean {
+  if (endpoint !== '/$batch' || method !== 'POST' || typeof body !== 'string') return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return false;
+  }
+  if (!parsed || typeof parsed !== 'object' || !('requests' in parsed) || !Array.isArray(parsed.requests)) return false;
+  return parsed.requests.length > 0
+    && parsed.requests.every((r: unknown) => !!r && typeof r === 'object' && 'method' in r && r.method === 'GET');
+}
+
 // --- dry-run preview (DR-T1): trace on stderr (not --quiet-able, F1), redacted bodies (F3), counted for the trailer ---
 const CREDENTIAL_KEY = /^(password|.*secret|.*token|authorization|cookie)$/i;
 
@@ -298,12 +312,13 @@ export class GraphClient {
     logger.debug(`${method} ${url}`, options.body ? { bodyLength: options.body.length } : undefined);
 
 
-    if (this.readOnly && method !== 'GET') {
+    const writes = method !== 'GET' && !isReadBatch(endpoint, method, options.body);
+    if (this.readOnly && writes) {
       throw new CliError(`Read-only mode: ${method} requests are blocked. Remove --read-only to proceed.`, { code: 'read_only', exitCode: ExitCode.PERMISSION });
     }
 
     // AH-5 --plan: a write is recorded with its exact headers and body, not sent; reads still go to Graph.
-    if (method !== 'GET' && planning()) {
+    if (writes && planning()) {
       if (options.body !== undefined && typeof options.body !== 'string') throw usage('A plan cannot hold a binary request body.');
       const planPath = url.startsWith(this.baseUrl) ? url.slice(this.baseUrl.length) : url;
       return { data: recordRequest({ method, path: planPath, headers: requestHeaders ?? {}, body: options.body ?? null }), status: 0 };

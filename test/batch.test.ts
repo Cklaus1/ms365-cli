@@ -59,6 +59,17 @@ describe('GraphClient.batch (P-5, G-10, D19)', () => {
     expect(r[0].status).toBe(0);
     expect(log.mock.calls.flat().join('\n')).toContain('$batch');
   });
+
+  it('read-only sends a batch of GETs (one POST /$batch); a raw POST /$batch with a write is still blocked', async () => {
+    const batches = mockBatch(q => ({ status: 200, body: { n: Number(q.id) } }));
+    const client = new GraphClient(auth as never, false, 'v1.0', true);
+    const res = await client.batch([{ method: 'GET', url: '/me/messages/a' }, { method: 'GET', url: '/me/messages/b' }]);
+    expect(batches).toHaveLength(1);
+    expect(res.map(r => r.status)).toEqual([200, 200]);
+    const write = JSON.stringify({ requests: [{ id: '0', method: 'GET', url: '/a' }, { id: '1', method: 'DELETE', url: '/b' }] });
+    await expect(client.request('/$batch', { method: 'POST', body: write })).rejects.toThrow(/Read-only/);
+    expect(batches).toHaveLength(1);
+  });
 });
 
 describe('mail batch-read / batch-move via $batch', () => {
