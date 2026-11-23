@@ -879,12 +879,17 @@
     },
     {
       "path": "mail get",
-      "description": "Get a specific message (marked untrusted; see --body, --unique, --wrap-untrusted)",
+      "description": "Get a specific message (marked untrusted; see --body, --unique, --wrap-untrusted); with --batch, up to 20 messages in one JSON batch request",
       "arguments": [
         {
           "name": "messageId",
           "required": true,
           "variadic": false
+        },
+        {
+          "name": "moreIds",
+          "required": false,
+          "variadic": true
         }
       ],
       "options": [
@@ -903,6 +908,16 @@
           "long": "--unique",
           "short": null,
           "description": "Return uniqueBody (the new part of a thread reply, without quoted history) instead of body",
+          "required": false,
+          "takesValue": false,
+          "choices": null,
+          "default": null
+        },
+        {
+          "flags": "--batch",
+          "long": "--batch",
+          "short": null,
+          "description": "Read 1-20 messages through one POST /$batch; prints {\"value\": [message...], \"errors\": [{\"id\", \"status\", \"code\"}]} (a message Graph did not return is an error entry, not a failure)",
           "required": false,
           "takesValue": false,
           "choices": null,
